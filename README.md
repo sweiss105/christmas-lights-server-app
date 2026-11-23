@@ -20,7 +20,7 @@ npm test               # 25 tests, including DDP end-to-end against a fake WLED 
 npm start              # http://localhost:8080; state is saved to config/local.json
 ```
 
-On the home server use `docker compose up -d --build`. It needs host networking, because mDNS and DDP must reach the LAN. State lives in `./data/show.json`.
+On the home server use `docker compose up -d --build`. It needs host networking, because mDNS and DDP must reach the LAN. State lives in `./data/show.json`. Host networking shares the host's ports, so if 8080 is taken, set `XMAS_PORT` (for example `XMAS_PORT=8090`) in `.env`.
 
 Environment variables:
 

@@ -58,6 +58,17 @@ Written 2026-11-23 from the cloud session that built Phase 1. Pick up from here 
 
 7. **Before exposing xmas.weiss-audio.com through cloudflared:** set `XMAS_API_TOKEN` in `.env` and/or put Cloudflare Access in front. Without one, the API is open to anyone who can reach it.
 
+## Hardware test results (2026-11-24, home server)
+
+Steps 1–6 pass on the real porch controller.
+
+- **Hardware differs from the plan.** Only one controller is running for now: GLEDOPTO WLED 0.15.3 at `10.30.1.40`, 1101 LEDs. The second controller isn't running yet. Of its outputs, GPIO16 (pixels 0–499) wraps the left porch railing and goes down the left stair rail. GPIO12 (500–999) goes up the right stair rail, along the right railing, down the end post and back along the bottom runner. Each is about 6.5 m. GPIO4 (100 px) and GPIO2 (1 px) have nothing connected and aren't in the layout. The fallback is playlist 26.
+- **The layout is rough** (owner: "close enough for now"). It's in `config/local.json` and `data/show.json`, neither of which is in git. Directions are verified: stripes and sweep move left to right on both runs, so no run needed reversing.
+- **Streaming:** 40 fps held steady over Wi-Fi at −73 to −80 dBm with 0 send errors and no dropped frames, both from `npm start` and from the container. WLED's gamma correction is off for realtime data, so the server keeps gamma 2.2.
+- **Hand-back:** turning streaming off and running `docker compose stop` both put the controller back on its fallback, in under 0.5 s.
+- **Docker:** the image builds, and the stop signal reaches the server through `npm` → `tsx` → `node`, with a clean exit 0. On the home server, port 8080 is taken by another service, so `.env` sets `XMAS_PORT=8090`. The compose file now reads `XMAS_PORT`.
+- **Watch for:** `output.enabled` is saved, so a restart resumes streaming if it was on. The container runs as root, so `data/show.json` becomes root-owned once the container saves it. Node on the home server is a per-user install in `~/.local/node`.
+
 ## Known gaps and things to watch
 
 - **Health-check timing:** they run every 10 s via HTTP to `/json/info`, so a controller that was offline at startup shows `online:false` until the next check.
