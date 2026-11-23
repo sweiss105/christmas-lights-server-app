@@ -1,0 +1,134 @@
+import { EFFECTS, resolveParams, type Params, type RenderFn } from './effects.js';
+import type { Layout } from './layout.js';
+
+export type BlendMode = 'normal' | 'add' | 'multiply' | 'screen' | 'max';
+export const BLEND_MODES: BlendMode[] = ['normal', 'add', 'multiply', 'screen', 'max'];
+
+export interface LayerConfig {
+  id: string;
+  effect: string;
+  params?: Params;
+  /** Group name to restrict the layer to; default "all". */
+  group?: string;
+  opacity?: number;
+  blend?: BlendMode;
+  enabled?: boolean;
+}
+
+export interface SceneConfig {
+  name: string;
+  /** Bottom layer first. */
+  layers: LayerConfig[];
+}
+
+export interface OutputSettings {
+  /** Master brightness 0..1, applied before gamma. */
+  brightness: number;
+  /** Output gamma; set to 1 if WLED is applying its own gamma to realtime data. */
+  gamma: number;
+}
+
+interface CompiledLayer {
+  render: RenderFn;
+  mask: Uint8Array;
+  opacity: number;
+  blend: BlendMode;
+}
+
+export function validateScene(scene: SceneConfig, layout: Layout): SceneConfig {
+  if (typeof scene?.name !== 'string' || !Array.isArray(scene.layers)) throw new Error('scene needs name and layers[]');
+  const ids = new Set<string>();
+  return {
+    name: scene.name,
+    layers: scene.layers.map((l) => {
+      if (typeof l.id !== 'string' || !l.id) throw new Error('layer needs an id');
+      if (ids.has(l.id)) throw new Error(`duplicate layer id "${l.id}"`);
+      ids.add(l.id);
+      const def = EFFECTS[l.effect];
+      if (!def) throw new Error(`layer "${l.id}": unknown effect "${l.effect}"`);
+      const group = l.group ?? 'all';
+      if (!layout.groups.has(group)) throw new Error(`layer "${l.id}": unknown group "${group}"`);
+      const blend = l.blend ?? 'normal';
+      if (!BLEND_MODES.includes(blend)) throw new Error(`layer "${l.id}": unknown blend "${blend}"`);
+      const opacity = l.opacity ?? 1;
+      if (typeof opacity !== 'number' || opacity < 0 || opacity > 1) throw new Error(`layer "${l.id}": opacity must be 0..1`);
+      return { id: l.id, effect: l.effect, params: resolveParams(def, l.params), group, opacity, blend, enabled: l.enabled ?? true };
+    }),
+  };
+}
+
+function blend(mode: BlendMode, a: number, b: number): number {
+  switch (mode) {
+    case 'normal': return b;
+    case 'add': return Math.min(1, a + b);
+    case 'multiply': return a * b;
+    case 'screen': return 1 - (1 - a) * (1 - b);
+    case 'max': return Math.max(a, b);
+  }
+}
+
+/** Composites layers into an 8-bit RGB frame in global pixel order. */
+export class Engine {
+  private layers: CompiledLayer[] = [];
+  private acc: Float32Array;
+  private tmp: Float32Array;
+  readonly frame: Uint8Array;
+  private gammaLut = new Uint8Array(4096);
+  private settings: OutputSettings = { brightness: 1, gamma: 2.2 };
+  scene: SceneConfig = { name: 'Blackout', layers: [] };
+
+  constructor(readonly layout: Layout) {
+    this.acc = new Float32Array(layout.count * 3);
+    this.tmp = new Float32Array(layout.count * 3);
+    this.frame = new Uint8Array(layout.count * 3);
+    this.setOutput({});
+  }
+
+  setScene(scene: SceneConfig): SceneConfig {
+    const valid = validateScene(scene, this.layout);
+    this.layers = valid.layers.filter((l) => l.enabled).map((l) => ({
+      render: EFFECTS[l.effect]!.create(l.params!, this.layout),
+      mask: this.layout.groups.get(l.group!)!,
+      opacity: l.opacity!,
+      blend: l.blend!,
+    }));
+    this.scene = valid;
+    return valid;
+  }
+
+  get output(): OutputSettings { return { ...this.settings }; }
+
+  setOutput(s: Partial<OutputSettings>): OutputSettings {
+    const next = { ...this.settings, ...s };
+    if (!(next.brightness >= 0 && next.brightness <= 1)) throw new Error('brightness must be 0..1');
+    if (!(next.gamma >= 1 && next.gamma <= 3)) throw new Error('gamma must be 1..3');
+    this.settings = next;
+    for (let i = 0; i < 4096; i++) this.gammaLut[i] = Math.round(Math.pow((i / 4095) * next.brightness, next.gamma) * 255);
+    return this.output;
+  }
+
+  /** Render the frame for time t (seconds). Returns the shared frame buffer. */
+  render(t: number): Uint8Array {
+    const acc = this.acc, tmp = this.tmp, n = this.layout.count, mapped = this.layout.mapped;
+    acc.fill(0);
+    for (const layer of this.layers) {
+      layer.render(t, tmp);
+      const { mask, opacity: o, blend: mode } = layer;
+      for (let i = 0; i < n; i++) {
+        if (!mask[i]) continue;
+        for (let c = i * 3; c < i * 3 + 3; c++) {
+          const a = acc[c]!;
+          acc[c] = a + (blend(mode, a, tmp[c]!) - a) * o;
+        }
+      }
+    }
+    const lut = this.gammaLut, frame = this.frame;
+    for (let i = 0; i < n; i++) {
+      for (let c = i * 3; c < i * 3 + 3; c++) {
+        const v = mapped[i] ? acc[c]! : 0;
+        frame[c] = lut[Math.round((v < 0 ? 0 : v > 1 ? 1 : v) * 4095)]!;
+      }
+    }
+    return frame;
+  }
+}

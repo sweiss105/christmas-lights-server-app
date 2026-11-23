@@ -1,0 +1,35 @@
+{
+  "layout": {
+    "controllers": [
+      { "id": "left", "name": "GLEDOPTO left (GL-C-618WL)", "host": "192.168.1.50", "pixelCount": 1450, "fallbackPreset": 1 },
+      { "id": "right", "name": "GLEDOPTO right (GL-C-618WL)", "host": "192.168.1.51", "pixelCount": 1450, "fallbackPreset": 1 }
+    ],
+    "runs": [
+      { "id": "roof-left", "name": "Roofline left", "controller": "left", "start": 0, "count": 600, "points": [[0, 5.5, 0], [6, 8, 0], [12, 5.5, 0]] },
+      { "id": "eave-left", "name": "Eave left", "controller": "left", "start": 600, "count": 450, "points": [[0, 3, 0], [12, 3, 0]] },
+      { "id": "window-left", "name": "Window left", "controller": "left", "start": 1050, "count": 400, "points": [[2, 0.9, 0], [5, 0.9, 0], [5, 2.4, 0], [2, 2.4, 0], [2, 0.9, 0]] },
+      { "id": "roof-right", "name": "Roofline right", "controller": "right", "start": 0, "count": 600, "points": [[12, 5.5, 0], [18, 8, 0], [24, 5.5, 0]] },
+      { "id": "eave-right", "name": "Eave right", "controller": "right", "start": 600, "count": 450, "points": [[12, 3, 0], [24, 3, 0]] },
+      { "id": "tree", "name": "Yard tree", "controller": "right", "start": 1050, "count": 400, "points": [[20, 0, 4], [20.8, 1, 4], [20, 2, 4.8], [19.4, 3, 4], [20, 4, 3.5]] }
+    ],
+    "groups": {
+      "roof": { "runs": ["roof-left", "roof-right"] },
+      "eaves": { "runs": ["eave-left", "eave-right"] },
+      "house": { "runs": ["roof-left", "roof-right", "eave-left", "eave-right", "window-left"] }
+    }
+  },
+  "scenes": {
+    "Warm white": { "name": "Warm white", "layers": [{ "id": "base", "effect": "solid", "params": { "color": "#ffb46b" } }] },
+    "Candy cane": {
+      "name": "Candy cane",
+      "layers": [
+        { "id": "stripes", "effect": "stripes", "group": "house" },
+        { "id": "tree", "effect": "noise", "group": "run:tree", "params": { "colorA": "#00ff40", "colorB": "#ff0000" } },
+        { "id": "sparkle", "effect": "twinkle", "params": { "density": 0.08 }, "blend": "screen" }
+      ]
+    },
+    "Aurora": { "name": "Aurora", "layers": [{ "id": "aurora", "effect": "noise" }, { "id": "sweep", "effect": "sweep", "blend": "add", "opacity": 0.6 }] }
+  },
+  "activeScene": "Warm white",
+  "output": { "brightness": 0.6, "gamma": 2.2, "fps": 40, "enabled": false }
+}

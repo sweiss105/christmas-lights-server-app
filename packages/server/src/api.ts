@@ -1,0 +1,185 @@
+import { timingSafeEqual } from 'node:crypto';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { buildLayout, Engine, EFFECTS, LayoutError, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { OutputLoop } from './output.js';
+import { saveState, type ShowState } from './store.js';
+import { discover, getInfo, getPresets, releaseToPreset } from './wled.js';
+
+export interface AppOptions {
+  state: ShowState;
+  statePath: string;
+  /** If set, every /api route except /api/health needs `Authorization: Bearer <token>`. */
+  apiToken?: string;
+  /** Injected for tests. */
+  discoverFn?: typeof discover;
+  logger?: boolean;
+}
+
+export interface App { server: FastifyInstance; output: OutputLoop; engine: () => Engine }
+
+class HttpError extends Error { constructor(public statusCode: number, message: string) { super(message); } }
+const bad = (e: unknown) => new HttpError(400, (e as Error).message);
+
+export async function createApp(opts: AppOptions): Promise<App> {
+  const state = opts.state;
+  let engine = new Engine(buildLayout(state.layout));
+  engine.setOutput({ brightness: state.output.brightness, gamma: state.output.gamma });
+  if (state.activeScene && state.scenes[state.activeScene]) {
+    try { engine.setScene(state.scenes[state.activeScene]!); } catch { state.activeScene = null; }
+  }
+  const output = new OutputLoop(() => engine, state.output.fps);
+  const persist = () => saveState(opts.statePath, state);
+
+  const server = Fastify({ logger: opts.logger ?? false });
+
+  server.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
+    const code = err.statusCode ?? 500;
+    if (code >= 500) server.log.error(err);
+    reply.code(code).send({ error: err.message });
+  });
+
+  if (opts.apiToken) {
+    const expected = Buffer.from(`Bearer ${opts.apiToken}`);
+    server.addHook('onRequest', async (req) => {
+      if (!req.url.startsWith('/api/') || req.url === '/api/health') return;
+      const got = Buffer.from(req.headers.authorization ?? '');
+      if (got.length !== expected.length || !timingSafeEqual(got, expected)) throw new HttpError(401, 'unauthorized');
+    });
+  }
+
+  server.get('/api/health', async () => ({ ok: true }));
+
+  server.get('/api/status', async () => ({
+    scene: state.activeScene,
+    pixels: engine.layout.count,
+    output: { ...engine.output, enabled: state.output.enabled },
+    stream: output.stats(),
+  }));
+
+  server.get('/api/effects', async () => Object.values(EFFECTS).map(({ id, name, description, params }) => ({ id, name, description, params })));
+
+  // ---- layout -------------------------------------------------------------
+  server.get('/api/layout', async () => state.layout);
+
+  server.put<{ Body: LayoutConfig }>('/api/layout', async (req) => {
+    let next: Engine;
+    try { next = new Engine(buildLayout(req.body)); } catch (e) { throw e instanceof LayoutError ? bad(e) : bad(e); }
+    next.setOutput(engine.output);
+    // Keep the current scene if it still fits the new layout (its groups may have gone).
+    if (state.activeScene) {
+      try { next.setScene(state.scenes[state.activeScene]!); } catch { state.activeScene = null; }
+    }
+    engine = next;
+    state.layout = req.body;
+    await persist();
+    return { pixels: engine.layout.count, groups: [...engine.layout.groups.keys()] };
+  });
+
+  server.get('/api/groups', async () => [...engine.layout.groups.entries()].map(([name, m]) => ({ name, pixels: m.reduce((a, b) => a + b, 0) })));
+
+  // ---- scenes -------------------------------------------------------------
+  server.get('/api/scenes', async () => ({ active: state.activeScene, scenes: Object.values(state.scenes) }));
+
+  server.get<{ Params: { name: string } }>('/api/scenes/:name', async (req) => {
+    const s = state.scenes[req.params.name];
+    if (!s) throw new HttpError(404, 'no such scene');
+    return s;
+  });
+
+  server.put<{ Params: { name: string }; Body: SceneConfig }>('/api/scenes/:name', async (req) => {
+    let valid: SceneConfig;
+    const probe = new Engine(engine.layout);
+    try { valid = probe.setScene({ ...req.body, name: req.params.name }); } catch (e) { throw bad(e); }
+    state.scenes[valid.name] = valid;
+    if (state.activeScene === valid.name) engine.setScene(valid); // live edit
+    await persist();
+    return valid;
+  });
+
+  server.delete<{ Params: { name: string } }>('/api/scenes/:name', async (req) => {
+    if (!state.scenes[req.params.name]) throw new HttpError(404, 'no such scene');
+    if (state.activeScene === req.params.name) throw new HttpError(409, 'cannot delete the active scene');
+    delete state.scenes[req.params.name];
+    await persist();
+    return { deleted: req.params.name };
+  });
+
+  server.post<{ Params: { name: string } }>('/api/scenes/:name/activate', async (req) => {
+    const s = state.scenes[req.params.name];
+    if (!s) throw new HttpError(404, 'no such scene');
+    try { engine.setScene(s); } catch (e) { throw bad(e); }
+    state.activeScene = s.name;
+    await persist();
+    return { active: s.name };
+  });
+
+  server.post('/api/blackout', async () => {
+    engine.setScene({ name: 'Blackout', layers: [] });
+    state.activeScene = null;
+    await persist();
+    return { active: null };
+  });
+
+  // ---- output -------------------------------------------------------------
+  server.get('/api/output', async () => ({ ...engine.output, fps: output.fps, enabled: state.output.enabled }));
+
+  server.patch<{ Body: Partial<ShowState['output']> }>('/api/output', async (req) => {
+    const b = req.body ?? {};
+    try { engine.setOutput({ ...(b.brightness !== undefined && { brightness: b.brightness }), ...(b.gamma !== undefined && { gamma: b.gamma }) }); } catch (e) { throw bad(e); }
+    if (b.fps !== undefined) {
+      if (!Number.isInteger(b.fps) || b.fps < 1 || b.fps > 60) throw new HttpError(400, 'fps must be an integer 1..60');
+      output.fps = b.fps;
+    }
+    if (b.enabled !== undefined) {
+      if (typeof b.enabled !== 'boolean') throw new HttpError(400, 'enabled must be boolean');
+      if (b.enabled) output.startStreaming(); else await output.stopStreaming();
+    }
+    state.output = { ...engine.output, fps: output.fps, enabled: b.enabled ?? state.output.enabled };
+    await persist();
+    return state.output;
+  });
+
+  /** Raw RGB frame (global pixel order) for previews and debugging. */
+  server.get('/api/frame', async (_req, reply) => {
+    reply.header('content-type', 'application/octet-stream');
+    return Buffer.from(engine.render(output.now()));
+  });
+
+  // ---- controllers --------------------------------------------------------
+  server.get('/api/controllers', async () => output.stats().controllers);
+
+  server.post<{ Querystring: { timeout?: string } }>('/api/controllers/discover', async (req) => {
+    const ms = Math.min(10000, Math.max(500, Number(req.query.timeout ?? 3000) || 3000));
+    return (opts.discoverFn ?? discover)(ms);
+  });
+
+  server.post<{ Body: { host?: string } }>('/api/controllers/probe', async (req) => {
+    const host = req.body?.host;
+    if (typeof host !== 'string' || !/^[a-zA-Z0-9.-]+$/.test(host)) throw new HttpError(400, 'host must be an IP or hostname');
+    try { return { host, info: await getInfo(host) }; } catch (e) { throw new HttpError(502, (e as Error).message); }
+  });
+
+  const controller = (id: string) => {
+    const c = state.layout.controllers.find((x) => x.id === id);
+    if (!c) throw new HttpError(404, 'no such controller');
+    return c;
+  };
+
+  server.get<{ Params: { id: string } }>('/api/controllers/:id/presets', async (req) => {
+    const c = controller(req.params.id);
+    try { return await getPresets(c.host); } catch (e) { throw new HttpError(502, (e as Error).message); }
+  });
+
+  /** Load a WLED preset on one controller. Only visible while our stream is stopped. */
+  server.post<{ Params: { id: string }; Body: { preset?: number } }>('/api/controllers/:id/preset', async (req) => {
+    const c = controller(req.params.id);
+    const p = req.body?.preset;
+    if (!Number.isInteger(p) || p! < 1 || p! > 250) throw new HttpError(400, 'preset must be 1..250');
+    try { await releaseToPreset(c.host, p); } catch (e) { throw new HttpError(502, (e as Error).message); }
+    return { controller: c.id, preset: p, note: output.running ? 'streaming is on and will override this preset' : undefined };
+  });
+
+  server.addHook('onClose', async () => { await output.close(); });
+
+  return { server, output, engine: () => engine };
+}

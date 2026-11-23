@@ -1,0 +1,12 @@
+services:
+  xmas:
+    build: .
+    restart: unless-stopped
+    # Host networking: mDNS discovery and DDP UDP to the WLED controllers need to be on the LAN directly.
+    network_mode: host
+    environment:
+      PORT: "8080"
+      XMAS_API_TOKEN: ${XMAS_API_TOKEN:-}
+    volumes:
+      - ./data:/data
+    stop_grace_period: 10s
