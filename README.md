@@ -75,7 +75,12 @@ Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare A
 | POST | `/api/scenes/:name/activate` | Go: put the saved scene on stage |
 | POST | `/api/blackout` | All pixels off (streaming continues) |
 | GET/PATCH | `/api/output` | `{ enabled, brightness, gamma, fps }`. `enabled:false` stops streaming and loads fallback presets |
-| GET | `/api/frame` | Current frame, raw RGB bytes in global pixel order |
+| GET | `/api/frame` | Current frame, raw RGB bytes in global pixel order (as sent: Identify and mapping included) |
+| GET | `/api/mapping` | Camera mapping: whether a sequence is playing, its start and end on the `/api/clock` clock |
+| POST | `/api/mapping/start` | `{ k, passes, holdMs, level, leadMs }`: play the coded sequence (dark for `leadMs`, then about 13 s); returns the plan and `startsAt`. Visible only while streaming |
+| POST | `/api/mapping/stop` | Stop the sequence; the show comes straight back |
+| GET/POST/DELETE | `/api/mapping/views[/:id]` | What the phone found from each spot (pixel → picture position), kept for solving again |
+| POST | `/api/backups` | `{ reason }`: save a backup now (`<reason>-<time>.json`, last 10 kept) |
 | GET | `/api/controllers` | Health: online, WLED version, LED-count mismatch warnings, frames sent |
 | POST | `/api/controllers/discover?timeout=3000` | mDNS scan for `_wled._tcp`, enriched with `/json/info` |
 | POST | `/api/controllers/probe` | `{ host }`: check that an IP is a WLED controller |

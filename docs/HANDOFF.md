@@ -114,8 +114,147 @@ Steps 1–6 pass on the real porch controller.
 - The schedule needs the owner's location (for sunset) and time zone.
 - A string on the big-stairs handrail is planned; its GPIO, pixel count and start end aren't known yet.
 - The second controller isn't running yet.
-- **Phase 3 (camera mapping) is chosen to run in the app on the owner's iPhone** (not Marimapper): flash lights in coded patterns, capture from a few spots, solve positions.
+- **Phase 3 (camera mapping) is built** on branch `phase-3-camera-mapping` and needs its first night test: see the next section.
 - Engine tests fail to load while effect files are half-written. Verify agent work in a clean worktree (`git worktree add` + `npm ci`) before committing.
+
+## Phase 3: camera mapping (built 2026-11-24, branch `phase-3-camera-mapping`; not yet tried on real lights)
+
+This finds where each light really is: the lights flash coded patterns while the owner films the house with the iPhone from a few spots, in the web app.
+
+It's mainly for strings that aren't placed yet: the big-stairs handrail, and trees and bushes on the second controller. The porch is already placed from the house model. It serves as the reference that tells the phone where it was standing.
+
+### How it works
+
+**1. The sequence.** The server code is in `packages/server/src/mapping.ts`; the shared plan is in `packages/engine/src/mapping/sequence.ts`.
+
+`POST /api/mapping/start` takes over the output, as Identify does, and plays a timed sequence. Then the show comes straight back. Each pattern is held for `holdMs` (250 ms by default):
+
+1. **Lead-in:** 1.8 s dark.
+2. **Preamble:** every light blinks on/off in a Barker-7 code (on, on, on, off, off, on, off). The phone finds the timing from this, so it doesn't have to trust clocks.
+3. **Each pass:**
+   - a background frame, all dark;
+   - a reference frame, with this pass's lights on;
+   - each bit of the lights' codes, shown as itself and then inverted. Codes are Gray code plus a parity bit.
+
+In a pass only every `k`th light of each run lights, so the lit ones are far enough apart for the camera to tell them apart. Each pass starts at a different offset.
+
+The lights show white at master brightness × `level`, through the normal output curve.
+
+**2. Filming and decoding.** This runs on the phone. The screen is in `packages/web/src/mapping/`; the decoder is `packages/engine/src/mapping/decode.ts`.
+
+1. Map lights syncs with the server clock and starts the sequence.
+2. Every camera frame goes straight to a Web Worker, so only a few seconds of frames are held at once. Frames come from `requestVideoFrameCallback`, scaled to 1280 px wide.
+3. The worker slides the preamble along the picture's brightness to find the true start. The clock only has to be within ±0.8 s.
+4. Frames near a pattern change are skipped (blur, rolling shutter).
+5. The reference frame minus the background frame gives bright spots (blobs). Their weighted centres are the light positions.
+6. For each blob and bit, the decoder compares the bit frame with its inverse at that spot. This cancels auto-exposure drift and needs no global threshold.
+7. A blob is dropped if any bit is unclear (margin under 0.3), its parity is wrong or its code isn't in use. Two merged lights or a reflection are dropped, rather than becoming a wrong light.
+8. What was found (pixel → position in the picture) is saved per spot on the server, in `/api/mapping/views` (the file `mapping-views.json` next to the state file). Positions can be solved again at any time without filming again.
+
+**3. Solving.** This runs in the browser (`pose.ts`, `triangulate.ts`, `solve.ts`), with no extra dependencies.
+
+1. **Where each camera stood** is worked out from the lights of *trusted* runs that it saw:
+   - RANSAC over DLT samples of 10, plus starting guesses from typical spots in the yard (so a nearly flat set of reference lights works too);
+   - refined with Levenberg–Marquardt (rotation, position and focal length) under a robust loss;
+   - then all spots share one focal length.
+2. **Lights seen from two or more spots** are triangulated. The rays must meet at 3° or more, and each light must land within 4 px of where each spot saw it.
+3. **Lights seen from one spot** go on their ray, nearest to where their measured neighbours put them. With no measured neighbours, they go where the ray meets the house model; this is less certain.
+4. **Each measured run is filled in:**
+   - lights that don't fit the wire are dropped (they're further from their neighbours than the string's spacing allows);
+   - the remaining lights keep the run's current shape (its coil, say), shifted smoothly onto the measured lights.
+
+   So a run measured at every 5th light still gets a position for every light.
+
+**4. Review and save.** This works Blind-style (`MapReviewPanel.tsx`): nothing changes until Save.
+
+- **Roles:** the owner marks each string *Trusted* (it places the cameras) or *Measure*.
+- **The 3D view** shows the layout with the measured positions. White rings mark lights measured from two or more spots; amber rings mark lights seen from one.
+- **For each spot:** lights found, whether its camera was placed, the error in pixels and the field of view.
+- **Check:** how far the trusted lights land from their layout positions when measured again.
+- **For each string:** how many lights were measured, seen from one spot or filled in, their spacing, and how far the string moves.
+- **Save:** a backup is made first (`before-mapping-<time>.json`). Then per-pixel `positions` are written into the chosen runs through the Layout editor's history. To take it back, Undo in Layout, then Save layout.
+
+### Choices and numbers
+
+**K = 10, 2 passes:**
+- The porch lights are 1.3–1.8 cm apart along the wire.
+- From 10 m, at 1280 px wide and the iPhone's ~68° view, a picture pixel is about 1 cm. A light at night is a blob of 3–6 px.
+- Every 10th light is 13–18 cm along the wire (half a coil turn), which is well apart. Every 8th gets tight from 15 m.
+- Two passes measure every 5th light (about 7 cm). The ones between come from the run's shape.
+- Use every 14th or 20th light for far spots or where a string bunches up (trees). Use 1 pass for speed, or 4 for denser measurement.
+
+**Hold 250 ms:**
+- At about 30 fps, that leaves about 4 clean frames per pattern after skipping 60 ms either side of each change.
+- The skip covers the rolling shutter, exposure, Wi-Fi and DDP jitter, and the sync error.
+- Use 400 ms if iOS drops to 15–20 fps in the dark, or on a weak Wi-Fi link.
+
+**Time per spot:**
+- About 13 s for the porch: 1.8 s lead-in, then 7 preamble frames, 2 × 18 pattern frames and 1 end frame at 250 ms each.
+- About 15 s with about 2900 lights (9-bit codes).
+- One light at a time would take over 1100 frames, about 4.5 minutes per spot.
+
+**No dark frames between patterns:** after the preamble the phone knows the timing, so it skips frames near a change. Dark gaps would only add time.
+
+**Simulated results** (`packages/engine/test/mapping-solve.test.ts`):
+- The setup: 3 spots at 960×540, with noise, jitter, 3% dropped frames, rolling shutter, hand shake, 8% hidden lights, and the porch model off by up to ±1 cm.
+- Cameras are placed within about 5 cm, with the field of view within 0.3°.
+- New strings are measured to 5–7 mm median and 1.1 cm p90. Filled-in lights are 0.5–0.7 cm off (median).
+- Real video will do worse: compression, bloom, focus hunting, and a hand instead of a simulation.
+
+### Testing without lights
+
+- **Unit and simulation tests:** `npx vitest run packages/engine/test/mapping-*.test.ts packages/server/test/mapping.test.ts packages/web/test/mapping.test.ts`
+- **`/#map-demo`:** runs the whole screen on a simulated camera built from the current layout. Nothing is sent to the lights or saved on the server.
+- **`npm run e2e`:** films one demo spot and opens Review.
+
+### Night test script (first real run, with the owner)
+
+**Before going outside** (at the server):
+1. Deploy the branch. Check that `GET /api/mapping` on port 8090 answers `{"active":false,...}`.
+2. Make sure streaming stays on for the whole test: move the schedule's off time later, or test well inside the on window. A running playlist is fine; mapping takes over the output while it plays.
+3. Turn streaming on and set brightness to about 50%. Mapping lights at brightness × level, so 30% is probably too dim to read reliably, and 100% blooms.
+4. On the iPhone, open xmas.weiss-audio.com/#map-demo once to see the screen working. Press Start, wait for "Found N lights", then close it.
+
+**Part A: porch check** (about 15 minutes). This proves the whole chain on strings whose positions are already known.
+1. Open xmas.weiss-audio.com/#map, or tap the camera button in the top bar, and allow the camera.
+   - Use the 1× lens and hold the phone sideways.
+   - Rest it on something steady (a car roof, a fence post, a tripod if there is one). It mustn't move for about 13 s.
+2. **Spot 1:** stand in the yard or on the street, 8–12 m from the porch, in line with the left stair rail. Frame the whole porch at about half the picture's width. Press Start.
+   - The screen says "Get ready". The porch goes dark for 2 s, blinks all its lights a few times, then shows sparse patterns.
+   - Expect "Found 150–220 lights" and "The camera placed from N trusted lights". The dots on the frozen picture should sit on lights.
+3. **Spot 2:** walk 3–5 m to the right, staying at the same distance, and press Start again.
+4. **Spot 3:** go further right, past the right stair rail, and press Start again. A 4th spot from higher up (the top of the yard) or lower down (the street) helps with depth.
+5. **Review.** Under Strings, set GPIO12 (porch right) to **Measure** and leave GPIO16 Trusted. Check:
+   - **Spots:** each should be placed, with an error under about 2 px and a view of 60–75°. A spot that fails says why. If many fail, the porch layout or house alignment is off, or the lights were too dim.
+   - **Check line:** trusted lights measured again should land within about 3 cm. Over 5 cm means the layout disagrees with reality, or the solve is shaky.
+   - **GPIO12 "moves N cm":** expect a few cm. This is the real test of the model-based placement, including the guessed coil on the bottom rails. Toggle between Now and With measured and look at the bottom rails in 3D. A large move there means the coil or that section is wrong.
+6. Swap the roles (GPIO16 Measure, GPIO12 Trusted) and check the same numbers.
+7. **Don't save the porch** unless the numbers clearly show the model is off and the owner wants it. Saving replaces the coil paths with fixed positions for each light. To keep the evidence, screenshot the panel. The spots stay on the server in `data/mapping-views.json`, each with its decoder stats.
+
+**Part B: a new string** (about 10 minutes, only once one is up, e.g. the big-stairs handrail):
+1. In Layout, add its run (controller, start, count) with a rough two-point line where it is. Save the layout.
+2. Film 3 or more spots that each see both the new string and a good part of the porch: left, middle and right, 3–5 m apart.
+3. In Review, set the new string to Measure and leave everything else Trusted. Expect most of its lights measured or filled in, a spacing close to the string's real LED spacing, and the 3D view showing it on the stairs.
+4. Save positions (a backup is made first). Then run a sweep scene on the real lights to check direction and position.
+
+**If decoding struggles:**
+- **"The lights' flashing wasn't clear":** check that streaming is on and the lights are in the picture, and raise the brightness.
+- **Few lights found:** get closer, or space the lit lights wider in Settings (every 14th or 20th).
+- **Low frame rate in the dark, or a weak Wi-Fi link:** set the hold to 400 ms in Settings.
+
+**Backing out:**
+- **While filming:** Cancel or the back button stops the sequence at once.
+- **If anything sticks:** the sequence ends by itself (after about 15 s, never more than 180 s). `POST /api/mapping/stop` ends it at once. Turning streaming off hands the porch to WLED playlist 26.
+- **After Save:** in Layout, press Undo and then Save layout, or restore `before-mapping-…` from Backups.
+- **Spots:** delete them from the list, or delete them all with `DELETE /api/mapping/views`.
+
+**What to watch for on the first night:**
+- whether iOS Safari keeps about 30 fps in the dark (the decoder copes with 15 fps or more);
+- whether auto-exposure flickers on the all-on blinks (showing each bit with its inverse should absorb it);
+- how bright the blobs are at 50%;
+- whether the 1× view takes in the whole porch.
+
+Each saved spot keeps its decoder stats (`blobs`, `decoded`, `unclear`, `badParity`, `syncScore`, `offsetMs`). They help tune `minMargin`, the hold time and K afterwards.
 
 ## Known gaps and things to watch
 
