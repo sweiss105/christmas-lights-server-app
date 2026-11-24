@@ -15,6 +15,8 @@ interface Props {
   onMode: (m: SelectMode) => void;
   brushSize: number;
   onBrushSize: (n: number) => void;
+  /** Back to editing scenes (the selection is kept). */
+  onDone: () => void;
 }
 
 const TOOLS: [SelectTool, string, string][] = [
@@ -23,7 +25,7 @@ const TOOLS: [SelectTool, string, string][] = [
 const MODES: [SelectMode, string][] = [['replace', 'New'], ['add', 'Add'], ['subtract', 'Remove']];
 
 /** Select lights with box, lasso, brush or rules, and save selections as (optionally soft-edged) groups. */
-export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, onMode, brushSize, onBrushSize }: Props) {
+export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, onMode, brushSize, onBrushSize, onDone }: Props) {
   const config = show.layout!;
   const layout = useMemo(() => buildLayout(config), [config]);
   const [nth, setNth] = useState(3);
@@ -65,6 +67,7 @@ export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, 
             <span className="eyebrow">Select lights</span>
             <h2>{selection.size} selected</h2>
           </div>
+          <button className="btn small done-btn" onClick={onDone} title="Back to editing scenes (Esc)">Done</button>
         </div>
         <div className="mode-row">
           <div className="segmented tools-seg" role="radiogroup" aria-label="Selection tool">

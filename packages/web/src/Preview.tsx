@@ -52,7 +52,8 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInse
       onCreated={({ gl }) => gl.setClearColor(BACKGROUND)}
     >
       <fog attach="fog" args={[BACKGROUND, 18, 60]} />
-      <Ground layout={built} />
+      {/* A house model brings its own ground (lawns, slopes, steps below porch level), which a flat floor at 0 m would hide. */}
+      {!house?.parts.some((p) => p.visible) && <Ground layout={built} />}
       {house && <HouseModel house={house} onPick={layoutEdit?.drawing ? layoutEdit.onAddPoint : undefined} />}
       <Wires layout={layout} />
       <Pixels layout={built} scene={scene} clock={clock} diagnostic={layoutEdit ? { config: layout, selected: layoutEdit.selected } : null} />
@@ -314,7 +315,7 @@ function Handle({ p, kind, onMove }: { p: Vec3; kind: 'start' | 'mid' | 'end'; o
         const hit = new THREE.Vector3();
         if (!e.ray.intersectPlane(drag.current.plane, hit)) return;
         hit.add(drag.current.offset);
-        onMove([hit.x, Math.max(0, hit.y), hit.z], false);
+        onMove([hit.x, hit.y, hit.z], false); // below 0 is fine: house models can slope down to the street
       }}
       onPointerUp={(e) => {
         if (!drag.current) return;

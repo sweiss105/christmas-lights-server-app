@@ -49,6 +49,21 @@ export function App() {
   const onProjector = useCallback((p: (() => Float32Array) | null) => setProjector(p ? { fn: p } : null), []);
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [drawing, setDrawing] = useState(false);
+  /** Leave Select or Layout and show the scene editor again (the selection and any layout draft are kept). */
+  const backToEditing = useCallback(() => { setSelectMode(false); setLayoutMode(false); setDrawing(false); }, []);
+  // Esc does the same, unless it's meant for a text field or an open popup (they handle it themselves).
+  useEffect(() => {
+    if (!selectMode && !layoutMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('input, textarea, select, [role="dialog"]')) return;
+      if (drawing) { setDrawing(false); return; } // first Esc just stops drawing points
+      backToEditing();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectMode, layoutMode, drawing, backToEditing]);
   const layoutDraft = useLayoutDraft(layout);
   const editor = useSceneEditor(show, selected, mode);
   const sideRight = useInset('.editor', 'right', !!layout && !!status && !phone);
@@ -80,6 +95,11 @@ export function App() {
           },
         } : null} />
 
+      {/* The selection layer covers the 3D view only: panels come after it, so they stay clickable. */}
+      {selectMode && projector && (
+        <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} layoutConfig={layout} selection={selection} onChange={setSelection} />
+      )}
+
       <TopBar show={show} mode={mode} tools={
         <div className="tools" role="toolbar" aria-label="Tools">
           <button className={`viewbar-btn ${selectMode ? 'active' : ''}`} aria-pressed={selectMode}
@@ -91,16 +111,13 @@ export function App() {
         </div>
       } />
 
-      <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); }} />
+      <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); backToEditing(); }} />
 
-      {selectMode && projector && (
-        <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} layoutConfig={layout} selection={selection} onChange={setSelection} />
-      )}
       {selectMode
         ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
-            mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} />
+            mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} onDone={backToEditing} />
         : layoutMode
-        ? <LayoutPanel show={show} draft={layoutDraft} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
+        ? <LayoutPanel show={show} draft={layoutDraft} onDone={backToEditing} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
         : <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />}
 
       <div className="viewbar glass" role="toolbar" aria-label="Preview">

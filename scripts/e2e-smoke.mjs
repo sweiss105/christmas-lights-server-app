@@ -68,6 +68,19 @@ try {
   check(status.stage.scene === 'Aurora', 'Go puts the scene on stage');
   await page.getByRole('button', { name: '+ Add layer', exact: true }).click();
   check(await shows(page.getByRole('dialog', { name: 'Add a layer' })), 'the layer picker opens');
+  await page.keyboard.press('Escape'); // close the layer picker
+  // Select mode: there must be ways back to the editor (Done, Esc, or picking a scene).
+  const editorBack = () => shows(page.getByRole('heading', { name: 'Candy cane' }));
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  check(await shows(page.getByRole('complementary', { name: 'Select lights' })), 'the Select panel opens');
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Candy cane' }).click();
+  check(await editorBack() && !(await page.getByRole('complementary', { name: 'Select lights' }).isVisible()), 'picking a scene leaves Select for the editor');
+  await page.getByRole('button', { name: 'Layout', exact: true }).click();
+  await page.locator('.preview-canvas').click({ position: { x: 640, y: 700 } });
+  await page.keyboard.press('Escape');
+  check(!(await page.getByRole('complementary', { name: 'Layout editor' }).isVisible()), 'Esc leaves Layout');
   await page.getByRole('tab', { name: /^Playlists/ }).click();
   check(await shows(page.getByRole('button', { name: '+ New playlist' })), 'the Playlists tab opens');
   await page.getByRole('tab', { name: /^Schedule/ }).click();

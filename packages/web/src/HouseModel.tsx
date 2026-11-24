@@ -13,7 +13,7 @@ export function HouseModel({ house, onPick }: { house: House; onPick?: (p: [numb
   if (!parts.length) return null;
   return (
     <group position={house.position} rotation-y={(house.rotation * Math.PI) / 180} scale={house.scale}
-      onClick={onPick ? (e) => { if (e.delta > 6) return; e.stopPropagation(); onPick([e.point.x, Math.max(0, e.point.y), e.point.z]); } : undefined}>
+      onClick={onPick ? (e) => { if (e.delta > 6) return; e.stopPropagation(); onPick([e.point.x, e.point.y, e.point.z]); } : undefined}>
       {/* Light for clay-look models (scans use unlit materials and ignore it): soft sky light plus a low moon from front left. */}
       <hemisphereLight args={[0xb8c4e0, 0x1a1712, 0.45]} />
       <directionalLight position={[-6, 9, 8]} intensity={0.65} color={0xe8ecf8} />
