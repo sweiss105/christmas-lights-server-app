@@ -56,6 +56,8 @@ export interface ShowState {
   playing?: { playlist: string; startedAt: number };
   /** Nightly on/off. */
   schedule?: ScheduleConfig;
+  /** Whether the schedule's on window was open when the server last acted on it, so a restart can catch up on a switch it missed. */
+  scheduleInWindow?: boolean;
   /** Layer presets by name. Missing in state files from before presets existed. */
   presets?: Record<string, PresetConfig>;
 }
@@ -75,11 +77,14 @@ let writing: Promise<void> = Promise.resolve();
 
 export function saveState(path: string, state: ShowState): Promise<void> {
   const body = JSON.stringify(state, null, 2) + '\n';
-  writing = writing.then(async () => {
+  // Each write waits for the one before it, whether that one worked or not: a failed save (disk full,
+  // a file owned by someone else) must not stop every later save from being tried.
+  const mine = writing.catch(() => {}).then(async () => {
     await mkdir(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
     await writeFile(tmp, body);
     await rename(tmp, path);
   });
-  return writing;
+  writing = mine;
+  return mine;
 }

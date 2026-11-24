@@ -31,10 +31,11 @@ Environment variables:
 | Var | Default | |
 |---|---|---|
 | `PORT` | 8080 | |
+| `HOST` (`XMAS_HOST` in Docker) | 0.0.0.0 | Address to listen on. `127.0.0.1` keeps the LAN out when cloudflared runs on the same machine |
 | `XMAS_CONFIG` | `config/local.json` | State file; on first run it starts from `config/example.json` |
 | `XMAS_WEB_ROOT` | `packages/web/dist` | Built web UI served at `/` |
 | `XMAS_TZ` (Docker) / `TZ` | UTC | Time zone for Scrolling Text's `#TIME`/`#DATE` tokens, e.g. `America/Chicago` |
-| `XMAS_API_TOKEN` | unset | Requires `Authorization: Bearer <token>` on every `/api` route except `/api/health`. **Set this or put Cloudflare Access in front before you expose the site through cloudflared.** |
+| `XMAS_API_TOKEN` | unset | Requires the token on every `/api` route except `/api/health` and `/api/login`: scripts send `Authorization: Bearer <token>`, and the web UI asks for it once and keeps it in a cookie. **Set this or put Cloudflare Access in front before you expose the site through cloudflared.** |
 
 ## WLED setup (each controller)
 
@@ -74,6 +75,8 @@ Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare A
 | GET | `/api/scenes` | All scenes plus the active one |
 | GET/PUT/DELETE | `/api/scenes/:name` | PUT validates and fills in defaults. A Live save (default) updates the porch if the scene is on stage; `?apply=false` is a Blind save that leaves the porch alone |
 | POST | `/api/scenes/:name/activate` | Go: put the saved scene on stage |
+| POST | `/api/scenes/:name/rename` | `{ to }`: rename a scene; playlists, the schedule and the stage follow it |
+| POST | `/api/login` | `{ token }`: sign the web UI in (sets a cookie) when `XMAS_API_TOKEN` is set |
 | POST | `/api/blackout` | All pixels off (streaming continues) |
 | GET/PATCH | `/api/output` | `{ enabled, brightness, gamma, fps }`. `enabled:false` stops streaming and loads fallback presets |
 | GET | `/api/frame` | Current frame, raw RGB bytes in global pixel order (as sent: Identify and mapping included) |

@@ -63,6 +63,8 @@ export interface Status {
   pixels: number;
   output: { brightness: number; gamma: number; enabled: boolean; transition: number };
   stream: { running: boolean; targetFps: number; fps: number; renderMs: number; lateFrames: number; controllers: ControllerHealth[] };
+  /** Counts changes made through the API; `by` is the id of the browser that made the last one. */
+  rev?: { boot: string; n: number; by: string };
 }
 
 /** One spot the phone filmed from: what it found, kept on the server so it can be solved again. */
@@ -84,10 +86,13 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
+/** This tab's id, sent with every request so the server can say who made the latest change. */
+export const CLIENT_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
-    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    headers: { 'x-client-id': CLIENT_ID, ...(body !== undefined && { 'content-type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: 'same-origin',
   });
@@ -104,6 +109,8 @@ const enc = encodeURIComponent;
 
 export const api = {
   status: () => call<Status>('GET', '/api/status'),
+  /** Sign in with the server's API token; the server answers with a cookie the browser then sends by itself. */
+  login: (token: string) => call<{ ok: true; required: boolean }>('POST', '/api/login', { token }),
   clock: async () => (await call<{ t: number }>('GET', '/api/clock')).t,
   layout: () => call<LayoutConfig>('GET', '/api/layout'),
   scenes: () => call<{ active: string | null; scenes: SceneConfig[] }>('GET', '/api/scenes'),
@@ -112,6 +119,8 @@ export const api = {
   effects: () => call<EffectInfo[]>('GET', '/api/effects'),
   /** Save a scene. Blind (apply=false) leaves the porch alone; Live (apply=true) updates it if the scene is on stage. */
   saveScene: (scene: SceneConfig, apply: boolean) => call<SceneConfig>('PUT', `/api/scenes/${enc(scene.name)}?apply=${apply}`, { layers: scene.layers }),
+  /** Rename a scene; playlists, the schedule and the stage follow it. */
+  renameScene: (name: string, to: string) => call<SceneConfig>('POST', `/api/scenes/${enc(name)}/rename`, { to }),
   deleteScene: (name: string) => call<{ deleted: string }>('DELETE', `/api/scenes/${enc(name)}`),
   presets: () => call<Preset[]>('GET', '/api/presets'),
   savePreset: (name: string, look: Omit<Preset, 'name'>) => call<Preset>('PUT', `/api/presets/${enc(name)}`, look),
@@ -122,7 +131,7 @@ export const api = {
   house: () => call<House>('GET', '/api/house'),
   setHouse: (h: Partial<Omit<House, 'parts'>>) => call<House>('PATCH', '/api/house', h),
   uploadHousePart: async (file: Blob, name: string) => {
-    const res = await fetch(`/api/house/parts?name=${encodeURIComponent(name)}`, { method: 'POST', body: file, headers: { 'content-type': 'model/gltf-binary' }, credentials: 'same-origin' });
+    const res = await fetch(`/api/house/parts?name=${encodeURIComponent(name)}`, { method: 'POST', body: file, headers: { 'content-type': 'model/gltf-binary', 'x-client-id': CLIENT_ID }, credentials: 'same-origin' });
     if (!res.ok) throw new ApiError(res.status, ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `upload failed (${res.status})`);
     return (await res.json()) as HousePart;
   },

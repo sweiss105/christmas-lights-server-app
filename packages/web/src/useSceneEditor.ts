@@ -18,20 +18,34 @@ export function useSceneEditor(show: Show, sceneName: string | null, mode: EditM
   // Load a scene into the editor when the selection changes (not when the list merely refreshes).
   const loaded = useRef<string | null>(null);
   const lastSent = useRef('');
+  /** What the server made of the last save (it fills in defaults), to tell our own echo from someone else's edit. */
+  const lastEcho = useRef('');
+  const epoch = useRef(show.epoch);
   const saved = show.scenes.find((s) => s.name === sceneName) ?? null;
   useEffect(() => {
-    if (sceneName !== loaded.current && saved) {
+    // The saved scenes changed underneath us (another device, or a restore): if this scene is one
+    // of them, drop the working copy. Otherwise the next edit would save the old layers over it.
+    const outside = epoch.current !== show.epoch;
+    epoch.current = show.epoch;
+    const key = saved ? JSON.stringify(saved.layers) : '';
+    const replaced = outside && sceneName === loaded.current && saved !== null && key !== lastSent.current && key !== lastEcho.current;
+    if ((sceneName !== loaded.current || replaced) && saved) {
       loaded.current = sceneName;
       editor.reset(saved);
-      lastSent.current = JSON.stringify(saved.layers);
+      lastSent.current = key;
+      lastEcho.current = key;
     }
-  }, [editor, sceneName, saved]);
+  }, [editor, sceneName, saved, show.epoch]);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
   const save = useMemo(() => latestWins(
-    async (scene: SceneConfig) => { await api.saveScene(scene, modeRef.current === 'live'); show.markSceneSaved(scene); },
+    async (scene: SceneConfig) => {
+      const echo = await api.saveScene(scene, modeRef.current === 'live');
+      lastEcho.current = JSON.stringify(echo.layers);
+      show.markSceneSaved(scene);
+    },
     show.reportError,
   ), [show.reportError, show.markSceneSaved]);
 
