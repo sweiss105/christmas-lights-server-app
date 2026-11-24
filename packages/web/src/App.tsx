@@ -94,7 +94,7 @@ export function App() {
       <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); }} />
 
       {selectMode && projector && (
-        <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} selection={selection} onChange={setSelection} />
+        <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} layoutConfig={layout} selection={selection} onChange={setSelection} />
       )}
       {selectMode
         ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
@@ -123,7 +123,7 @@ export function App() {
       {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
 
       {selectMode
-        ? <div className="caption layout" role="status">{selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over' : selectTool === 'lasso' ? 'draw around' : 'drag a box around'} lights · ${selection.size} selected`}</div>
+        ? <div className="caption layout" role="status">{selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over lights' : selectTool === 'lasso' ? 'draw around lights' : selectTool === 'string' ? 'tap a string to pick all its lights' : 'drag a box around lights'} · ${selection.size} selected`}</div>
         : layoutMode
         ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
         : <ViewCaption view={view} show={show} selected={selected} />}

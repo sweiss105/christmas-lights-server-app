@@ -110,3 +110,17 @@ export function invert(layout: Layout, current: Selection): Selection {
 export function selectAll(layout: Layout): Selection {
   return invert(layout, new Set());
 }
+
+/** All lights of the string whose nearest light is within `reach` pixels of the pointer, or nothing. */
+export function runAt(layout: Layout, screen: Float32Array, x: number, y: number, reach: number): Selection {
+  let best = -1, bestD = reach * reach;
+  for (let i = 0; i < screen.length / 2; i++) {
+    const sx = screen[i * 2]!, sy = screen[i * 2 + 1]!;
+    if (Number.isNaN(sx)) continue;
+    const d = (sx - x) ** 2 + (sy - y) ** 2;
+    if (d <= bestD) { bestD = d; best = i; }
+  }
+  if (best < 0) return new Set();
+  for (const run of runIndices(layout)) if (run.includes(best)) return new Set(run);
+  return new Set();
+}

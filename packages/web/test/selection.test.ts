@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildLayout, type LayoutConfig } from '@xmas/engine';
-import { aboveHeight, combine, endsOfRuns, everyNth, inCircle, inPolygon, inRect, invert, sideOf } from '../src/selection.js';
+import { aboveHeight, combine, endsOfRuns, everyNth, inCircle, inPolygon, inRect, invert, runAt, sideOf } from '../src/selection.js';
 
 // Screen positions (x, y) for 5 pixels; NaN = behind the camera / not placed.
 const screen = new Float32Array([10, 10, 50, 50, 90, 90, 50, 10, NaN, NaN]);
@@ -57,5 +57,23 @@ describe('selection rules', () => {
   it('invert selects every placed light that isn’t selected', () => {
     expect([...invert(layout, new Set([0, 1, 2]))].length).toBe(15);
     expect(invert(layout, new Set([0])).has(18)).toBe(false); // unplaced pixels never get selected
+  });
+});
+
+describe('selecting whole strings', () => {
+  const layout = buildLayout({
+    controllers: [{ id: 'c', name: 'C', host: 'x', pixelCount: 20 }],
+    runs: [
+      { id: 'a', controller: 'c', start: 0, count: 10, points: [[0, 0, 0], [9, 0, 0]] },
+      { id: 'b', controller: 'c', start: 10, count: 8, points: [[10, 0, 0], [10, 7, 0]] },
+    ],
+  });
+
+  it('finds the string under the pointer (nearest light within reach) and returns all its lights', () => {
+    const screen = new Float32Array(40).fill(NaN);
+    for (let i = 0; i < 18; i++) { screen[i * 2] = i * 10; screen[i * 2 + 1] = 100; } // a row of lights on screen
+    expect([...runAt(layout, screen, 32, 104, 12)]).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect([...runAt(layout, screen, 151, 98, 12)]).toEqual([10, 11, 12, 13, 14, 15, 16, 17]);
+    expect(runAt(layout, screen, 500, 500, 12).size).toBe(0); // nothing nearby
   });
 });

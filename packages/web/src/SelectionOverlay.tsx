@@ -1,28 +1,34 @@
-import { useRef, useState } from 'react';
-import { combine, inCircle, inPolygon, inRect, type SelectMode, type Selection } from './selection';
+import { useMemo, useRef, useState } from 'react';
+import { buildLayout, type LayoutConfig } from '@xmas/engine';
+import { combine, inCircle, inPolygon, inRect, runAt, type SelectMode, type Selection } from './selection';
 
-export type SelectTool = 'orbit' | 'box' | 'lasso' | 'brush';
+export type SelectTool = 'orbit' | 'box' | 'lasso' | 'brush' | 'string';
+
+/** How near (in screen pixels) a tap must land to a light to pick its string. */
+const STRING_REACH = 16;
 
 interface Props {
   tool: SelectTool;
   mode: SelectMode;
   brushSize: number;
   project: () => Float32Array;
+  layoutConfig: LayoutConfig;
   selection: Selection;
   onChange: (s: Selection) => void;
 }
 
 /**
- * Drawing layer over the 3D view for box, lasso and brush selection. Shift adds and Alt/Option
+ * Drawing layer over the 3D view for box, lasso, brush and tap-a-string selection. Shift adds and Alt/Option
  * subtracts, whatever the mode buttons say. With the orbit tool it lets pointer events through, so
  * the camera can be moved.
  */
-export function SelectionOverlay({ tool, mode, brushSize, project, selection, onChange }: Props) {
+export function SelectionOverlay({ tool, mode, brushSize, project, layoutConfig, selection, onChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [path, setPath] = useState<[number, number][]>([]);
   const [hover, setHover] = useState<[number, number] | null>(null);
   /** The drag in progress: `acc` is the running result of a brush stroke. */
   const drag = useRef<{ mode: SelectMode; screen: Float32Array; start: Selection; acc: Selection } | null>(null);
+  const layout = useMemo(() => buildLayout(layoutConfig), [layoutConfig]);
 
   if (tool === 'orbit') return null;
 
@@ -52,6 +58,13 @@ export function SelectionOverlay({ tool, mode, brushSize, project, selection, on
         const p = at(e);
         setPath([p]);
         if (tool === 'brush') paint(p);
+        if (tool === 'string') {
+          drag.current = null;
+          const hit = runAt(layout, project(), p[0], p[1], STRING_REACH);
+          // Tapping empty space in New mode clears; otherwise strings add to or come off the selection.
+          onChange(combine(start, hit, m === 'replace' ? 'add' : m));
+          setPath([]);
+        }
       }}
       onPointerMove={(e) => {
         const p = at(e);

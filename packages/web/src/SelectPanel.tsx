@@ -18,7 +18,7 @@ interface Props {
 }
 
 const TOOLS: [SelectTool, string, string][] = [
-  ['orbit', 'Move', 'Drag to turn the view'], ['box', 'Box', 'Drag a rectangle'], ['lasso', 'Lasso', 'Draw around lights'], ['brush', 'Brush', 'Paint over lights'],
+  ['orbit', 'Move', 'Drag to turn the view'], ['box', 'Box', 'Drag a rectangle'], ['lasso', 'Lasso', 'Draw around lights'], ['brush', 'Brush', 'Paint over lights'], ['string', 'String', 'Tap a string to pick all of it'],
 ];
 const MODES: [SelectMode, string][] = [['replace', 'New'], ['add', 'Add'], ['subtract', 'Remove']];
 
@@ -73,7 +73,7 @@ export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, 
           <div className="segmented tools-seg" role="radiogroup" aria-label="Selection mode" style={{ marginTop: 6 }}>
             {MODES.map(([m, label]) => <button key={m} role="radio" aria-checked={mode === m} className={mode === m ? 'active' : ''} onClick={() => onMode(m)}>{label}</button>)}
           </div>
-          <p className="mode-hint">{tool === 'orbit' ? 'Pick Box, Lasso or Brush to select; Move turns the view.' : 'Shift adds, Option/Alt removes, whatever the mode.'}</p>
+          <p className="mode-hint">{tool === 'orbit' ? 'Pick Box, Lasso, Brush or String to select; Move turns the view.' : 'Shift adds, Option/Alt removes, whatever the mode.'}</p>
         </div>
       </div>
 
