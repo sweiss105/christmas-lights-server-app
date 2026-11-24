@@ -101,8 +101,20 @@ Steps 1–6 pass on the real porch controller.
 - **Speed:** long-lived caching for hashed UI files, and a split bundle.
 - **`npm run e2e`:** a browser smoke test (see `scripts/e2e-smoke.mjs`).
 
+**Selection, the real house and coiled strings (done, live):**
+- **Select tools:** box, lasso, brush, tap-a-string, and rules (every Nth, string ends, height, house half). Selections save as groups, optionally with a soft edge (`feather`). Done, Esc or picking a scene goes back to the editor.
+- **House model:** the owner's own clean model (`House_Clean.glb`, built from the Polycam scans, metres, Y up, +Z towards the street, named parts such as `railings`, `handrail`, `cement_stairs`). The latest version (door moved) is live; copies are in `~/scans/` on the server.
+- **Untextured models get a clay look:** lit, matte, outlined edges, a dim night sky. Textured photo scans keep the unlit look. With a house shown, the flat ground at 0 m is left out (the yard slopes about 2.5 m down to the street) and layout points may go below 0 m.
+- **Coiled runs:** `coil: { radius, pitch, skip }` on a run winds its lights round the path (one turn per baluster gap, 0.27 m), with `skip` segments straight (e.g. down a post). Edited in the Layout panel.
+- **The porch strings now follow the model's railings** (owner confirmed which sections, 2026-11-24): GPIO16 starts on the left side rail 0.5 m from the house, then the front and the left stair rail (7.8 m). GPIO12 goes up the right stair rail, along the front and the right side to the house, straight down the post, then back along the bottom rails (8.9 m). Coiling the bottom rails is a guess to confirm on the porch.
+
 **Still open:**
-- The PR for Phase 2: the owner wants it once the house scan is in.
+- Light glow from the LEDs onto the house model (preview only), being built.
+- Check the new layout on the real porch at night, including the bottom-rail coil.
+- The schedule needs the owner's location (for sunset) and time zone.
+- A string on the big-stairs handrail is planned; its GPIO, pixel count and start end aren't known yet.
+- The second controller isn't running yet.
+- **Phase 3 (camera mapping) is chosen to run in the app on the owner's iPhone** (not Marimapper): flash lights in coded patterns, capture from a few spots, solve positions.
 - Engine tests fail to load while effect files are half-written. Verify agent work in a clean worktree (`git worktree add` + `npm ci`) before committing.
 
 ## Known gaps and things to watch
