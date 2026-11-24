@@ -85,7 +85,7 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
               </button>
               <button className="layer-main" onClick={() => setSelectedId(l.id)} aria-current={l.id === selectedId}>
                 <span className="layer-name">{EFFECTS[l.effect]?.name ?? l.effect}</span>
-                <span className="layer-sub">{groupLabel(groups, l.group ?? 'all')}{l.blend && l.blend !== 'normal' ? ` · ${BLEND_SHORT[l.blend] ?? BLEND_LABELS[l.blend]}` : ''}{(l.opacity ?? 1) < 1 ? ` · ${Math.round((l.opacity ?? 1) * 100)}%` : ''}</span>
+                <span className="layer-sub">{groupLabel(groups, l.group ?? 'all')}{l.blend && l.blend !== 'normal' ? ` · ${BLEND_SHORT[l.blend] ?? BLEND_LABELS[l.blend]}${l.maskScope === 'layer' ? ' (layer below)' : ''}` : ''}{(l.opacity ?? 1) < 1 ? ` · ${Math.round((l.opacity ?? 1) * 100)}%` : ''}</span>
               </button>
               <div className="reorder">
                 <button className="icon-btn small" disabled={i === 0} onClick={() => editor.edit(moveLayer(scene, l.id, +1))} aria-label={`Move ${l.id} up`}><Chevron up /></button>
@@ -146,6 +146,17 @@ function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: S
           {BLEND_MODES.map((b) => <option key={b} value={b}>{BLEND_LABELS[b]}</option>)}
         </select>
       </Field>
+      {(layer.blend === 'mask' || layer.blend === 'mask-invert') && (
+        <div className="field">
+          <span className="field-label">Masks</span>
+          <div className="segmented" role="radiogroup" aria-label="What this mask applies to">
+            {([['below', 'Everything below'], ['layer', 'Only the layer below']] as const).map(([v, label]) => (
+              <button key={v} role="radio" aria-checked={(layer.maskScope ?? 'below') === v} className={(layer.maskScope ?? 'below') === v ? 'active' : ''}
+                onClick={() => editor.edit(updateLayer(scene(), id, { maskScope: v }))}>{label}</button>
+            ))}
+          </div>
+        </div>
+      )}
       <Slider
         label="Opacity" min={0} max={1} step={0.01} value={layer.opacity ?? 1} format={(v) => `${Math.round(v * 100)}%`}
         onChange={(v) => editor.edit(updateLayer(scene(), id, { opacity: v }), { merge: `${id}.opacity` })} onEnd={end}

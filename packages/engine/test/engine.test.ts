@@ -204,3 +204,35 @@ describe('mask blend modes (an effect masking the layers below it)', () => {
     expect([...e.render(0)].slice(0, 3)).toEqual([128, 64, 0]);
   });
 });
+
+describe('clipping masks (mask only the layer directly below)', () => {
+  const one = () => {
+    const e = new Engine(buildLayout({ controllers: [{ id: 'c', name: 'C', host: 'x', pixelCount: 1 }], runs: [{ id: 'r', controller: 'c', start: 0, count: 1, points: [[0, 0, 0]] }] }));
+    e.setOutput({ brightness: 1, gamma: 1 });
+    return e;
+  };
+  const base = { id: 'base', effect: 'solid', params: { color: '#ff0000' } };
+  const top = { id: 'top', effect: 'solid', params: { color: '#0000ff' } };
+
+  it('a black clipping mask hides only the layer directly below it; the base stays', () => {
+    const e = one();
+    e.setScene({ name: 'c', layers: [base, top, { id: 'm', effect: 'solid', params: { color: '#000000' }, blend: 'mask', maskScope: 'layer' }] });
+    expect([...e.render(0)]).toEqual([255, 0, 0]); // blue hidden, red base untouched
+    e.setScene({ name: 'all', layers: [base, top, { id: 'm', effect: 'solid', params: { color: '#000000' }, blend: 'mask' }] });
+    expect([...e.render(0)]).toEqual([0, 0, 0]); // default scope: everything below
+  });
+
+  it('a white clipping mask shows the layer below fully; inverted and opacity work as for normal masks', () => {
+    const e = one();
+    e.setScene({ name: 'w', layers: [base, top, { id: 'm', effect: 'solid', params: { color: '#ffffff' }, blend: 'mask', maskScope: 'layer' }] });
+    expect([...e.render(0)]).toEqual([0, 0, 255]);
+    e.setScene({ name: 'i', layers: [base, top, { id: 'm', effect: 'solid', params: { color: '#ffffff' }, blend: 'mask-invert', maskScope: 'layer' }] });
+    expect([...e.render(0)]).toEqual([255, 0, 0]);
+    e.setScene({ name: 'h', layers: [base, top, { id: 'm', effect: 'solid', params: { color: '#000000' }, blend: 'mask', maskScope: 'layer', opacity: 0.5 }] });
+    expect([...e.render(0)]).toEqual([128, 0, 128]); // the blue layer at half strength over red
+  });
+
+  it('rejects an unknown mask scope', () => {
+    expect(() => one().setScene({ name: 'x', layers: [base, { id: 'm', effect: 'solid', blend: 'mask', maskScope: 'nope' as 'layer' }] })).toThrow(/mask scope/);
+  });
+});

@@ -17,8 +17,14 @@ export interface LayerConfig {
   group?: string;
   opacity?: number;
   blend?: BlendMode;
+  /** For mask blend modes: mask everything below (default) or only the layer directly below ("clipping"). */
+  maskScope?: MaskScope;
   enabled?: boolean;
 }
+
+export type MaskScope = 'below' | 'layer';
+export const MASK_SCOPES: MaskScope[] = ['below', 'layer'];
+const isMask = (b: BlendMode) => b === 'mask' || b === 'mask-invert';
 
 export interface SceneConfig {
   name: string;
@@ -38,6 +44,7 @@ interface CompiledLayer {
   mask: Uint8Array;
   opacity: number;
   blend: BlendMode;
+  maskScope: MaskScope;
 }
 
 export function validateScene(scene: SceneConfig, layout: Layout): SceneConfig {
@@ -57,7 +64,9 @@ export function validateScene(scene: SceneConfig, layout: Layout): SceneConfig {
       if (!BLEND_MODES.includes(blend)) throw new Error(`layer "${l.id}": unknown blend "${blend}"`);
       const opacity = l.opacity ?? 1;
       if (typeof opacity !== 'number' || opacity < 0 || opacity > 1) throw new Error(`layer "${l.id}": opacity must be 0..1`);
-      return { id: l.id, effect: l.effect, params: resolveParams(def, l.params), group, opacity, blend, enabled: l.enabled ?? true };
+      const maskScope = l.maskScope ?? 'below';
+      if (!MASK_SCOPES.includes(maskScope)) throw new Error(`layer "${l.id}": unknown mask scope "${maskScope}"`);
+      return { id: l.id, effect: l.effect, params: resolveParams(def, l.params), group, opacity, blend, ...(isMask(blend) && { maskScope }), enabled: l.enabled ?? true };
     }),
   };
 }
@@ -78,6 +87,8 @@ export class Engine {
   private layers: CompiledLayer[] = [];
   private acc: Float32Array;
   private tmp: Float32Array;
+  /** Per-pixel opacity from a clipping mask. */
+  private clipKeep: Float32Array;
   /** Crossfade in progress: the layers being faded out. `start` is set on the first frame after the change. */
   private fade: { from: CompiledLayer[]; duration: number; start: number | null; acc: Float32Array } | null = null;
   readonly frame: Uint8Array;
@@ -88,6 +99,7 @@ export class Engine {
   constructor(readonly layout: Layout) {
     this.acc = new Float32Array(layout.count * 3);
     this.tmp = new Float32Array(layout.count * 3);
+    this.clipKeep = new Float32Array(layout.count);
     this.frame = new Uint8Array(layout.count * 3);
     this.setOutput({});
   }
@@ -103,6 +115,7 @@ export class Engine {
       mask: this.layout.groups.get(l.group!)!,
       opacity: l.opacity!,
       blend: l.blend!,
+      maskScope: l.maskScope ?? 'below',
     }));
     this.scene = valid;
     return valid;
@@ -124,10 +137,37 @@ export class Engine {
   private composite(layers: CompiledLayer[], t: number, acc: Float32Array): void {
     const tmp = this.tmp, n = this.layout.count;
     acc.fill(0);
-    for (const layer of layers) {
-      layer.render(t, tmp);
+    for (let li = 0; li < layers.length; li++) {
+      const layer = layers[li]!;
       const { mask, opacity: o, blend: mode } = layer;
-      if (mode === 'mask' || mode === 'mask-invert') {
+      // A clipping mask directly above this layer becomes this layer's per-pixel opacity.
+      const clip = layers[li + 1];
+      if (clip && isMask(clip.blend) && clip.maskScope === 'layer' && !isMask(mode)) {
+        const keep = this.clipKeep;
+        clip.render(t, tmp);
+        const invert = clip.blend === 'mask-invert';
+        for (let i = 0; i < n; i++) {
+          if (!clip.mask[i]) { keep[i] = 1; continue; }
+          const j = i * 3;
+          const luma = 0.2126 * tmp[j]! + 0.7152 * tmp[j + 1]! + 0.0722 * tmp[j + 2]!;
+          keep[i] = 1 + ((invert ? 1 - luma : luma) - 1) * clip.opacity;
+        }
+        layer.render(t, tmp);
+        for (let i = 0; i < n; i++) {
+          if (!mask[i]) continue;
+          const oi = o * keep[i]!;
+          for (let c = i * 3; c < i * 3 + 3; c++) {
+            const a = acc[c]!;
+            acc[c] = a + (blend(mode, a, tmp[c]!) - a) * oi;
+          }
+        }
+        li++; // the clipping mask has been applied
+        continue;
+      }
+      // A clipping mask with no ordinary layer directly below it has nothing to clip.
+      if (isMask(mode) && layer.maskScope === 'layer') continue;
+      layer.render(t, tmp);
+      if (isMask(mode)) {
         const invert = mode === 'mask-invert';
         for (let i = 0; i < n; i++) {
           if (!mask[i]) continue;
