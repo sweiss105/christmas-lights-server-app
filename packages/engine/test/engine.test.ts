@@ -97,7 +97,14 @@ describe('engine', () => {
    * "Default" palette (no pal= in WLED's metadata), Segment::color_from_palette returns colour 1, so
    * e.g. Fill Noise is solid until a palette is chosen.
    */
-  const STATIC_BY_DEFAULT = new Set(['solid', 'wled-fill-noise', 'wled-solid-pattern', 'wled-solid-pattern-tri', 'wled-spots']); // the last three are fixed patterns by design
+  const STATIC_BY_DEFAULT = new Set([
+    'solid',
+    'wled-fill-noise', // Default palette → colour 1
+    'wled-solid-pattern', 'wled-solid-pattern-tri', 'wled-spots', // fixed patterns by design
+    'wled-sunrise', // a 60-minute sunrise by default: dark for the first ~15 s
+    'wled-slow-transition', // only moves when its colour changes
+    'wled-pacman', // WLED falls back to solid colour on strips of 16 + 2×ghosts pixels or fewer (this layout has 15)
+  ]);
 
   it('runs every effect with defaults, producing finite values that change over time', () => {
     const e = new Engine(buildLayout(cfg()));
