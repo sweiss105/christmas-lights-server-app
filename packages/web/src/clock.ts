@@ -31,6 +31,9 @@ export class ServerClock {
   /** Effect time now, in step with the server once synced. */
   now(): number { return this.localNow() + this.offset; }
 
+  /** Local time (performance.now()/1000) at which the server's clock reads `serverT`. */
+  toLocal(serverT: number): number { return serverT - this.offset; }
+
   async sync(rounds = 5): Promise<void> {
     const samples: ClockSample[] = [];
     for (let i = 0; i < rounds; i++) {

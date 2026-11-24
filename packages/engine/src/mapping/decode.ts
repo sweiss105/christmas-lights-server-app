@@ -69,7 +69,7 @@ export interface DecodeResult {
   detections: Detection[];
   stats: DecodeStats;
   /** A small greyscale picture of the first pass's reference frame, for showing the result. */
-  thumbnail?: { width: number; height: number; data: Uint8Array };
+  thumbnail?: { width: number; height: number; data: Uint8Array; /** Decoder pixels per thumbnail pixel. */ scale: number };
 }
 
 interface Blob { idx: Int32Array; cx: number; cy: number; area: number; on: number; off: number }
@@ -405,5 +405,5 @@ function thumbnail(lum: Uint8Array, w: number, h: number): DecodeResult['thumbna
     for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) m = Math.max(m, lum[(y * s + dy) * w + x * s + dx]!);
     data[y * tw + x] = m;
   }
-  return { width: tw, height: th, data };
+  return { width: tw, height: th, data, scale: s };
 }

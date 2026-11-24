@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildLayout, type Vec3 } from '../src/index.js';
 import {
   cameraCenter, decompose, dist, dlt, fitAlongWire, focalFromFov, lookAt, project, rng, solveMapping, solvePose, symEig, triangulate,
+  trueProjection as trueProjectionOf,
   QUALITY, type Correspondence, type SimView, type ViewInput,
 } from '../src/mapping/index.js';
 import { filmAndDecode, porchRuns, roughLayout, spots, truePositions } from './mapping-fixture.js';
@@ -88,6 +89,37 @@ describe('filling a run along the wire', () => {
     expect(r.quality[25]).toBe(QUALITY.filled);
     expect(r.quality[0]).toBe(QUALITY.filled);
   });
+
+  it('keeps the run’s own shape (a coil) between measured lights, shifted onto them', () => {
+    const coil = (i: number, dx = 0): Vec3 => [i * 0.015 + dx, 1 + 0.04 * Math.cos(i * 0.6), 0.04 * Math.sin(i * 0.6)];
+    const model = Array.from({ length: 60 }, (_, i) => coil(i));
+    // The real string is 10 cm further right than the model says.
+    const samples = [3, 13, 23, 33, 43, 53].map((i) => ({ i, X: coil(i, 0.1), q: QUALITY.triangulated }));
+    const r = fitAlongWire(samples, 60, model);
+    for (let i = 0; i < 60; i++) expect(dist(r.positions![i]!, coil(i, 0.1))).toBeLessThan(1e-3);
+    const straight = fitAlongWire(samples, 60);
+    expect(Math.max(...Array.from({ length: 60 }, (_, i) => dist(straight.positions![i]!, coil(i, 0.1))))).toBeGreaterThan(0.03);
+  });
+});
+
+describe('lights seen from one spot only', () => {
+  it('go where the ray meets the house model when nothing else is known', () => {
+    // A string lying flat on a wall at z = 0.2 (the "house"), filmed from one spot; the porch places the camera.
+    const layout = { ...roughLayout, runs: [...porchRuns, { id: 'wall', controller: 'yard', start: 0, count: 60, points: [[-2, 2.2, 0.2], [2, 2.6, 0.2]] as Vec3[] }] };
+    const truth = buildLayout(layout).positions;
+    const view: SimView = { eye: [1, 0, 11], target: [0, 1, 2], hfovDeg: 66, width: 1280, height: 720 };
+    const proj = trueProjectionOf(truth, view);
+    const detections = [...Array(truth.length / 3).keys()].filter((i) => i % 5 === 0 && Number.isFinite(proj[i * 2])).map((pixel) => ({ pixel, x: proj[pixel * 2]!, y: proj[pixel * 2 + 1]! }));
+    const wall = (o: Vec3, d: Vec3): Vec3 | null => { const t = (0.2 - o[2]) / d[2]; return t > 0 ? [o[0] + d[0] * t, o[1] + d[1] * t, 0.2] : null; };
+    const shifted = { ...layout, runs: layout.runs.map((r) => (r.id === 'wall' ? { ...r, points: [[-2, 1.5, 0.2], [2, 1.5, 0.2]] as Vec3[] } : r)) };
+    const res = solveMapping({ layout: shifted, views: [{ id: 'a', width: 1280, height: 720, detections }], anchorRuns: porchRuns.map((r) => r.id), targetRuns: ['wall'], raycast: wall });
+    const run = res.runs[0]!;
+    expect(run.oneView).toBeGreaterThan(10);
+    const base = buildLayout(layout).controllerOffset.get('yard')!;
+    const errs = run.positions!.map((p, i) => dist(p, [truth[(base + i) * 3]!, truth[(base + i) * 3 + 1]!, truth[(base + i) * 3 + 2]!])).sort((a, b) => a - b);
+    expect(errs[errs.length >> 1]!).toBeLessThan(0.01);
+    expect(errs.at(-1)!).toBeLessThan(0.04); // the ends carry on in the drawn (level) direction
+  });
 });
 
 describe('mapping end to end with the synthetic camera', () => {
@@ -142,6 +174,6 @@ describe('mapping end to end with the synthetic camera', () => {
     const run = res.runs[0]!;
     expect(run.positions).not.toBeNull();
     // The measured string is where the model put it, to within the model's own error and a coil's width.
-    expect(run.moved!).toBeLessThan(0.05);
+    expect(run.moved!).toBeLessThan(0.025);
   }, 120_000);
 });

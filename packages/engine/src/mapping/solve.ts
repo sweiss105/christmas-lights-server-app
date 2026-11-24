@@ -3,8 +3,9 @@
  *
  * 1. Each view's camera is placed from the lights of trusted runs (anchors) it saw.
  * 2. With two or more placed views, every light seen from at least two of them (with enough angle
- *    between the rays) is triangulated. Seen once only, it can be put where its ray meets the house
- *    model (less certain).
+ *    between the rays) is triangulated. A light seen from one spot only lies on a known ray: it goes
+ *    where that ray passes nearest its measured neighbours, or, with none, where the ray meets the
+ *    house model (both less certain).
  * 3. Measured lights of a run that don't fit the wire (further from their neighbours than the
  *    string's spacing allows) are dropped; the rest of the run is filled in along the wire in pixel
  *    order, so a run mapped at every 10th light still gets a position for every light.
@@ -36,6 +37,11 @@ export interface SolveInput {
   maxErrorPx?: number;
   /** Smallest angle between rays for triangulation, degrees. */
   minAngleDeg?: number;
+  /**
+   * How lights between measured ones are placed. 'model' (default): the run's current shape (a coil,
+   * say), moved to fit the measured lights. 'straight': straight lines between measured lights.
+   */
+  fill?: 'model' | 'straight';
 }
 
 export interface ViewSolve {
@@ -52,12 +58,13 @@ export interface ViewSolve {
   targetsSeen: number;
 }
 
-export type PointSource = 'triangulated' | 'surface';
+/** triangulated: from 2+ spots. ray: one spot, depth from measured neighbours. surface: one spot, where its ray meets the house model. */
+export type PointSource = 'triangulated' | 'ray' | 'surface';
 
 export interface MeasuredPixel { pixel: number; X: Vec3; source: PointSource; views: number; rmsPx: number; angleDeg: number }
 
-/** Per light: 0 none, 1 filled in along the wire, 2 from the house surface, 3 triangulated. */
-export const QUALITY = { none: 0, filled: 1, surface: 2, triangulated: 3 } as const;
+/** Per light: 0 none, 1 filled in along the wire, 2 seen from one spot only, 3 triangulated. */
+export const QUALITY = { none: 0, filled: 1, oneView: 2, triangulated: 3 } as const;
 
 export interface RunSolve {
   runId: string;
@@ -65,8 +72,10 @@ export interface RunSolve {
   /** A position for every light, or null if too few were measured. */
   positions: Vec3[] | null;
   quality: number[];
+  /** Lights measured from two or more spots. */
   measured: number;
-  surface: number;
+  /** Lights seen from one spot only. */
+  oneView: number;
   filled: number;
   rejected: number;
   /** Metres between neighbouring lights along the string, as measured. */
@@ -138,6 +147,7 @@ export function solveMapping(input: SolveInput): SolveResult {
     }
   });
   const pixels: MeasuredPixel[] = [];
+  const single = new Map<number, Sighting>();
   const checks: number[] = [];
   for (const [pixel, ss] of sightings) {
     const tri = ss.length >= 2 ? triangulate(ss, maxPx) : null;
@@ -146,32 +156,46 @@ export function solveMapping(input: SolveInput): SolveResult {
       if (target[pixel]) pixels.push({ pixel, X: tri.X, source: 'triangulated', views: tri.used, rmsPx: round(tri.rmsPx, 2), angleDeg: round(tri.angleDeg, 1) });
       continue;
     }
-    if (!target[pixel] || !input.raycast) continue;
-    // Seen once (or from too narrow an angle): where the ray meets the house.
-    const s = ss[0]!;
-    const ray = pixelRay(s.pose, s.k, s.x, s.y);
-    const hit = input.raycast(ray.origin, ray.dir);
-    if (hit) pixels.push({ pixel, X: hit, source: 'surface', views: ss.length, rmsPx: 0, angleDeg: 0 });
+    // Seen from one spot only (or from too narrow an angle): placed along its ray in step 3.
+    if (target[pixel]) single.set(pixel, ss[0]!);
   }
-  pixels.sort((a, b) => a.pixel - b.pixel);
 
   // 3. Whole runs.
-  const byPixel = new Map(pixels.map((p) => [p.pixel, p]));
   const runs: RunSolve[] = input.targetRuns.map((id) => {
     const ids = runPixels(id);
-    const samples = ids.map((g, i) => ({ i, p: byPixel.get(g) })).filter((s): s is { i: number; p: MeasuredPixel } => !!s.p);
-    // Prefer triangulated lights; surface ones only where nothing better is near.
-    const fit = fitAlongWire(samples.map((s) => ({ i: s.i, X: s.p.X, q: s.p.source === 'triangulated' ? QUALITY.triangulated : QUALITY.surface })), ids.length);
+    const model = input.fill !== 'straight' && ids.every((g) => layout.mapped[g]) ? ids.map(pos) : undefined;
+    const tri = new Map(pixels.filter((p) => p.source === 'triangulated').map((p) => [p.pixel, p]));
+    const samples = ids.flatMap((g, i) => { const p = tri.get(g); return p ? [{ i, X: p.X, q: QUALITY.triangulated as number }] : []; });
+    // A light seen from one spot lies somewhere on its ray. With measured neighbours, take the point on
+    // the ray nearest to where they put it; with none, where the ray meets the house model.
+    const first = samples.length >= 2 ? fitAlongWire(samples, ids.length, model).positions : null;
+    ids.forEach((g, i) => {
+      const s = single.get(g);
+      if (!s) return;
+      const ray = pixelRay(s.pose, s.k, s.x, s.y);
+      let X: Vec3 | null = null;
+      if (first) {
+        const e = first[i]!;
+        const t = Math.max(0, (e[0] - ray.origin[0]) * ray.dir[0] + (e[1] - ray.origin[1]) * ray.dir[1] + (e[2] - ray.origin[2]) * ray.dir[2]);
+        const q: Vec3 = [ray.origin[0] + ray.dir[0] * t, ray.origin[1] + ray.dir[1] * t, ray.origin[2] + ray.dir[2] * t];
+        if (dist(q, e) < 0.15) X = q;
+      } else if (input.raycast) X = input.raycast(ray.origin, ray.dir);
+      if (!X) return;
+      samples.push({ i, X, q: QUALITY.oneView });
+      pixels.push({ pixel: g, X, source: first ? 'ray' : 'surface', views: 1, rmsPx: 0, angleDeg: 0 });
+    });
+    const fit = fitAlongWire(samples, ids.length, model);
     const moved = fit.positions ? median(ids.map((g, i) => (layout.mapped[g] ? dist(fit.positions![i]!, pos(g)) : NaN)).filter(Number.isFinite)) : null;
     return {
       runId: id, count: ids.length, positions: fit.positions, quality: fit.quality,
       measured: fit.quality.filter((q) => q === QUALITY.triangulated).length,
-      surface: fit.quality.filter((q) => q === QUALITY.surface).length,
+      oneView: fit.quality.filter((q) => q === QUALITY.oneView).length,
       filled: fit.quality.filter((q) => q === QUALITY.filled).length,
       rejected: fit.rejected, spacing: fit.spacing, moved: moved === null ? null : round(moved, 3),
     };
   });
 
+  pixels.sort((a, b) => a.pixel - b.pixel);
   const anchorCheck = checks.length ? { count: checks.length, median: round(median(checks), 4), p90: round(quantile(checks, 0.9), 4) } : null;
   return { views, pixels, runs, anchorCheck };
 }
@@ -188,7 +212,7 @@ function sizeOf(input: SolveInput, id: string): [number, number] {
  * keep theirs, the ones between are spaced along the straight line between their measured
  * neighbours, and the ends carry on in the direction of the last two measured lights.
  */
-export function fitAlongWire(samples: { i: number; X: Vec3; q: number }[], count: number): { positions: Vec3[] | null; quality: number[]; rejected: number; spacing: number | null } {
+export function fitAlongWire(samples: { i: number; X: Vec3; q: number }[], count: number, model?: Vec3[]): { positions: Vec3[] | null; quality: number[]; rejected: number; spacing: number | null } {
   let s = [...samples].sort((a, b) => a.i - b.i);
   const quality = new Array<number>(count).fill(QUALITY.none);
   let rejected = 0;
@@ -222,6 +246,20 @@ export function fitAlongWire(samples: { i: number; X: Vec3; q: number }[], count
   const out: Vec3[] = new Array(count);
   const lerp = (a: Vec3, b: Vec3, f: number): Vec3 => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
   for (const m of s) { out[m.i] = m.X; quality[m.i] = m.q; }
+  if (model && model.length === count) {
+    // Keep the run's own shape between measured lights (e.g. a coil's turns), shifted smoothly so it
+    // passes through each of them; past the ends, keep the nearest measured light's shift.
+    const shift = (m: { i: number; X: Vec3 }): Vec3 => [m.X[0] - model[m.i]![0], m.X[1] - model[m.i]![1], m.X[2] - model[m.i]![2]];
+    const at = (i: number, d: Vec3): Vec3 => [model[i]![0] + d[0], model[i]![1] + d[1], model[i]![2] + d[2]];
+    for (let k = 1; k < s.length; k++) {
+      const a = s[k - 1]!, b = s[k]!, da = shift(a), db = shift(b);
+      for (let i = a.i + 1; i < b.i; i++) { out[i] = at(i, lerp(da, db, (i - a.i) / (b.i - a.i))); quality[i] = QUALITY.filled; }
+    }
+    const d0 = shift(s[0]!), d1 = shift(s.at(-1)!);
+    for (let i = 0; i < s[0]!.i; i++) { out[i] = at(i, d0); quality[i] = QUALITY.filled; }
+    for (let i = s.at(-1)!.i + 1; i < count; i++) { out[i] = at(i, d1); quality[i] = QUALITY.filled; }
+    return { positions: out.map((p) => [round(p[0], 4), round(p[1], 4), round(p[2], 4)] as Vec3), quality, rejected, spacing: spacing === null ? null : round(spacing, 4) };
+  }
   for (let k = 1; k < s.length; k++) {
     const a = s[k - 1]!, b = s[k]!;
     for (let i = a.i + 1; i < b.i; i++) { out[i] = lerp(a.X, b.X, (i - a.i) / (b.i - a.i)); quality[i] = QUALITY.filled; }
