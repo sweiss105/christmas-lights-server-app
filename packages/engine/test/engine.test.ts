@@ -92,15 +92,21 @@ describe('engine', () => {
     expect(e.scene.name).toBe('ok');
   });
 
+  /** Effects that, faithfully to WLED, show a still pattern with their default settings. */
+  const STATIC_BY_DEFAULT = new Set(['solid']);
+
   it('runs every effect with defaults, producing finite values that change over time', () => {
     const e = new Engine(buildLayout(cfg()));
     for (const id of Object.keys(EFFECTS)) {
       e.setScene({ name: id, layers: [{ id: 'l', effect: id }] });
       const a = Buffer.from(e.render(0.0));
       expect(a.length).toBe(45);
-      // Sparse effects (e.g. WLED's Ripple on a 15-pixel layout) may stay dark for a while, so look at a few times.
-      const later = [1.7, 4.3, 9.1].map((t) => Buffer.from(e.render(t)));
-      if (id !== 'solid') expect(later.some((b) => !a.equals(b)), `${id} should animate`).toBe(true);
+      // Sparse effects (WLED's Ripple, a one-frame sparkle in Sparkle Dark) may change only briefly on a
+      // 15-pixel layout, so look at every frame for 20 seconds rather than at a few moments (Traffic Light
+      // holds red for 12.85 s at its default speed).
+      let changed = false;
+      for (let k = 1; k <= 800 && !changed; k++) changed = !a.equals(Buffer.from(e.render(k / 40)));
+      if (!STATIC_BY_DEFAULT.has(id)) expect(changed, `${id} should animate`).toBe(true);
     }
   });
 
