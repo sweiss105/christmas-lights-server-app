@@ -1,13 +1,18 @@
 /** Persisted show state: one JSON file, written atomically. */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { LayoutConfig, OutputSettings, SceneConfig } from '@xmas/engine';
+import type { LayerConfig, LayoutConfig, OutputSettings, SceneConfig } from '@xmas/engine';
+
+/** A saved layer look: an effect with all its settings, reusable in any scene. */
+export type PresetConfig = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
 
 export interface ShowState {
   layout: LayoutConfig;
   scenes: Record<string, SceneConfig>;
   activeScene: string | null;
   output: OutputSettings & { fps: number; enabled: boolean };
+  /** Layer presets by name. Missing in state files from before presets existed. */
+  presets?: Record<string, PresetConfig>;
 }
 
 export async function loadState(path: string, examplePath: string): Promise<ShowState> {

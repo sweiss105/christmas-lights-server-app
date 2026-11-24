@@ -61,13 +61,17 @@ Each milestone is usable on its own, merged by PR, and deployed to the container
 
 ## WLED effects workstream (added 2026-11-24)
 
-**Owner's decision:** rebuild every WLED effect except the microphone ones (about 190 of WLED 0.15.3's 216) in our engine, so each one can be layered, previewed in 3D and spread across the house. The owner's WLED presets are *not* recreated as scenes.
+**Owner's decisions:**
+- Bring in every WLED effect except the microphone ones, so each one can be layered, previewed in 3D and spread across the house. WLED 16.0.1, the version on the porch controller since 2026-11-24, has 216 effects: 126 1D, 53 2D and 37 audio, so **179 are ported**.
+- **Port WLED's actual code** (owner's choice, 2026-11-24). WLED is EUPL-1.2 ("or later"), so this project is now EUPL-1.2 as well: see `LICENSE` and `NOTICE`. Every ported file names its WLED source file and carries WLED's copyright line.
+- **Palettes come from WLED too:** all 72, ported from `palettes.cpp`, alongside our own built-in palettes.
+- The owner's WLED presets are *not* recreated as scenes.
 
-**Licence:** WLED is EUPL-1.2, which is copyleft. We do **not** copy or translate its source. Each effect is written fresh from how it looks and behaves (watching it on the porch controller and reading WLED's user-facing effect descriptions), using our own engine and conventions. Palettes are our own definitions too.
+**How:** a WLED compatibility layer in `packages/engine/src/wled/` imitates the environment WLED effects run in: the segment and its slider, check and colour settings, its state (`aux0`, `aux1`, `step`, `data`), palettes and WLED's own maths. Each effect's settings are generated from WLED's metadata string, so slider names and defaults match the WLED app. Effects are then ported almost line by line, with C integer behaviour (8-bit and 16-bit wrap-around) reproduced exactly. One agent builds the layer and five proof effects; then agents port families in parallel, following `packages/engine/src/wled/PORTING.md`.
 
 ### Foundation, built before the effects
 
-1. **Palettes.** A `palette` param type, a built-in set of our own palettes (rainbow, party, ocean, forest, lava, heat, ice, Christmas, candy cane, warm white, and others), plus palettes built from the layer's own colours, as WLED's "Color 1/2/3" palettes do.
+1. **Palettes.** A `palette` param type, a built-in set of our own palettes (rainbow, party, ocean, forest, lava, heat, ice, Christmas, candy cane, warm white, and others), WLED's 72 palettes, and palettes built from the layer's own colours, as WLED's "Color 1/2/3" palettes do.
 2. **1D mapping.** Most WLED effects are written for a single strip. Each 1D effect gets a **Lights run** setting:
    - *Along each string*: every run plays the pattern over its own length.
    - *One long strip*: runs are joined in wiring order.
@@ -90,6 +94,17 @@ The foundation comes first, then effects in families, most useful first:
 - 2D, then Particles.
 
 M3 (house model and layout tools) slots in when the house scan arrives.
+
+## Presets (added 2026-11-24, owner's request)
+
+Save a look and recall it later. Interpreted the lighting-console way, to be confirmed with the owner:
+
+- **Layer presets:** save one layer's effect with all its settings (palette, colours, sliders, lights run, blend, opacity) under a name such as "Slow warm fairy twinkle". Recalling one adds it as a layer to the scene being edited, or replaces the selected layer's look. Presets are grouped by category and show a small preview swatch.
+- **Scenes** already save and recall whole looks, so a scene is effectively a full-look preset.
+- **Storage:** server-side in the show state (`GET`/`PUT`/`DELETE /api/presets/:name`), so they're shared between the laptop and the tablet and backed up with `data/show.json`.
+- **Where in the UI:** a "Save as preset" button in the layer inspector, and a **Presets** tab in the "Add layer" menu next to the effects.
+
+**When:** after the first effect families land. Presets are most useful once there are many effects to tune, and they build directly on the effect settings.
 
 ## Open questions
 

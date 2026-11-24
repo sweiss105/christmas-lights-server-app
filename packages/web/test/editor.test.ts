@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SceneConfig } from '@xmas/engine';
-import { SceneEditor, addLayer, duplicateLayer, moveLayer, removeLayer, setParam, updateLayer, uniqueName } from '../src/editor.js';
+import { SceneEditor, addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, updateLayer, uniqueName } from '../src/editor.js';
 
 const scene = (): SceneConfig => ({
   name: 'Test',
@@ -114,5 +114,26 @@ describe('layer operations', () => {
     expect(uniqueName('Aurora', ['Aurora', 'Warm white'])).toBe('Aurora 2');
     expect(uniqueName('Aurora', ['Aurora', 'Aurora 2'])).toBe('Aurora 3');
     expect(uniqueName('New scene', [])).toBe('New scene');
+  });
+});
+
+describe('presets (saved layer looks)', () => {
+  const look = { effect: 'twinkle', params: { color: '#ffd080' }, blend: 'screen' as const, opacity: 0.8, group: 'all' };
+
+  it('adds a layer from a look on top, with a unique id named after the effect', () => {
+    const s = addLayerFromLook(scene(), look);
+    expect(s.layers.at(-1)).toMatchObject({ id: 'twinkle', effect: 'twinkle', blend: 'screen', opacity: 0.8, params: { color: '#ffd080' } });
+    expect(s.layers.at(-1)!.params).not.toBe(look.params);
+  });
+
+  it('applies a look to an existing layer, keeping its id and visibility', () => {
+    const base = updateLayer(scene(), 'base', { enabled: false });
+    const s = applyLook(base, 'base', look);
+    expect(s.layers[0]).toMatchObject({ id: 'base', enabled: false, effect: 'twinkle', opacity: 0.8 });
+  });
+
+  it('lookOf strips the layer id and visibility so it can be saved', () => {
+    const l = lookOf(scene().layers[1]!);
+    expect(l).toEqual({ effect: 'twinkle', blend: 'screen' });
   });
 });

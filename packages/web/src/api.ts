@@ -1,4 +1,7 @@
-import type { LayoutConfig, ParamSpec, SceneConfig } from '@xmas/engine';
+import type { LayerConfig, LayoutConfig, ParamSpec, SceneConfig } from '@xmas/engine';
+
+/** A saved layer look. */
+export type Preset = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
 
 export interface EffectInfo { id: string; name: string; description: string; params: ParamSpec[] }
 
@@ -54,6 +57,9 @@ export const api = {
   /** Save a scene. Blind (apply=false) leaves the porch alone; Live (apply=true) updates it if the scene is on stage. */
   saveScene: (scene: SceneConfig, apply: boolean) => call<SceneConfig>('PUT', `/api/scenes/${enc(scene.name)}?apply=${apply}`, { layers: scene.layers }),
   deleteScene: (name: string) => call<{ deleted: string }>('DELETE', `/api/scenes/${enc(name)}`),
+  presets: () => call<Preset[]>('GET', '/api/presets'),
+  savePreset: (name: string, look: Omit<Preset, 'name'>) => call<Preset>('PUT', `/api/presets/${enc(name)}`, look),
+  deletePreset: (name: string) => call<{ deleted: string }>('DELETE', `/api/presets/${enc(name)}`),
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),

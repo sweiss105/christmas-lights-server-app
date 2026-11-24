@@ -1,5 +1,8 @@
 import { EFFECTS, type LayerConfig, type SceneConfig } from '@xmas/engine';
 
+/** A layer's look without its identity: what a preset stores. */
+export type Look = Omit<LayerConfig, 'id' | 'enabled'>;
+
 /**
  * Working copy of one scene with undo and redo. Scenes are treated as immutable values: every edit
  * produces a new scene, so history entries never change underneath us.
@@ -142,4 +145,23 @@ export function updateLayer(scene: SceneConfig, id: string, patch: Partial<Omit<
 
 export function setParam(scene: SceneConfig, id: string, key: string, value: unknown): SceneConfig {
   return mapLayer(scene, id, (l) => ({ ...l, params: { ...(l.params ?? {}), [key]: value } }));
+}
+
+/** The parts of a layer a preset saves. */
+export function lookOf(layer: LayerConfig): Look {
+  const { id: _id, enabled: _enabled, ...look } = layer;
+  return structuredClone(look);
+}
+
+/** Add a new layer on top with a saved look. */
+export function addLayerFromLook(scene: SceneConfig, look: Look & { name?: string }): SceneConfig {
+  const { name: _name, ...rest } = look;
+  const id = uniqueId(rest.effect, scene.layers.map((l) => l.id));
+  return { ...scene, layers: [...scene.layers, { ...structuredClone(rest), id }] };
+}
+
+/** Replace a layer's look with a saved one, keeping its id and visibility. */
+export function applyLook(scene: SceneConfig, id: string, look: Look & { name?: string }): SceneConfig {
+  const { name: _name, ...rest } = look;
+  return mapLayer(scene, id, (l) => ({ ...structuredClone(rest), id: l.id, ...(l.enabled === false ? { enabled: false } : {}) }));
 }

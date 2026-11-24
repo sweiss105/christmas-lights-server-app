@@ -1,6 +1,9 @@
 import { cloneElement, useEffect, useId, useMemo, useState } from 'react';
 import { BLEND_MODES, EFFECTS, buildLayout, resolveParams, type BlendMode, type LayerConfig, type ParamSpec } from '@xmas/engine';
-import { addLayer, duplicateLayer, moveLayer, removeLayer, setParam, updateLayer, type SceneEditor } from './editor';
+import { addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, updateLayer, type SceneEditor } from './editor';
+import { api, type Preset } from './api';
+import { LayerPicker } from './LayerPicker';
+import { listPalettes } from './palettes';
 import type { EditMode } from './useSceneEditor';
 import type { Show } from './useShow';
 
@@ -98,29 +101,23 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
         <button className="btn small ghost danger-quiet" disabled={!layer} onClick={() => layer && editor.edit(removeLayer(scene, layer.id))}>Delete</button>
       </div>
       {adding && (
-        <div className="effect-picker" role="menu" aria-label="Add a layer">
-          {Object.values(EFFECTS).map((fx) => (
-            <button key={fx.id} role="menuitem" className="effect-choice" onClick={() => {
-              const next = addLayer(scene, fx.id);
-              editor.edit(next);
-              setSelectedId(next.layers.at(-1)!.id);
-              setAdding(false);
-            }}>
-              <span className="effect-name">{fx.name}</span>
-              <span className="effect-desc">{fx.description}</span>
-            </button>
-          ))}
-        </div>
+        <LayerPicker
+          presets={show.presets}
+          onClose={() => setAdding(false)}
+          onPickEffect={(id) => { const next = addLayer(scene, id); editor.edit(next); setSelectedId(next.layers.at(-1)!.id); setAdding(false); }}
+          onPickPreset={(p) => { const next = addLayerFromLook(scene, p); editor.edit(next); setSelectedId(next.layers.at(-1)!.id); setAdding(false); }}
+          onDeletePreset={(name) => { api.deletePreset(name).then(show.refreshPresets).catch(show.reportError); }}
+        />
       )}
 
-      {layer && <LayerInspector key={layer.id} editor={editor} layer={layer} groups={groups} />}
+      {layer && <LayerInspector key={layer.id} show={show} editor={editor} layer={layer} groups={groups} />}
     </aside>
   );
 }
 
 // ---------------------------------------------------------------------------------------------
 
-function LayerInspector({ editor, layer, groups }: { editor: SceneEditor; layer: LayerConfig; groups: GroupOption[] }) {
+function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: SceneEditor; layer: LayerConfig; groups: GroupOption[] }) {
   const def = EFFECTS[layer.effect];
   const params = def ? resolveParams(def, layer.params) : {};
   const id = layer.id;
@@ -130,6 +127,7 @@ function LayerInspector({ editor, layer, groups }: { editor: SceneEditor; layer:
   return (
     <div className="inspector">
       <div className="section-head"><h3>Layer</h3></div>
+      <PresetBar show={show} layer={layer} onApply={(p) => editor.edit(applyLook(scene(), id, p))} />
       <Field label="Effect">
         <select value={layer.effect} onChange={(e) => editor.edit(updateLayer(scene(), id, { effect: e.target.value }))}>
           {Object.values(EFFECTS).map((fx) => <option key={fx.id} value={fx.id}>{fx.name}</option>)}
@@ -182,6 +180,23 @@ function ParamControl({ spec, value, onChange, onEnd }: { spec: ParamSpec; value
           </select>
         </Field>
       );
+    case 'boolean':
+      return (
+        <div className="field toggle-field">
+          <button className={`switch ${value ? 'on' : ''}`} role="switch" aria-checked={!!value} onClick={() => onChange(!value, false)}>
+            <span className="track" aria-hidden><span className="thumb" /></span>
+            <span className="switch-label">{spec.label}</span>
+          </button>
+        </div>
+      );
+    case 'palette':
+      return (
+        <Field label={spec.label}>
+          <select value={value as string} onChange={(e) => onChange(e.target.value, false)}>
+            {paletteOptions(value as string).map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </Field>
+      );
     case 'vec3':
       return spec.key === 'center'
         ? <PositionControl label={spec.label} value={value as number[]} onChange={onChange} onEnd={onEnd} />
@@ -223,6 +238,49 @@ function PositionControl({ label, value, onChange, onEnd }: { label: string; val
       ))}
     </div>
   );
+}
+
+/** Save the selected layer's look as a preset, or apply a saved one to it. */
+function PresetBar({ show, layer, onApply }: { show: Show; layer: LayerConfig; onApply: (p: Preset) => void }) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const n = name.trim();
+    if (!n) { setNaming(false); return; }
+    if (show.presets.some((p) => p.name === n) && !window.confirm(`Replace the preset “${n}”?`)) return;
+    setBusy(true);
+    try { await api.savePreset(n, lookOf(layer)); await show.refreshPresets(); setNaming(false); setName(''); } catch (e) { show.reportError(e); }
+    setBusy(false);
+  };
+  if (naming) {
+    return (
+      <div className="preset-bar">
+        <input className="title-input small" autoFocus value={name} maxLength={80} placeholder="Preset name" aria-label="Preset name"
+          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') setNaming(false); }} />
+        <button className="btn small" disabled={busy || !name.trim()} onClick={() => void save()}>Save</button>
+        <button className="btn small ghost" onClick={() => setNaming(false)}>Cancel</button>
+      </div>
+    );
+  }
+  return (
+    <div className="preset-bar">
+      <button className="btn small" onClick={() => { setName(EFFECTS[layer.effect]?.name ?? ''); setNaming(true); }}>Save as preset</button>
+      {show.presets.length > 0 && (
+        <select className="preset-apply" value="" aria-label="Apply a preset to this layer"
+          onChange={(e) => { const p = show.presets.find((x) => x.name === e.target.value); if (p) onApply(p); }}>
+          <option value="" disabled>Apply preset…</option>
+          {show.presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
+/** Palette names for the picker; keeps an unknown current value selectable. */
+function paletteOptions(current: string): string[] {
+  const names = listPalettes();
+  return names.includes(current) || !current ? names : [current, ...names];
 }
 
 /** The scene name; tap it to rename. Enter saves, Escape cancels. */

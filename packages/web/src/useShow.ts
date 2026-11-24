@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutConfig, SceneConfig } from '@xmas/engine';
-import { api, type Status } from './api';
+import { api, type Preset, type Status } from './api';
 import { ServerClock } from './clock';
 
 export interface Show {
@@ -15,6 +15,8 @@ export interface Show {
   reportError: (e: unknown) => void;
   clearError: () => void;
   refresh: () => Promise<void>;
+  presets: Preset[];
+  refreshPresets: () => Promise<void>;
   /** Record a scene the editor just saved, without reloading everything. */
   markSceneSaved: (scene: SceneConfig) => void;
 }
@@ -27,6 +29,7 @@ export function useShow(): Show {
   const [scenes, setScenes] = useState<SceneConfig[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
   const [stage, setStage] = useState<SceneConfig | null>(null);
+  const [presets, setPresets] = useState<Preset[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const clockRef = useRef(new ServerClock(api.clock));
@@ -70,6 +73,9 @@ export function useShow(): Show {
     return () => { stop = true; clearInterval(poll); clearInterval(resync); document.removeEventListener('visibilitychange', onVisible); };
   }, [refresh, pollStatus, reportError]);
 
+  const refreshPresets = useCallback(async () => { setPresets(await api.presets()); }, []);
+  useEffect(() => { refreshPresets().catch(() => {}); }, [refreshPresets]);
+
   const markSceneSaved = useCallback((scene: SceneConfig) => {
     setScenes((prev) => {
       const i = prev.findIndex((s) => s.name === scene.name);
@@ -85,6 +91,6 @@ export function useShow(): Show {
 
   return useMemo(() => ({
     layout, scenes, status, stage, clock: clockRef.current, connected, error,
-    reportError, clearError, refresh, markSceneSaved,
-  }), [layout, scenes, status, stage, connected, error, reportError, clearError, refresh, markSceneSaved]);
+    reportError, clearError, refresh, markSceneSaved, presets, refreshPresets,
+  }), [layout, scenes, status, stage, connected, error, reportError, clearError, refresh, markSceneSaved, presets, refreshPresets]);
 }

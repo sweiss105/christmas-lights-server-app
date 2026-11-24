@@ -1,17 +1,35 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "customConditions": ["source"],
+    "customConditions": [
+      "source"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": [
+      "vite/client"
+    ],
+    "paths": {
+      "@xmas/engine": [
+        "../engine/src/index.ts"
+      ]
+    }
   },
-  "include": ["src", "test", "vite.config.ts", "../engine/src/fastnoise-lite.d.ts"]
+  "include": [
+    "src",
+    "test",
+    "vite.config.ts",
+    "../engine/src/fastnoise-lite.d.ts"
+  ]
 }

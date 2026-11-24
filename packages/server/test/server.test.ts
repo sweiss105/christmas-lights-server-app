@@ -169,6 +169,44 @@ describe('Blind / Live editing and the web UI', () => {
   });
 });
 
+describe('layer presets', () => {
+  const look = { effect: 'twinkle', params: { color: '#ffd080', density: 0.4 }, blend: 'screen', opacity: 0.8, group: 'all' };
+
+  it('saves, lists, reads and deletes presets, persisting them', async () => {
+    const { app, statePath } = await makeApp();
+    const put = await app.server.inject({ method: 'PUT', url: '/api/presets/Warm%20sparkle', payload: look });
+    expect(put.statusCode).toBe(200);
+    expect(put.json()).toMatchObject({ name: 'Warm sparkle', effect: 'twinkle', blend: 'screen', opacity: 0.8 });
+    expect(put.json().params.speed).toBe(0.6); // defaults filled in
+    expect((await app.server.inject('/api/presets')).json().map((p: { name: string }) => p.name)).toEqual(['Warm sparkle']);
+    expect((await app.server.inject('/api/presets/Warm%20sparkle')).json().params.color).toBe('#ffd080');
+    expect(JSON.parse(await readFile(statePath, 'utf8')).presets['Warm sparkle'].effect).toBe('twinkle');
+    expect((await app.server.inject({ method: 'DELETE', url: '/api/presets/Warm%20sparkle' })).statusCode).toBe(200);
+    expect((await app.server.inject('/api/presets')).json()).toEqual([]);
+    expect((await app.server.inject({ method: 'DELETE', url: '/api/presets/nope' })).statusCode).toBe(404);
+  });
+
+  it('rejects presets with an unknown effect, bad params or a bad name', async () => {
+    const { app } = await makeApp();
+    expect((await app.server.inject({ method: 'PUT', url: '/api/presets/X', payload: { effect: 'nope' } })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'PUT', url: '/api/presets/X', payload: { effect: 'solid', params: { color: 'blue' } } })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'PUT', url: '/api/presets/X', payload: { ...look, opacity: 3 } })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'PUT', url: `/api/presets/${'x'.repeat(81)}`, payload: look })).statusCode).toBe(400);
+  });
+
+  it('a preset does not depend on the layout: an unknown group falls back to all lights', async () => {
+    const { app } = await makeApp();
+    const put = await app.server.inject({ method: 'PUT', url: '/api/presets/Y', payload: { ...look, group: 'run:gone' } });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().group).toBe('all');
+  });
+
+  it('works with a state file from before presets existed', async () => {
+    const { app } = await makeApp({ presets: undefined });
+    expect((await app.server.inject('/api/presets')).json()).toEqual([]);
+  });
+});
+
 describe('REST API', () => {
   it('requires the bearer token when one is configured, except for health', async () => {
     const { app } = await makeApp({}, 's3cret');

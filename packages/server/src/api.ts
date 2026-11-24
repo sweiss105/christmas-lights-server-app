@@ -2,9 +2,9 @@ import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayerConfig, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { OutputLoop } from './output.js';
-import { saveState, type ShowState } from './store.js';
+import { saveState, type PresetConfig, type ShowState } from './store.js';
 import { discover, getInfo, getPresets, releaseToPreset } from './wled.js';
 
 export interface AppOptions {
@@ -144,6 +144,40 @@ export async function createApp(opts: AppOptions): Promise<App> {
     state.activeScene = null;
     await persist();
     return { active: null };
+  });
+
+  // ---- layer presets -------------------------------------------------------
+  /** Validate a preset as a one-layer scene. Presets don't depend on the layout, so an unknown group means all lights. */
+  const validatePreset = (name: string, body: Partial<LayerConfig>): PresetConfig => {
+    const group = typeof body.group === 'string' && engine.layout.groups.has(body.group) ? body.group : 'all';
+    const layer = validateScene({ name, layers: [{ ...body, id: 'preset', group } as LayerConfig] }, engine.layout).layers[0]!;
+    const { id: _id, enabled: _enabled, ...look } = layer;
+    return { name, ...look };
+  };
+
+  server.get('/api/presets', async () => Object.values(state.presets ?? {}).sort((a, b) => a.name.localeCompare(b.name)));
+
+  server.get<{ Params: { name: string } }>('/api/presets/:name', async (req) => {
+    const p = state.presets?.[req.params.name];
+    if (!p) throw new HttpError(404, 'no such preset');
+    return p;
+  });
+
+  server.put<{ Params: { name: string }; Body: Partial<LayerConfig> }>('/api/presets/:name', async (req) => {
+    const name = req.params.name.trim();
+    if (!name || name.length > 80) throw new HttpError(400, 'preset name must be 1..80 characters');
+    let preset: PresetConfig;
+    try { preset = validatePreset(name, req.body ?? {}); } catch (e) { throw bad(e); }
+    state.presets = { ...(state.presets ?? {}), [name]: preset };
+    await persist();
+    return preset;
+  });
+
+  server.delete<{ Params: { name: string } }>('/api/presets/:name', async (req) => {
+    if (!state.presets?.[req.params.name]) throw new HttpError(404, 'no such preset');
+    delete state.presets[req.params.name];
+    await persist();
+    return { deleted: req.params.name };
   });
 
   // ---- output -------------------------------------------------------------
