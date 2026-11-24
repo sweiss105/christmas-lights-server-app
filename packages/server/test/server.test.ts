@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -168,6 +168,16 @@ describe('Blind / Live editing and the web UI', () => {
     expect(typeof a).toBe('number');
     expect(b - a).toBeGreaterThan(0.02);
     expect(b - a).toBeLessThan(1);
+  });
+
+  it('lets browsers keep the hashed UI files forever but always re-check the page itself', async () => {
+    const webRoot = await mkdtemp(join(tmpdir(), 'xmas-web-'));
+    await writeFile(join(webRoot, 'index.html'), '<!doctype html><title>Lights</title>');
+    await mkdir(join(webRoot, 'assets'));
+    await writeFile(join(webRoot, 'assets', 'index-abc123.js'), 'console.log(1)');
+    const { app } = await makeApp({}, undefined, webRoot);
+    expect((await app.server.inject('/')).headers['cache-control']).toBe('no-cache');
+    expect((await app.server.inject('/assets/index-abc123.js')).headers['cache-control']).toBe('public, max-age=31536000, immutable');
   });
 
   it('serves the built web UI at / without requiring the API token, and still protects /api', async () => {

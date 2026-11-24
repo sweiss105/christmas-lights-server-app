@@ -20,6 +20,7 @@ npm install
 npm test               # engine, server (incl. DDP end-to-end against a fake WLED receiver) and web unit tests
 npm run build:web      # builds packages/web/dist, which the server serves at /
 npm start              # http://localhost:8080; state is saved to config/local.json
+npm run e2e            # browser smoke test against a throwaway server (needs playwright + Chromium; see scripts/e2e-smoke.mjs)
 npm run dev:web        # UI dev server on :5173 with hot reload, proxying /api to XMAS_API (default http://127.0.0.1:8090)
 ```
 

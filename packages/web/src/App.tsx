@@ -69,7 +69,14 @@ export function App() {
           },
         } : null} />
 
-      <TopBar show={show} mode={mode} />
+      <TopBar show={show} mode={mode} tools={
+        <div className="tools" role="toolbar" aria-label="Tools">
+          <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode}
+            onClick={() => { setLayoutMode((m) => !m); setDrawing(false); }}>Layout</button>
+          <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
+          <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
+        </div>
+      } />
 
       <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); }} />
 
@@ -92,11 +99,6 @@ export function App() {
           onChange={(v) => setPreset((p) => ({ name: v as CameraPreset, nonce: p.nonce + 1 }))}
           reselect
         />
-        <span className="divider" aria-hidden />
-        <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode}
-          onClick={() => { setLayoutMode((m) => !m); setDrawing(false); }}>Layout</button>
-        <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
-        <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
       </div>
       {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
       {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
@@ -264,7 +266,7 @@ function Loading({ show }: { show: Show }) {
 
 // ---------------------------------------------------------------------------------------------
 
-function TopBar({ show, mode }: { show: Show; mode: EditMode }) {
+function TopBar({ show, mode, tools }: { show: Show; mode: EditMode; tools: React.ReactNode }) {
   const status = show.status!;
   const streaming = status.output.enabled;
   return (
@@ -276,6 +278,7 @@ function TopBar({ show, mode }: { show: Show; mode: EditMode }) {
       {mode === 'live' && <span className="live-badge" role="status" title="Live is armed: edits to the scene on stage go to the porch immediately">LIVE</span>}
       <StagePill show={show} />
       <div className="spacer" />
+      {tools}
       <Brightness show={show} />
       <StreamingSwitch show={show} />
       <button

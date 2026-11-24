@@ -584,7 +584,17 @@ export async function createApp(opts: AppOptions): Promise<App> {
   // ---- web UI -------------------------------------------------------------
   if (opts.webRoot && existsSync(opts.webRoot)) {
     // Files are looked up per request, so a rebuilt UI is served without restarting.
-    await server.register(fastifyStatic, { root: opts.webRoot });
+    await server.register(fastifyStatic, {
+      root: opts.webRoot,
+      cacheControl: false,
+      // Built files carry a content hash in their names, so browsers can keep them; the page itself is re-checked.
+      setHeaders: (reply, path) => {
+        // @fastify/static v10 passes the Fastify reply (header()), older versions the raw response (setHeader()).
+        const r = reply as unknown as { header?: (k: string, v: string) => void; setHeader?: (k: string, v: string) => void };
+        const value = /[\\/]assets[\\/]/.test(path) ? 'public, max-age=31536000, immutable' : 'no-cache';
+        if (r.header) r.header('cache-control', value); else r.setHeader?.('cache-control', value);
+      },
+    });
   }
   // Unknown /api routes are 404 JSON, never the UI. The token hook above runs first for /api.
   server.setNotFoundHandler((req, reply) => { reply.code(404).send({ error: `no route ${req.method} ${req.url.split('?')[0]}` }); });
