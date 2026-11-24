@@ -49,6 +49,7 @@ Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare A
 
 - **Blind and Live, like a lighting console.** Picking a scene previews it in 3D without touching the porch. **Go** puts it on stage. Blind edits (`?apply=false`) are saved but stay off the porch until Go; the status pill shows *edited, not sent*.
 - **Preview / Stage** switches the 3D view between what you're working on and what the porch is running. The preview uses the server's clock, so it animates in step with the real lights.
+- **Paint** turns the 3D view into a canvas: pick a colour or an effect (or a saved preset), then drag a brush over the lights. Size, soft edge and strength are on the brush; Erase (or holding Option/Alt) wipes paint off; each stroke is one Undo step. What you paint is saved in the scene as painted layers, so it follows Blind and Live like any other edit: with Live armed on the scene that's on stage, each stroke shows on the porch as you draw.
 - **Streaming** hands the porch between this server and its WLED playlist. **Brightness** is the master level on the porch.
 
 ## Concepts
@@ -56,7 +57,7 @@ Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare A
 - **Controller**: one WLED box. Pixels are numbered globally, controller by controller, in config order.
 - **Run**: a contiguous block of pixels on one controller, placed along a polyline in metres (or measured `positions` from camera mapping later).
 - **Group**: a named set of runs and pixels. Every run is also the group `run:<id>`, and `all` always exists.
-- **Scene**: a stack of layers. Each layer is an effect plus params, an optional group mask, opacity and blend (`normal`, `add`, `multiply`, `screen`, `max`).
+- **Scene**: a stack of layers. Each layer is an effect plus params, an optional group mask, opacity and blend (`normal`, `add`, `multiply`, `screen`, `max`). A layer may also carry `paint`: how strongly it shows on each light (base64, one byte per global pixel, trailing zeros dropped). A painted layer shows only where it was painted.
 - **Effects** (`GET /api/effects` lists them with param specs): `solid`, `rainbow`, `sweep`, `twinkle`, `noise` (Aurora), `stripes` (Candy cane), `ripple`. They work in normalised 3D space, so a sweep crosses the whole house however the strings are wired.
 
 ## API

@@ -429,7 +429,7 @@ h1, h2 { margin: 0; }
   :root { --gap: 8px; --sheet-h: min(52vh, 460px); }
   .topbar { min-height: 52px; padding: 6px 6px 6px 12px; gap: 8px; }
   .brand h1, .brightness .label, .switch-label, .pill, .health, .caption, .viewbar, .house-panel { display: none; }
-  .brightness input[type='range'] { width: clamp(80px, 30vw, 140px); }
+  .brightness input[type='range'] { width: clamp(56px, 17vw, 140px); } /* leaves room for the Paint and Map buttons */
   .btn.danger-quiet { padding: 0 10px; }
   .app.phone .scenes, .app.phone .editor {
     top: auto; left: var(--gap); right: var(--gap); bottom: var(--gap); width: auto; height: var(--sheet-h);
@@ -577,3 +577,27 @@ h1, h2 { margin: 0; }
   .map-head { font-size: 1.15rem; }
   .map-guide { font-size: 0.88rem; margin-bottom: 10px; }
 }
+
+/* ---- Paint mode -------------------------------------------------------------------------------- */
+.paint-overlay { cursor: none; }
+.paint-svg .brush-edge { fill: color-mix(in srgb, currentColor 10%, transparent); stroke: currentColor; stroke-width: 1.5; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)); }
+.paint-svg .brush-core { fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.7; }
+.paint-overlay.erasing .brush-edge { fill: rgba(0, 0, 0, 0.25); stroke-dasharray: 5 4; }
+.paint-panel .tools-seg { margin-top: 2px; }
+.paint-panel .editor-sticky .tools-seg { margin-top: 8px; }
+.paint-panel .history { align-items: center; }
+.paint-colors { padding: 0 0 4px; }
+.swatch-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 4px 16px 10px; }
+.paint-swatch {
+  height: var(--hit); border-radius: 10px; border: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  transition: transform 120ms ease-out, box-shadow 150ms ease;
+}
+.paint-swatch:active { transform: scale(0.94); transition-duration: 60ms; }
+.paint-swatch.active { box-shadow: 0 0 0 2px var(--bg, #0b0d12), 0 0 0 4px #fff; }
+.paint-fx-name { font-weight: 600; font-size: 0.92rem; align-self: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.paint-list .group-item.current { background: var(--fill); border-radius: 10px; }
+.paint-list .swatch { margin-left: 2px; }
+.paint-foot { padding: 4px 12px 0; }
+.painted-note { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+@media (prefers-reduced-motion: reduce) { .paint-swatch { transition: none; } }
+.icon-btn.map-entry.active { background: var(--fill-2); border-color: var(--edge-top); }

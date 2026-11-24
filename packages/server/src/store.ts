@@ -5,7 +5,7 @@ import type { LayerConfig, LayoutConfig, OutputSettings, SceneConfig } from '@xm
 import type { PlaylistConfig, ScheduleConfig } from './show.js';
 
 /** A saved layer look: an effect with all its settings, reusable in any scene. */
-export type PresetConfig = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
+export type PresetConfig = Omit<LayerConfig, 'id' | 'enabled' | 'paint'> & { name: string };
 
 /** One uploaded scan (a .glb), placed relative to the house. */
 export interface HousePart {

@@ -2,7 +2,7 @@ import type { LayerConfig, LayoutConfig, ParamSpec, SceneConfig } from '@xmas/en
 import type { DecodeStats, MappingParams, MappingPlan } from '@xmas/engine/mapping';
 
 /** A saved layer look. */
-export type Preset = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
+export type Preset = Omit<LayerConfig, 'id' | 'enabled' | 'paint'> & { name: string };
 
 /** One uploaded scan, placed relative to the house. */
 export interface HousePart {
