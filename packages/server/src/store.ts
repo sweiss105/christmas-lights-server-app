@@ -28,6 +28,8 @@ export interface ShowState {
   output: OutputSettings & { fps: number; enabled: boolean; transition?: number };
   /** 3D house model (a phone scan) and how it lines up with the lights. */
   house?: HouseConfig;
+  /** The scene the porch was running (may differ from the saved copy while Blind edits are pending), so a restart restores it. */
+  stage?: SceneConfig;
   /** Layer presets by name. Missing in state files from before presets existed. */
   presets?: Record<string, PresetConfig>;
 }

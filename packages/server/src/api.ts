@@ -31,10 +31,18 @@ export async function createApp(opts: AppOptions): Promise<App> {
   let engine = new Engine(buildLayout(state.layout));
   engine.setOutput({ brightness: state.output.brightness, gamma: state.output.gamma });
   if (state.activeScene && state.scenes[state.activeScene]) {
-    try { engine.setScene(state.scenes[state.activeScene]!); } catch { state.activeScene = null; }
+    // Prefer the staged copy, so Blind edits that weren't sent stay pending across a restart.
+    const staged = state.stage?.name === state.activeScene ? state.stage : undefined;
+    try { engine.setScene(staged ?? state.scenes[state.activeScene]!); } catch {
+      try { engine.setScene(state.scenes[state.activeScene]!); } catch { state.activeScene = null; }
+    }
   }
   const output = new OutputLoop(() => engine, state.output.fps);
-  const persist = () => saveState(opts.statePath, state);
+  /** Save, recording what's on stage so a restart can bring it back exactly. */
+  const persist = () => {
+    if (state.activeScene) state.stage = engine.scene; else delete state.stage;
+    return saveState(opts.statePath, state);
+  };
   /** Crossfade time for Go and Blackout. Live edits never fade. */
   const fadeSeconds = () => state.output.transition ?? 1;
 
@@ -90,7 +98,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
     next.setOutput(engine.output);
     // Keep the current scene if it still fits the new layout (its groups may have gone).
     if (state.activeScene) {
-      try { next.setScene(state.scenes[state.activeScene]!); } catch { state.activeScene = null; }
+      // Keep what's on stage (Blind edits stay pending); fall back to the saved copy if it doesn't fit.
+      try { next.setScene(engine.scene); } catch {
+        try { next.setScene(state.scenes[state.activeScene]!); } catch { state.activeScene = null; }
+      }
     }
     engine = next;
     state.layout = req.body;

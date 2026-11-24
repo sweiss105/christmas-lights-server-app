@@ -116,6 +116,20 @@ describe('Blind / Live editing and the web UI', () => {
     expect((await app.server.inject('/api/status')).json().stage).toEqual({ scene: 'Red', dirty: false });
   });
 
+  it('a restart brings back exactly what was on stage, with Blind edits still pending', async () => {
+    const { app, statePath } = await makeApp();
+    await app.server.inject({ method: 'PUT', url: '/api/scenes/Red?apply=false', payload: blue });
+    await app.server.close();
+    const state = JSON.parse(await readFile(statePath, 'utf8')) as ShowState;
+    const again: App = await createApp({ state, statePath });
+    cleanups.push(() => again.server.close());
+    expect([...(await again.server.inject('/api/frame')).rawPayload.subarray(0, 3)]).toEqual([255, 0, 0]); // still the staged red
+    expect((await again.server.inject('/api/status')).json().stage).toEqual({ scene: 'Red', dirty: true });
+    // Go after the restart sends the Blind edits as usual
+    await again.server.inject({ method: 'POST', url: '/api/scenes/Red/activate' });
+    expect([...(await again.server.inject('/api/frame')).rawPayload.subarray(0, 3)]).toEqual([0, 0, 255]);
+  });
+
   it('GET /api/stage returns the scene the porch is running, even when Blind edits are pending', async () => {
     const { app } = await makeApp();
     await app.server.inject({ method: 'PUT', url: '/api/scenes/Red?apply=false', payload: blue });
