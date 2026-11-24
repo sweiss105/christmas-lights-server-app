@@ -2,13 +2,14 @@ import { Suspense, useEffect, useMemo } from 'react';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { House } from './api';
+import { addGlow, type GlowUniforms } from './glowMaterial';
 
 /**
  * The scanned house, toned down to a night-time look so the lights stand out. Each scan part sits
  * inside the house transform, so parts are first placed against each other, then the whole house
  * is lined up with the lights.
  */
-export function HouseModel({ house, onPick }: { house: House; onPick?: (p: [number, number, number]) => void }) {
+export function HouseModel({ house, onPick, glow }: { house: House; onPick?: (p: [number, number, number]) => void; glow?: GlowUniforms }) {
   const parts = house.parts.filter((p) => p.visible);
   if (!parts.length) return null;
   return (
@@ -21,7 +22,7 @@ export function HouseModel({ house, onPick }: { house: House; onPick?: (p: [numb
       {parts.map((p) => (
         <group key={p.id} position={p.position} rotation-y={(p.rotation * Math.PI) / 180} scale={p.scale}>
           <Suspense fallback={null}>
-            <Model url={`/api/house/parts/${encodeURIComponent(p.id)}/model?v=${encodeURIComponent(p.uploadedAt)}`} opacity={house.opacity} />
+            <Model url={`/api/house/parts/${encodeURIComponent(p.id)}/model?v=${encodeURIComponent(p.uploadedAt)}`} opacity={house.opacity} glow={glow} />
           </Suspense>
         </group>
       ))}
@@ -38,9 +39,9 @@ const EDGE_MAX_TRIS = 3000; // outline only simple, built shapes; leave bushes a
  * One model. Photo scans carry baked daylight textures, so their materials become unlit ones that
  * keep the texture but darken it. Models without textures (built from parts) get a matte, lit clay
  * look, slightly tinted by each part's colour, with faint outlines on hard edges, so walls, roof,
- * railings and steps read as separate shapes.
+ * railings and steps read as separate shapes, and catches the coloured spill of nearby lights.
  */
-function Model({ url, opacity }: { url: string; opacity: number }) {
+function Model({ url, opacity, glow }: { url: string; opacity: number; glow?: GlowUniforms }) {
   // No Draco (its decoder would load from a CDN); meshopt compression is supported without one.
   const gltf = useGLTF(url, false, true);
   const scene = useMemo(() => {
@@ -64,6 +65,7 @@ function Model({ url, opacity }: { url: string; opacity: number }) {
         flatShading: !mesh.geometry.getAttribute('normal'), // built models often ship without normals
         transparent: true, side: THREE.DoubleSide,
       });
+      if (glow) addGlow(mesh.material as THREE.MeshStandardMaterial, glow); // the lights' spill (not on scans: their light is baked in)
       const tris = (mesh.geometry.index?.count ?? mesh.geometry.getAttribute('position').count) / 3;
       if (tris <= EDGE_MAX_TRIS) {
         const line = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 30),
@@ -75,7 +77,7 @@ function Model({ url, opacity }: { url: string; opacity: number }) {
     });
     for (const [mesh, line] of edges) mesh.add(line);
     return root;
-  }, [gltf]);
+  }, [gltf, glow]);
 
   useEffect(() => {
     scene.traverse((o) => {

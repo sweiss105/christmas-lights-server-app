@@ -427,6 +427,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
       if (!Number.isFinite(b.opacity) || b.opacity < 0 || b.opacity > 1) throw new HttpError(400, 'opacity must be 0..1');
       next.opacity = b.opacity;
     }
+    if (b.glow !== undefined) {
+      if (typeof b.glow !== 'number' || !Number.isFinite(b.glow) || b.glow < 0 || b.glow > 3) throw new HttpError(400, 'glow must be 0..3');
+      next.glow = b.glow;
+    }
     state.house = next;
     await persist();
     return next;

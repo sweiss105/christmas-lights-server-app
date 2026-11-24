@@ -21,6 +21,8 @@ export interface House {
   rotation: number;
   scale: number;
   opacity: number;
+  /** Strength of the lights' spill on the house model in the preview: 0 is off, 1 the default. */
+  glow?: number;
   parts: HousePart[];
 }
 
