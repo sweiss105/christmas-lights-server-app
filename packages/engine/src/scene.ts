@@ -1,5 +1,6 @@
 import { EFFECTS, resolveParams, type Params, type RenderFn } from './effects.js';
 import type { Layout } from './layout.js';
+import { decodePaint } from './paint.js';
 
 /**
  * How a layer combines with the layers below it. The two mask modes don't add colour: they use the
@@ -19,6 +20,11 @@ export interface LayerConfig {
   blend?: BlendMode;
   /** For mask blend modes: mask everything below (default) or only the layer directly below ("clipping"). */
   maskScope?: MaskScope;
+  /**
+   * Painted on with the brush: the layer shows only on the lights painted, as strongly as each was
+   * painted (see paint.ts for the format). Absent = the whole group, as usual.
+   */
+  paint?: string;
   enabled?: boolean;
 }
 
@@ -68,7 +74,10 @@ export function validateScene(scene: SceneConfig, layout: Layout): SceneConfig {
       if (typeof opacity !== 'number' || opacity < 0 || opacity > 1) throw new Error(`layer "${l.id}": opacity must be 0..1`);
       const maskScope = l.maskScope ?? 'below';
       if (!MASK_SCOPES.includes(maskScope)) throw new Error(`layer "${l.id}": unknown mask scope "${maskScope}"`);
-      return { id: l.id, effect: l.effect, params: resolveParams(def, l.params), group, opacity, blend, ...(isMask(blend) && { maskScope }), enabled: l.enabled ?? true };
+      if (l.paint !== undefined) {
+        try { decodePaint(l.paint, 0); } catch (e) { throw new Error(`layer "${l.id}": ${(e as Error).message}`); }
+      }
+      return { id: l.id, effect: l.effect, params: resolveParams(def, l.params), group, opacity, blend, ...(isMask(blend) && { maskScope }), ...(l.paint !== undefined && { paint: l.paint }), enabled: l.enabled ?? true };
     }),
   };
 }
@@ -92,6 +101,8 @@ export class Engine {
   /** Per-pixel opacity from a clipping mask. */
   private clipKeep: Float32Array;
   /** Crossfade in progress: the layers being faded out. `start` is set on the first frame after the change. */
+  /** The running effect of each layer, by layer id, with the effect and settings it was made for. */
+  private instances = new Map<string, { key: string; render: RenderFn }>();
   private fade: { from: CompiledLayer[]; duration: number; start: number | null; acc: Float32Array } | null = null;
   readonly frame: Uint8Array;
   private gammaLut = new Uint8Array(4096);
@@ -112,16 +123,41 @@ export class Engine {
     const fade = opts.fade ?? 0;
     // Fade from what's on screen now; if a fade is already running, from the scene it was heading to.
     this.fade = fade > 0 ? { from: this.layers, duration: fade, start: null, acc: this.fade?.acc ?? new Float32Array(this.layout.count * 3) } : null;
-    this.layers = valid.layers.filter((l) => l.enabled).map((l) => ({
-      render: EFFECTS[l.effect]!.create(l.params!, this.layout),
-      mask: this.layout.groups.get(l.group!)!,
-      weight: this.layout.groupWeights.get(l.group!) ?? null,
+    // An edit that leaves a layer's effect and settings alone (a brush stroke, opacity, the lights it
+    // covers) keeps that effect running rather than restarting it. Not during a crossfade: the old
+    // stack is still rendering with its own instances.
+    const kept = fade > 0 ? new Map<string, { key: string; render: RenderFn }>() : this.instances;
+    this.instances = new Map();
+    this.layers = valid.layers.filter((l) => l.enabled).map((l) => {
+      const key = `${l.effect}\n${JSON.stringify(l.params)}`;
+      const prev = kept.get(l.id);
+      const render = prev?.key === key ? prev.render : EFFECTS[l.effect]!.create(l.params!, this.layout);
+      this.instances.set(l.id, { key, render });
+      return {
+      render,
+      ...this.coverage(l),
       opacity: l.opacity!,
       blend: l.blend!,
       maskScope: l.maskScope ?? 'below',
-    }));
+      };
+    });
     this.scene = valid;
     return valid;
+  }
+
+  /** Which lights a layer touches and how strongly: its group, narrowed to where it's painted. */
+  private coverage(l: LayerConfig): { mask: Uint8Array; weight: Float32Array | null } {
+    const group = this.layout.groups.get(l.group!)!;
+    const groupWeight = this.layout.groupWeights.get(l.group!) ?? null;
+    if (l.paint === undefined) return { mask: group, weight: groupWeight };
+    const paint = decodePaint(l.paint, this.layout.count);
+    const mask = new Uint8Array(this.layout.count), weight = new Float32Array(this.layout.count);
+    for (let i = 0; i < mask.length; i++) {
+      if (!group[i] || !paint[i]) continue;
+      mask[i] = 1;
+      weight[i] = (paint[i]! / 255) * (groupWeight ? groupWeight[i]! : 1);
+    }
+    return { mask, weight };
   }
 
   get output(): OutputSettings { return { ...this.settings }; }

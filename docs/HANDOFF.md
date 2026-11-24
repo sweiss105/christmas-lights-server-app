@@ -256,6 +256,17 @@ The lights show white at master brightness × `level`, through the normal output
 
 Each saved spot keeps its decoder stats (`blobs`, `decoded`, `unclear`, `badParity`, `syncScore`, `offsetMs`). They help tune `minMargin`, the hold time and K afterwards.
 
+## Paint mode (built 2026-11-24, branch `paint-mode`; not yet tried on the real porch)
+
+The owner asked for a brush to paint colours and effects on the lights, with the model as the canvas. A painting is part of a scene, and can be watched live on the porch.
+
+- **Data:** `LayerConfig.paint` is a base64 string, one byte (0–255) per global pixel, trailing zeros dropped (`packages/engine/src/paint.ts`). The engine multiplies it into the layer's per-light weight, inside the layer's group. Paint shorter or longer than the layout is fine, so scenes survive a layout change. Presets never store paint.
+- **Strokes** (`packages/web/src/paint.ts`, pure and tested): a stroke is a weight per light from the lights' screen positions, like the Select brush. Going over a light twice in one stroke doesn't build up. Painting adds to the painted layer with the brush's look (same effect, settings, blend) or makes a new one on top, and wipes those lights on painted layers *above* it, so the newest stroke always shows. Paint *below* is left alone so soft edges blend. Erase wipes all painted layers. Ordinary layers are never touched; a painted layer wiped empty is removed.
+- **Screen:** `PaintPanel.tsx` and `PaintOverlay.tsx`; the Paint button in the top bar (a brush icon on phones). Strokes go through the scene editor's history, one undo step per stroke, saved once per frame at most. Tuning the effect brush's settings also retunes what it already painted. After Done, each paint is a normal layer in the list (marked *Painted*), with *Fill all lights* to drop the painting.
+- **Engine change:** `Engine.setScene` now keeps a layer's running effect when only its paint, opacity, blend or group changed (never during a crossfade). Without that, Fire or a particle effect restarted on every brush move. It also means an opacity drag no longer restarts effects.
+- **The brush paints through:** lights behind the ones under the brush (the far side of a coiled rail, a string further back) are painted too. Turn the view with Move to paint one without the other.
+- **To try on the porch:** Go a scene, arm Live, open Paint and draw. Watch how it keeps up over Wi-Fi: each frame of a stroke is one scene save.
+
 ## Known gaps and things to watch
 
 - **Health-check timing:** they run every 10 s via HTTP to `/json/info`, so a controller that was offline at startup shows `online:false` until the next check.

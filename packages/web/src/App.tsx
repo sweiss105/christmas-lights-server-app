@@ -5,6 +5,8 @@ import { History, uniqueName, type SceneEditor } from './editor';
 import { appendPoint, setPoint } from './layoutOps';
 import { LayoutPanel } from './LayoutPanel';
 import { SelectPanel } from './SelectPanel';
+import { PaintPanel, usePaint } from './PaintPanel';
+import { PaintOverlay } from './PaintOverlay';
 import { SelectionOverlay, type SelectTool } from './SelectionOverlay';
 import type { SelectMode, Selection } from './selection';
 import { EditorPanel } from './EditorPanel';
@@ -44,6 +46,8 @@ export function App() {
   const [backupsOpen, setBackupsOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
+  const [paintMode, setPaintMode] = useState(false);
+  const paint = usePaint();
   const [selection, setSelection] = useState<Selection>(() => new Set());
   const [selectTool, setSelectTool] = useState<SelectTool>('box');
   const [selectModeKind, setSelectModeKind] = useState<SelectMode>('replace');
@@ -52,11 +56,11 @@ export function App() {
   const onProjector = useCallback((p: (() => Float32Array) | null) => setProjector(p ? { fn: p } : null), []);
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [drawing, setDrawing] = useState(false);
-  /** Leave Select or Layout and show the scene editor again (the selection and any layout draft are kept). */
-  const backToEditing = useCallback(() => { setSelectMode(false); setLayoutMode(false); setDrawing(false); }, []);
+  /** Leave Select, Paint or Layout and show the scene editor again (the selection, brush and any layout draft are kept). */
+  const backToEditing = useCallback(() => { setSelectMode(false); setPaintMode(false); setLayoutMode(false); setDrawing(false); }, []);
   // Esc does the same, unless it's meant for a text field or an open popup (they handle it themselves).
   useEffect(() => {
-    if (!selectMode && !layoutMode) return;
+    if (!selectMode && !layoutMode && !paintMode) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       const t = e.target as HTMLElement | null;
@@ -66,7 +70,19 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectMode, layoutMode, drawing, backToEditing]);
+  }, [selectMode, layoutMode, paintMode, drawing, backToEditing]);
+  // [ and ] make the brush smaller and bigger while painting.
+  const { brush: paintBrush, setBrush: setPaintBrush } = paint;
+  useEffect(() => {
+    if (!paintMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== '[' && e.key !== ']') || e.metaKey || e.ctrlKey) return;
+      if ((e.target as HTMLElement | null)?.closest('input:not([type="range"]), textarea, select')) return;
+      setPaintBrush({ ...paintBrush, size: Math.max(6, Math.min(160, Math.round(paintBrush.size * (e.key === ']' ? 1.2 : 1 / 1.2)))) });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paintMode, paintBrush, setPaintBrush]);
   const layoutDraft = useLayoutDraft(layout);
   const shownLayout = useLastValidLayout(layoutMode ? layoutDraft.value : layout);
   const editor = useSceneEditor(show, selected, mode);
@@ -96,7 +112,7 @@ export function App() {
   const mapViews = useMappingViews(mapDemo, layoutPixels, show.reportError);
   const mapReview = useMapReview(show, mapViews, runRoles, mapMode === 'review');
   const reviewing = mapMode === 'review';
-  const openReview = useCallback(() => { setMapMode('review'); setSelectMode(false); setLayoutMode(false); setDrawing(false); setPhoneTab('edit'); }, [setMapMode]);
+  const openReview = useCallback(() => { setMapMode('review'); setSelectMode(false); setPaintMode(false); setLayoutMode(false); setDrawing(false); setPhoneTab('edit'); }, [setMapMode]);
 
   if (show.needsToken) return <TokenGate />;
   if (!layout || !status || !shownLayout) return <Loading show={show} />;
@@ -114,7 +130,7 @@ export function App() {
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : ''}`}>
       <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
-        selection={selectMode ? selection : null} onProjector={selectMode ? onProjector : undefined}
+        selection={selectMode ? selection : null} onProjector={selectMode || paintMode ? onProjector : undefined}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
           onAddPoint: (p) => { if (selectedRun) layoutDraft.edit(appendPoint(layoutDraft.value, selectedRun, p)); },
@@ -130,18 +146,29 @@ export function App() {
         <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} layoutConfig={layout} selection={selection} onChange={setSelection} />
       )}
 
+      {/* Painting works on the working copy, so only while the Preview (not the Stage) is shown. */}
+      {paintMode && !reviewing && projector && view === 'preview' && editor.scene.name && (
+        <PaintOverlay tool={paint.tool} brush={paint.brush} look={paint.look} tint={paint.source === 'color' ? paint.color : null} project={projector.fn} editor={editor} count={layoutPixels} />
+      )}
+
       <TopBar show={show} mode={mode} tools={
         <div className="tools" role="toolbar" aria-label="Tools">
           <button className={`viewbar-btn ${selectMode ? 'active' : ''}`} aria-pressed={selectMode}
-            onClick={() => { setSelectMode((m) => !m); setLayoutMode(false); setDrawing(false); }}>Select</button>
+            onClick={() => { setSelectMode((m) => !m); setPaintMode(false); setLayoutMode(false); setDrawing(false); }}>Select</button>
+          <button className={`viewbar-btn ${paintMode ? 'active' : ''}`} aria-pressed={paintMode}
+            onClick={() => { setPaintMode((m) => !m); setSelectMode(false); setLayoutMode(false); setDrawing(false); setView('preview'); setPhoneTab('edit'); }}>Paint</button>
           <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode}
-            onClick={() => { setLayoutMode((m) => !m); setSelectMode(false); setDrawing(false); }}>Layout</button>
+            onClick={() => { setLayoutMode((m) => !m); setSelectMode(false); setPaintMode(false); setDrawing(false); }}>Layout</button>
           <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
           <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
           <button className={`viewbar-btn ${mapMode !== 'off' ? 'active' : ''}`} aria-pressed={mapMode !== 'off'} onClick={() => setMapMode(mapMode === 'off' ? 'capture' : 'off')}>Map</button>
         </div>
       } mapButton={
-        <button className="icon-btn map-entry" aria-label="Map lights with the camera" onClick={() => setMapMode('capture')}><CameraIcon /></button>
+        <>
+          <button className={`icon-btn map-entry ${paintMode ? 'active' : ''}`} aria-label="Paint on the lights" aria-pressed={paintMode}
+            onClick={() => { setPaintMode((m) => !m); setSelectMode(false); setLayoutMode(false); setDrawing(false); setView('preview'); setPhoneTab('edit'); }}><BrushIcon /></button>
+          <button className="icon-btn map-entry" aria-label="Map lights with the camera" onClick={() => setMapMode('capture')}><CameraIcon /></button>
+        </>
       } />
 
       <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); backToEditing(); }} />
@@ -152,6 +179,8 @@ export function App() {
         : selectMode
         ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
             mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} onDone={backToEditing} />
+        : paintMode
+        ? <PaintPanel show={show} editor={editor} paint={paint} mode={mode} onModeChange={setMode} onDone={backToEditing} />
         : layoutMode
         ? <LayoutPanel show={show} draft={layoutDraft} onDone={backToEditing} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
         : <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />}
@@ -179,6 +208,8 @@ export function App() {
         ? <div className="caption layout" role="status">Mapping results: {mapReview.showMapped ? 'with the measured positions (not saved yet)' : 'the layout as saved'}</div>
         : selectMode
         ? <div className="caption layout" role="status">{selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over lights' : selectTool === 'lasso' ? 'draw around lights' : selectTool === 'string' ? 'tap a string to pick all its lights' : 'drag a box around lights'} · ${selection.size} selected`}</div>
+        : paintMode
+        ? <div className="caption layout" role="status">{view === 'stage' ? 'Paint: switch to Preview to paint' : paint.tool === 'orbit' ? 'Paint: Move tool, drag to turn the view' : paint.tool === 'erase' ? 'Paint: drag over lights to wipe paint off' : paint.look ? 'Paint: drag over the lights' : 'Paint: choose an effect first'}{mode === 'live' && stageName === selected && status.output.enabled ? ' · showing on the porch' : ''}</div>
         : layoutMode
         ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
         : <ViewCaption view={view} show={show} selected={selected} />}
@@ -342,6 +373,15 @@ function useSceneActions(show: Show, editor: SceneEditor, select: (n: string | n
       } catch (e) { show.reportError(e); return false; }
     },
   };
+}
+
+function BrushIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
+      <path d="M17 2.5 8.5 11l1.8 1.8L18 4.2c.5-.5.5-1.2 0-1.7s-.6-.4-1 0Z" fill="currentColor" />
+      <path d="M7.4 12.2c-1.6 0-2.8 1.2-2.8 2.8 0 1.1-.8 1.9-2 2.2 1 .7 2.2 1 3.4 1 2.200 0 3.800-1.600 3.800-3.600 0-1.300-1.100-2.400-2.400-2.400Z" fill="currentColor" />
+    </svg>
+  );
 }
 
 /** Shown when the server wants its API token: ask once, then the browser remembers (a cookie). */

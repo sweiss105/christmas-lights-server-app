@@ -608,7 +608,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const validatePreset = (name: string, body: Partial<LayerConfig>): PresetConfig => {
     const group = typeof body.group === 'string' && engine.layout.groups.has(body.group) ? body.group : 'all';
     const layer = validateScene({ name, layers: [{ ...body, id: 'preset', group } as LayerConfig] }, engine.layout).layers[0]!;
-    const { id: _id, enabled: _enabled, ...look } = layer;
+    const { id: _id, enabled: _enabled, paint: _paint, ...look } = layer; // a preset is a look, not where it was painted
     return { name, ...look };
   };
 

@@ -77,6 +77,38 @@ try {
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Candy cane' }).click();
   check(await editorBack() && !(await page.getByRole('complementary', { name: 'Select lights' }).isVisible()), 'picking a scene leaves Select for the editor');
+  // Paint mode: brush strokes become painted layers of the scene, one undo step each; Erase wipes them.
+  const shot = (name) => (process.env.E2E_SHOTS ? page.screenshot({ path: join(process.env.E2E_SHOTS, `${name}.png`) }) : null);
+  const paintedLayers = async () => (await (await fetch(`${base}/api/scenes/${encodeURIComponent('Candy cane')}`)).json()).layers.filter((l) => typeof l.paint === 'string');
+  const scribble = async () => {
+    await page.mouse.move(330, 240);
+    await page.mouse.down();
+    for (let y = 240; y <= 680; y += 40) { await page.mouse.move(900, y, { steps: 6 }); await page.mouse.move(330, y + 20, { steps: 6 }); }
+    await page.mouse.up();
+    await page.waitForTimeout(600); // the save
+  };
+  await page.getByRole('button', { name: 'Paint', exact: true }).click();
+  check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })), 'the Paint panel opens');
+  for (let i = 0; i < 4; i++) await page.keyboard.press(']');
+  await scribble();
+  await shot('paint-colour');
+  let painted = await paintedLayers();
+  check(painted.length === 1 && painted[0].effect === 'solid' && painted[0].paint.length > 0, 'a brush stroke adds a painted layer to the scene');
+  await page.getByRole('radio', { name: 'Effect', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Add a layer' }).getByRole('option', { name: /^Rainbow/ }).first().click();
+  await scribble();
+  await shot('paint-effect');
+  painted = await paintedLayers();
+  check(painted.at(-1).effect !== 'solid' && painted.at(-1).paint.length > 0, 'painting an effect puts it on top of the colour');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await page.waitForTimeout(600);
+  painted = await paintedLayers();
+  check(painted.length === 1 && painted[0].effect === 'solid', 'Undo takes back one whole stroke');
+  await page.getByRole('radio', { name: 'Erase', exact: true }).click();
+  await scribble();
+  check((await paintedLayers()).length === 0, 'Erase wipes the paint off');
+  await page.keyboard.press('Escape');
+  check(await editorBack() && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc leaves Paint for the editor');
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await page.locator('.preview-canvas').click({ position: { x: 640, y: 700 } });
   await page.keyboard.press('Escape');
