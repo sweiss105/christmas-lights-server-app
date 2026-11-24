@@ -30,13 +30,15 @@ export interface HouseConfig {
   scale: number;
   /** 0..1 in the preview. */
   opacity: number;
+  /** Strength of the lights' coloured spill on the house in the preview: 0 is off, 1 the default, up to 3. */
+  glow?: number;
   /** Scans, e.g. two halves of the house captured separately. */
   parts?: HousePart[];
   /** Before parts existed: a single model in house.glb. Migrated into parts on startup. */
   model?: { bytes: number; uploadedAt: string };
 }
 
-export const DEFAULT_HOUSE: HouseConfig = { position: [0, 0, 0], rotation: 0, scale: 1, opacity: 0.85 };
+export const DEFAULT_HOUSE: HouseConfig = { position: [0, 0, 0], rotation: 0, scale: 1, opacity: 0.85, glow: 1 };
 
 export interface ShowState {
   layout: LayoutConfig;

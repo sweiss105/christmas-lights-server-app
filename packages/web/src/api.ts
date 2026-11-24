@@ -1,4 +1,5 @@
 import type { LayerConfig, LayoutConfig, ParamSpec, SceneConfig } from '@xmas/engine';
+import type { DecodeStats, MappingParams, MappingPlan } from '@xmas/engine/mapping';
 
 /** A saved layer look. */
 export type Preset = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
@@ -21,6 +22,8 @@ export interface House {
   rotation: number;
   scale: number;
   opacity: number;
+  /** Strength of the lights' spill on the house model in the preview: 0 is off, 1 the default. */
+  glow?: number;
   parts: HousePart[];
 }
 
@@ -61,6 +64,21 @@ export interface Status {
   output: { brightness: number; gamma: number; enabled: boolean; transition: number };
   stream: { running: boolean; targetFps: number; fps: number; renderMs: number; lateFrames: number; controllers: ControllerHealth[] };
 }
+
+/** One spot the phone filmed from: what it found, kept on the server so it can be solved again. */
+export interface MappingView {
+  id: string;
+  createdAt: string;
+  width: number;
+  height: number;
+  layoutPixels: number;
+  params: MappingParams;
+  detections: { pixel: number; x: number; y: number; strength?: number; margin?: number }[];
+  stats?: Partial<DecodeStats>;
+  label?: string;
+}
+
+export interface MappingStart { active: boolean; now: number; streaming: boolean; startsAt: number; endsAt: number; plan: MappingPlan }
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -123,5 +141,12 @@ export const api = {
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),
+  mappingStart: (p: Partial<MappingParams> & { leadMs?: number }) => call<MappingStart>('POST', '/api/mapping/start', p),
+  mappingStop: () => call<{ active: boolean }>('POST', '/api/mapping/stop'),
+  mappingViews: () => call<MappingView[]>('GET', '/api/mapping/views'),
+  saveMappingView: (v: Omit<MappingView, 'id' | 'createdAt' | 'layoutPixels'>) => call<MappingView>('POST', '/api/mapping/views', v),
+  deleteMappingView: (id: string) => call<{ deleted: string }>('DELETE', `/api/mapping/views/${enc(id)}`),
+  /** Save a backup now; `reason` starts its file name. */
+  backupNow: (reason: string) => call<{ file: string }>('POST', '/api/backups', { reason }),
   setOutput: (o: Partial<{ brightness: number; enabled: boolean; fps: number; transition: number }>) => call<Status['output']>('PATCH', '/api/output', o),
 };

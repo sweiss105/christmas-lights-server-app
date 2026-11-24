@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayerConfig, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { registerMapping } from './mapping.js';
 import { OutputLoop } from './output.js';
 import { inWindow, isTimeZone, nextWindow, playlistPosition, type PlaylistConfig, type ScheduleConfig } from './show.js';
 import { DEFAULT_HOUSE, saveState, type HouseConfig, type HousePart, type PresetConfig, type ShowState } from './store.js';
@@ -109,6 +110,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
       }
     }
     engine = next;
+    mapping.stop(); // pixel codes follow the layout, so a running sequence would no longer match it
     state.layout = req.body;
     await persist();
     return { pixels: engine.layout.count, groups: [...engine.layout.groups.keys()] };
@@ -328,6 +330,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     const staged = state.activeScene && (state.stage?.name === state.activeScene ? state.stage : state.scenes[state.activeScene]);
     if (staged) { try { next.setScene(staged); } catch { state.activeScene = null; } }
     engine = next;
+    mapping.stop();
     lastInWindow = undefined;
     await persist();
     return savedFirst;
@@ -339,6 +342,15 @@ export async function createApp(opts: AppOptions): Promise<App> {
   });
   server.post('/api/restore', { bodyLimit: 20 * 1024 * 1024 }, async (req) => ({ restored: true, savedFirst: await restoreFrom(req.body) }));
   server.get('/api/backups', async () => listBackups());
+  /** Save a backup now, e.g. before accepting mapped positions. `reason` starts the file name. */
+  server.post<{ Body: { reason?: string } }>('/api/backups', async (req) => {
+    const reason = req.body?.reason ?? 'manual';
+    if (typeof reason !== 'string' || !/^[a-z][a-z-]{0,29}$/.test(reason) || reason.startsWith('daily')) throw new HttpError(400, 'reason must be 1..30 lowercase letters or dashes');
+    const file = `${reason}-${new Date(now()).toISOString().replace(/[:.]/g, '-').toLowerCase()}.json`;
+    await writeBackup(file);
+    await prune(`${reason}-`, 10);
+    return { file };
+  });
   server.get<{ Params: { file: string } }>('/api/backups/:file', async (req, reply) => {
     if (!BACKUP_NAME.test(req.params.file)) throw new HttpError(404, 'no such backup');
     try { const body = await readFile(join(backupDir, req.params.file), 'utf8'); reply.header('content-type', 'application/json').header('content-disposition', `attachment; filename="${req.params.file}"`); return body; }
@@ -365,7 +377,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
 
   // ---- identify: flash one run on the porch -----------------------------------
   let identify: { run: string; until: number } | null = null;
-  output.overlay = (frame, t) => {
+  const identifyOverlay = (frame: Uint8Array, t: number) => {
     if (!identify) return;
     if (performance.now() > identify.until) { identify = null; return; }
     const mask = engine.layout.groups.get(`run:${identify.run}`);
@@ -377,6 +389,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
       frame[i * 3] = on; frame[i * 3 + 1] = on; frame[i * 3 + 2] = on;
     }
   };
+
+  // Camera mapping takes over the whole output while its sequence plays; otherwise Identify may flash a run.
+  const mapping = registerMapping(server, { engine: () => engine, output, dataDir: dirname(opts.statePath) });
+  output.overlay = (frame, t) => { if (!mapping.overlay(frame, t)) identifyOverlay(frame, t); };
 
   /** Flash one run on the porch for a few seconds (only visible while streaming). `run: null` cancels. */
   server.post<{ Body: { run?: string | null; seconds?: number } }>('/api/identify', async (req) => {
@@ -426,6 +442,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
     if (b.opacity !== undefined) {
       if (!Number.isFinite(b.opacity) || b.opacity < 0 || b.opacity > 1) throw new HttpError(400, 'opacity must be 0..1');
       next.opacity = b.opacity;
+    }
+    if (b.glow !== undefined) {
+      if (typeof b.glow !== 'number' || !Number.isFinite(b.glow) || b.glow < 0 || b.glow > 3) throw new HttpError(400, 'glow must be 0..3');
+      next.glow = b.glow;
     }
     state.house = next;
     await persist();
@@ -544,7 +564,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
   /** Raw RGB frame (global pixel order) for previews and debugging. */
   server.get('/api/frame', async (_req, reply) => {
     reply.header('content-type', 'application/octet-stream');
-    return Buffer.from(engine.render(output.now()));
+    const t = output.now();
+    const frame = engine.render(t);
+    output.overlay?.(frame, t); // what the porch is sent: Identify and mapping included
+    return Buffer.from(frame);
   });
 
   // ---- controllers --------------------------------------------------------

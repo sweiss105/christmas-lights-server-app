@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "source": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./mapping": {
+      "types": "./dist/mapping/index.d.ts",
+      "source": "./src/mapping/index.ts",
+      "default": "./dist/mapping/index.js"
     }
   },
   "scripts": {

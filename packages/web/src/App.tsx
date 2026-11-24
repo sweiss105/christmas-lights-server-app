@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { EFFECTS, paletteColors, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { buildLayout, EFFECTS, paletteColors, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
 import { History, uniqueName, type SceneEditor } from './editor';
 import { appendPoint, setPoint } from './layoutOps';
@@ -14,6 +14,9 @@ import { PlaylistsView, ScheduleView } from './ShowPanels';
 import { latestWins } from './latest';
 import { Preview, type CameraPreset } from './Preview';
 import { useSceneEditor, type EditMode } from './useSceneEditor';
+import { CameraIcon, MapScreen } from './mapping/MapScreen';
+import { MapReviewPanel, useMapReview } from './mapping/MapReviewPanel';
+import { useMappingViews, useRunRoles } from './mapping/review';
 import { useShow, type Show } from './useShow';
 
 type View = 'preview' | 'stage';
@@ -79,11 +82,36 @@ export function App() {
 
   const sceneActions = useSceneActions(show, editor, setSelected);
 
+  // Camera mapping: #map opens the filming screen (#map-demo with a simulated camera instead).
+  const [mapMode, setMapModeState] = useState<'off' | 'capture' | 'review'>(() => (/^#map(-demo)?$/.test(location.hash) ? 'capture' : 'off'));
+  const [mapDemo] = useState(() => location.hash === '#map-demo');
+  const setMapMode = useCallback((m: 'off' | 'capture' | 'review') => {
+    setMapModeState(m);
+    const hash = m === 'capture' ? (mapDemo ? '#map-demo' : '#map') : '';
+    if (location.hash !== hash) history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
+  }, [mapDemo]);
+  const layoutPixels = useMemo(() => (layout ? buildLayout(layout).count : 0), [layout]);
+  const [runRoles, setRunRole] = useRunRoles();
+  const mapViews = useMappingViews(mapDemo, layoutPixels, show.reportError);
+  const mapReview = useMapReview(show, mapViews, runRoles, mapMode === 'review');
+  const reviewing = mapMode === 'review';
+  const openReview = useCallback(() => { setMapMode('review'); setSelectMode(false); setLayoutMode(false); setDrawing(false); setPhoneTab('edit'); }, [setMapMode]);
+
   if (!layout || !status) return <Loading show={show} />;
+  // Filming: only the camera screen (no 3D view rendering behind it, which would cost battery and frames).
+  if (mapMode === 'capture') {
+    return (
+      <div className="app">
+        <MapScreen show={show} demo={mapDemo} views={mapViews} roles={runRoles} onClose={() => setMapMode('off')} onReview={openReview} />
+        {show.error && <div className="toast" role="alert"><span>{show.error}</span><button className="btn ghost small" onClick={show.clearError}>Dismiss</button></div>}
+      </div>
+    );
+  }
+  const previewLayout = reviewing && mapReview.showMapped && mapReview.candidate ? mapReview.candidate : layoutMode ? layoutDraft.value : layout;
 
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : ''}`}>
-      <Preview layout={layoutMode ? layoutDraft.value : layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
+      <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
         selection={selectMode ? selection : null} onProjector={selectMode ? onProjector : undefined}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
@@ -108,12 +136,18 @@ export function App() {
             onClick={() => { setLayoutMode((m) => !m); setSelectMode(false); setDrawing(false); }}>Layout</button>
           <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
           <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
+          <button className={`viewbar-btn ${mapMode !== 'off' ? 'active' : ''}`} aria-pressed={mapMode !== 'off'} onClick={() => setMapMode(mapMode === 'off' ? 'capture' : 'off')}>Map</button>
         </div>
+      } mapButton={
+        <button className="icon-btn map-entry" aria-label="Map lights with the camera" onClick={() => setMapMode('capture')}><CameraIcon /></button>
       } />
 
       <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); backToEditing(); }} />
 
-      {selectMode
+      {reviewing
+        ? <MapReviewPanel show={show} review={mapReview} views={mapViews} roles={runRoles} setRole={setRunRole} layoutDraft={layoutDraft}
+            onCamera={() => setMapMode('capture')} onDone={() => setMapMode('off')} />
+        : selectMode
         ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
             mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} onDone={backToEditing} />
         : layoutMode
@@ -139,7 +173,9 @@ export function App() {
       {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
       {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
 
-      {selectMode
+      {reviewing
+        ? <div className="caption layout" role="status">Mapping results: {mapReview.showMapped ? 'with the measured positions (not saved yet)' : 'the layout as saved'}</div>
+        : selectMode
         ? <div className="caption layout" role="status">{selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over lights' : selectTool === 'lasso' ? 'draw around lights' : selectTool === 'string' ? 'tap a string to pick all its lights' : 'drag a box around lights'} · ${selection.size} selected`}</div>
         : layoutMode
         ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
@@ -304,7 +340,7 @@ function Loading({ show }: { show: Show }) {
 
 // ---------------------------------------------------------------------------------------------
 
-function TopBar({ show, mode, tools }: { show: Show; mode: EditMode; tools: React.ReactNode }) {
+function TopBar({ show, mode, tools, mapButton }: { show: Show; mode: EditMode; tools: React.ReactNode; mapButton?: React.ReactNode }) {
   const status = show.status!;
   const streaming = status.output.enabled;
   return (
@@ -317,6 +353,7 @@ function TopBar({ show, mode, tools }: { show: Show; mode: EditMode; tools: Reac
       <StagePill show={show} />
       <div className="spacer" />
       {tools}
+      {mapButton}
       <Brightness show={show} />
       <StreamingSwitch show={show} />
       <button

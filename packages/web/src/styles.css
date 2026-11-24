@@ -511,3 +511,69 @@ h1, h2 { margin: 0; }
 .group-top { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
 .group-name { flex: 1; min-width: 0; text-align: left; border: 0; background: none; font-weight: 600; font-size: 0.9rem; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 4px; border-radius: 8px; }
 .group-name:hover { background: var(--fill); }
+
+/* ---- camera mapping: the filming screen (phone first, one hand, in the dark) ----------------- */
+.map-entry { display: none; }
+@media (max-width: 760px) { .map-entry { display: inline-flex; align-items: center; justify-content: center; } }
+.map-screen { position: fixed; inset: 0; z-index: 50; background: #000; color: var(--text); overflow: hidden; }
+.map-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.map-result { z-index: 1; }
+.map-top {
+  position: absolute; z-index: 2; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 10px;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px; background: linear-gradient(rgba(0, 0, 0, 0.6), transparent);
+}
+.map-round { width: var(--hit); height: var(--hit); border-radius: 50%; background: rgba(18, 22, 32, 0.7); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.map-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.map-title strong { font-size: 1rem; font-weight: 650; }
+.map-review-btn { min-height: var(--hit); padding: 0 16px; background: rgba(18, 22, 32, 0.7); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.map-rec {
+  position: absolute; z-index: 2; top: calc(env(safe-area-inset-top, 0px) + 66px); left: 50%; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.6);
+  font-size: 0.82rem; font-weight: 650; letter-spacing: 0.04em;
+}
+.map-rec.on .dot { background: var(--live); box-shadow: 0 0 10px rgba(255, 69, 58, 0.9); animation: live-pulse 1.2s ease-in-out infinite; }
+.map-sheet {
+  position: absolute; z-index: 2; left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  max-height: 62vh; overflow-y: auto; overscroll-behavior: contain; border-radius: 22px; padding: 16px 16px 14px;
+  background: var(--glass-strong);
+}
+@media (min-width: 761px) { .map-sheet { left: auto; right: 16px; bottom: 16px; width: 400px; } }
+.map-head { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 6px; }
+.map-guide { margin: 0 0 12px; color: var(--text-2); font-size: 0.95rem; line-height: 1.45; }
+.map-note { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: var(--accent); font-size: 0.88rem; }
+.map-warn { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: rgba(255, 194, 75, 0.12); color: var(--warn); font-size: 0.88rem; line-height: 1.4; }
+.map-start { width: 100%; min-height: 56px; font-size: 1.05rem; display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+.map-cancel { width: 100%; min-height: 52px; margin-top: 12px; }
+.map-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.map-row.two > .btn { flex: 1; min-height: 52px; }
+.spot-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.spot-chip { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 4px 0 12px; border-radius: 12px; background: var(--fill); font-size: 0.88rem; }
+.spot-text { flex: 1; min-width: 0; }
+.map-settings { margin: 8px -16px 0; }
+.map-settings .segmented button { flex: 1; min-width: 0; }
+.map-settings .hint { margin: 8px 16px 0; }
+.map-progress { display: flex; flex-direction: column; gap: 8px; }
+.map-progress .bar { height: 10px; border-radius: 5px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.map-progress .bar span { display: block; height: 100%; border-radius: 5px; background: var(--accent); transition: width 120ms linear; }
+.map-progress .label { font-size: 0.9rem; color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+/* ---- camera mapping: results ---------------------------------------------------------------- */
+.map-pad { margin-left: 16px; margin-right: 16px; }
+.map-review .backup-item { padding: 6px 4px 6px 12px; }
+.map-run { padding: 8px 12px 8px 16px; border-top: 1px solid var(--edge); }
+.map-run-top { display: flex; align-items: center; gap: 10px; }
+.map-run-top .run-swatch { height: 22px; width: 8px; }
+.map-run-top .part-name { flex: 1; min-width: 0; }
+.small-seg button { min-height: 32px; padding: 0 10px; font-size: 0.8rem; }
+.map-run-result { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0 0 18px; font-size: 0.82rem; color: var(--text-2); line-height: 1.4; }
+.map-run-result input { margin-top: 1px; }
+.map-screen ~ .toast { z-index: 60; bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 70px); }
+/* Phone held sideways (the best way to film): controls down the right, picture on the left. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .map-sheet { left: auto; top: calc(env(safe-area-inset-top, 0px) + 8px); right: calc(env(safe-area-inset-right, 0px) + 8px); bottom: 8px; width: min(46vw, 380px); max-height: none; }
+  .map-screen .map-video { width: calc(100% - min(46vw, 380px) - 16px); }
+  .map-top { right: calc(min(46vw, 380px) + 16px); padding-top: 8px; }
+  .map-rec { left: calc((100% - min(46vw, 380px) - 16px) / 2); top: 60px; }
+  .map-head { font-size: 1.15rem; }
+  .map-guide { font-size: 0.88rem; margin-bottom: 10px; }
+}

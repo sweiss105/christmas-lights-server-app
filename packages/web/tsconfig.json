@@ -23,6 +23,9 @@
     "paths": {
       "@xmas/engine": [
         "../engine/src/index.ts"
+      ],
+      "@xmas/engine/mapping": [
+        "../engine/src/mapping/index.ts"
       ]
     }
   },

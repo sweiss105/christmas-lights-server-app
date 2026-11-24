@@ -87,7 +87,14 @@ try {
   check(await shows(page.getByText('Run the show every night')), 'the Schedule tab opens');
   await page.getByRole('button', { name: 'Backups', exact: true }).click();
   check(await shows(page.getByRole('dialog', { name: 'Backups' })), 'the Backups panel opens');
-  check(errors.length === 0, `no page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
+  // Map lights: the filming screen opens (headless Chromium has no camera, so it explains that) and closes again.
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Map', exact: true }).click();
+  check(await shows(page.getByRole('dialog', { name: 'Map lights' })), 'the Map lights screen opens');
+  await page.getByRole('button', { name: 'Close mapping' }).click();
+  check(await shows(page.locator('.scene-row')), 'closing Map lights goes back to the app');
+  const camErrors = errors.filter((e) => !/camera|getUserMedia|NotFound|NotAllowed|Requested device/i.test(e));
+  check(camErrors.length === 0, `no page errors${camErrors.length ? `: ${camErrors.join(' | ')}` : ''}`);
 
   // Phone
   const phone = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -95,6 +102,21 @@ try {
   await phone.waitForSelector('.phone-tabs', { timeout: 15000 });
   await phone.getByRole('radio', { name: 'Edit', exact: true }).click();
   check(await phone.locator('.editor').isVisible() && !(await phone.locator('.scenes').isVisible()), 'the phone layout switches between Scenes and Edit');
+
+  // Map lights in demo mode (a simulated camera, nothing sent to the server's lights): one spot end to end.
+  const demo = await browser.newPage({ viewport: { width: 430, height: 932 } });
+  const demoErrors = [];
+  demo.on('pageerror', (e) => demoErrors.push(e.message));
+  await demo.goto(`${base}/#map-demo`, { waitUntil: 'networkidle' });
+  await demo.locator('.map-start').click();
+  const before = (await (await fetch(`${base}/api/mapping/views`)).json()).length;
+  check(await demo.getByRole('heading', { name: /^Found \d+ lights$/ }).waitFor({ timeout: 40000 }).then(() => true, () => false), 'a demo spot is filmed and decoded');
+  const found = Number((await demo.getByRole('heading', { name: /^Found/ }).textContent()).match(/\d+/)[0]);
+  check(found > 20, `the demo spot finds lights (${found})`);
+  check((await (await fetch(`${base}/api/mapping/views`)).json()).length === before, 'demo spots stay in the page (nothing saved on the server)');
+  await demo.getByRole('button', { name: 'Review', exact: true }).last().click();
+  check(await shows(demo.getByRole('complementary', { name: 'Mapping results' })), 'Review shows the mapping results');
+  check(demoErrors.length === 0, `no page errors in demo mapping${demoErrors.length ? `: ${demoErrors.join(' | ')}` : ''}`);
 
   await browser.close();
 } catch (e) {

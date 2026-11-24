@@ -430,6 +430,12 @@ describe('house model (3D scan parts)', () => {
     expect(saved.rotation).toBe(90);
     expect(saved.parts[0].name).toBe('Front');
     expect((await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { scale: 0 } })).statusCode).toBe(400);
+    expect((await app.server.inject('/api/house')).json().glow).toBe(1); // on by default
+    const off = await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { glow: 0 } });
+    expect(off.json()).toMatchObject({ glow: 0, opacity: 0.6 });
+    expect(JSON.parse(await readFile(statePath, 'utf8')).house.glow).toBe(0);
+    expect((await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { glow: 4 } })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { glow: 'bright' } })).statusCode).toBe(400);
     expect((await app.server.inject({ method: 'PATCH', url: `/api/house/parts/${id}`, payload: { position: [1, 2] } })).statusCode).toBe(400);
     expect((await app.server.inject({ method: 'PATCH', url: '/api/house/parts/nope', payload: { scale: 1 } })).statusCode).toBe(404);
   });
@@ -444,6 +450,7 @@ describe('house model (3D scan parts)', () => {
     cleanups.push(() => app.server.close());
     const house = (await app.server.inject('/api/house')).json();
     expect(house.rotation).toBe(5);
+    expect(house.glow).toBe(1); // saved before the glow setting existed: on by default
     expect(house.parts).toHaveLength(1);
     expect((await app.server.inject(`/api/house/parts/${house.parts[0].id}/model`)).rawPayload.length).toBe(20);
   });
