@@ -99,7 +99,7 @@ describe('engine', () => {
    */
   const STATIC_BY_DEFAULT = new Set([
     'solid',
-    'wled-fill-noise', // Default palette → colour 1
+    'wled-fill-noise', 'wled-squared-swirl', 'wled-hiphotic', // Default palette → colour 1
     'wled-solid-pattern', 'wled-solid-pattern-tri', 'wled-spots', // fixed patterns by design
     'wled-sunrise', // a 60-minute sunrise by default: dark for the first ~15 s
     'wled-slow-transition', // only moves when its colour changes
