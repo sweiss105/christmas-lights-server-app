@@ -93,17 +93,16 @@ describe('engine', () => {
   });
 
   /**
-   * Effects that, faithfully to WLED, show a still pattern with their default settings. With the
-   * "Default" palette (no pal= in WLED's metadata), Segment::color_from_palette returns colour 1, so
-   * e.g. Fill Noise is solid until a palette is chosen.
+   * Effects that, faithfully to WLED, show a still pattern with their default settings. (Effects with
+   * no pal= default start on Party here, so they move; WLED's "Default" palette would draw colour 1.)
    */
   const STATIC_BY_DEFAULT = new Set([
     'solid',
-    'wled-fill-noise', 'wled-squared-swirl', 'wled-hiphotic', // Default palette → colour 1
     'wled-solid-pattern', 'wled-solid-pattern-tri', 'wled-spots', // fixed patterns by design
     'wled-sunrise', // a 60-minute sunrise by default: dark for the first ~15 s
     'wled-slow-transition', // only moves when its colour changes
     'wled-pacman', // WLED falls back to solid colour on strips of 16 + 2×ghosts pixels or fewer (this layout has 15)
+    'wled-squared-swirl', // a few sparse 2D dots that miss this nearly 1D layout; animates on a real 2D grid
   ]);
 
   it('runs every effect with defaults, producing finite values that change over time', () => {

@@ -136,7 +136,9 @@ export function paramsFromMeta(m: WledMeta): ParamSpec[] {
   if (m.palette) {
     // Selecting an effect in WLED loads `pal=` into the segment's palette (setMode with loadDefaults).
     const pal = m.defaults.pal;
-    const def = pal !== undefined && pal > 0 && pal < WLED_PALETTE_NAMES.length ? WLED_PALETTE_NAMES[pal]! : 'Default';
+    // Owner's choice (2026-11-24): an effect that names no palette starts on Party, not WLED's "Default"
+    // (which draws many effects in plain colour 1). An explicit pal=0 still means Default.
+    const def = pal === undefined ? 'Party' : pal > 0 && pal < WLED_PALETTE_NAMES.length ? WLED_PALETTE_NAMES[pal]! : 'Default';
     ps.push({ key: 'palette', label: m.palette === 'Palette' ? 'Palette' : m.palette, type: 'palette', default: def });
   }
   if (!m.is2D) {
