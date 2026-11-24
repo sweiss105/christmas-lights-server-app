@@ -94,6 +94,13 @@ Steps 1–6 pass on the real porch controller.
 - A phone layout with a bottom sheet.
 - `XMAS_TZ` sets the time zone for `#TIME`; it's UTC until the owner gives a zone.
 
+**Show automation and upkeep (done, live):**
+- **Playlists** (`/api/playlists`) and a **nightly schedule** (`/api/schedule`, sunset or a fixed time, in a time zone), both run on the server. The logic is in `packages/server/src/show.ts`.
+- **Backups:** download and restore, plus daily automatic backups in `data/backups/` (last 14 kept). Every restore first saves the current state.
+- **House scans can come in several parts**, each aligned separately (`/api/house/parts`). The owner scanned the house with Polycam in two parts.
+- **Speed:** long-lived caching for hashed UI files, and a split bundle.
+- **`npm run e2e`:** a browser smoke test (see `scripts/e2e-smoke.mjs`).
+
 **Still open:**
 - The PR for Phase 2: the owner wants it once the house scan is in.
 - Engine tests fail to load while effect files are half-written. Verify agent work in a clean worktree (`git worktree add` + `npm ci`) before committing.
