@@ -421,3 +421,26 @@ h1, h2 { margin: 0; }
 
 .fade-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 10px; font-size: 0.82rem; color: var(--text-2); }
 .fade-row select { min-height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 0.85rem; }
+
+/* ---- phone: preview on top, panels as a bottom sheet with tabs ----------------------------- */
+.phone-tabs { display: none; }
+@media (max-width: 760px) {
+  :root { --gap: 8px; --sheet-h: min(52vh, 460px); }
+  .topbar { min-height: 52px; padding: 6px 6px 6px 12px; gap: 8px; }
+  .brand h1, .brightness .label, .switch-label, .pill, .health, .caption, .viewbar, .house-panel { display: none; }
+  .brightness input[type='range'] { width: clamp(80px, 30vw, 140px); }
+  .btn.danger-quiet { padding: 0 10px; }
+  .app.phone .scenes, .app.phone .editor {
+    top: auto; left: var(--gap); right: var(--gap); bottom: var(--gap); width: auto; height: var(--sheet-h);
+    border-radius: 18px;
+  }
+  .app.phone.tab-scenes .editor, .app.phone.tab-edit .scenes { display: none; }
+  .phone-tabs {
+    display: flex; justify-content: space-between; gap: 8px; position: absolute; left: var(--gap); right: var(--gap);
+    bottom: calc(var(--sheet-h) + var(--gap) * 2);
+  }
+  .phone-tabs .segmented { background: rgba(10, 13, 20, 0.85); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+  .phone-tabs .segmented button { min-width: 0; padding: 0 14px; }
+  .editor-head { padding-top: 10px; }
+  .banner { top: 66px; }
+}

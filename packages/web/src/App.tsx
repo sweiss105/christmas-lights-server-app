@@ -24,7 +24,9 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<View>('preview');
   const [preset, setPreset] = useState<{ name: CameraPreset; nonce: number }>({ name: 'angle', nonce: 0 });
-  const leftInset = useInset('.scenes', 'left', !!layout && !!status);
+  const phone = usePhone();
+  const [phoneTab, setPhoneTab] = useState<'scenes' | 'edit'>('scenes');
+  const sideLeft = useInset('.scenes', 'left', !!layout && !!status && !phone);
 
   const stageName = status?.stage.scene ?? null;
   useEffect(() => { if (selected === null && status) setSelected(stageName ?? scenes[0]?.name ?? null); }, [selected, status, stageName, scenes]);
@@ -36,7 +38,10 @@ export function App() {
   const [drawing, setDrawing] = useState(false);
   const layoutDraft = useLayoutDraft(layout);
   const editor = useSceneEditor(show, selected, mode);
-  const rightInset = useInset('.editor', 'right', !!layout && !!status);
+  const sideRight = useInset('.editor', 'right', !!layout && !!status && !phone);
+  const sheetInset = useSheetInset(phone, !!layout && !!status);
+  const leftInset = phone ? 0 : sideLeft;
+  const rightInset = phone ? 0 : sideRight;
   useHistoryKeys(layoutMode ? layoutDraft : editor);
 
   const selectedScene = scenes.find((s) => s.name === selected) ?? null;
@@ -49,8 +54,8 @@ export function App() {
   if (!layout || !status) return <Loading show={show} />;
 
   return (
-    <div className={`app ${mode === 'live' ? 'live-armed' : ''}`}>
-      <Preview layout={layoutMode ? layoutDraft.value : layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + (houseOpen ? HOUSE_PANEL_W + 12 : 0)} house={show.house}
+    <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : ''}`}>
+      <Preview layout={layoutMode ? layoutDraft.value : layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + (houseOpen && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
           onAddPoint: (p) => { if (selectedRun) layoutDraft.edit(appendPoint(layoutDraft.value, selectedRun, p)); },
@@ -95,6 +100,12 @@ export function App() {
         ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
         : <ViewCaption view={view} show={show} selected={selected} />}
       <Health show={show} />
+      {phone && (
+        <div className="phone-tabs" role="toolbar" aria-label="Panels">
+          <Segmented label="Panel" value={phoneTab} options={[{ value: 'scenes', label: 'Scenes' }, { value: 'edit', label: 'Edit' }]} onChange={(v) => setPhoneTab(v as 'scenes' | 'edit')} />
+          <Segmented label="Show in preview" value={view} options={[{ value: 'preview', label: 'Preview' }, { value: 'stage', label: 'Stage' }]} onChange={(v) => setView(v as View)} />
+        </div>
+      )}
       {!show.connected && <div className="banner warn" role="status">Lost connection to the lights server. Retrying…</div>}
       {show.error && (
         <div className="toast" role="alert">
@@ -104,6 +115,36 @@ export function App() {
       )}
     </div>
   );
+}
+
+/** True on phone-sized screens, where the panels become a bottom sheet. */
+function usePhone(): boolean {
+  const query = '(max-width: 760px)';
+  const [phone, setPhone] = useState(() => typeof matchMedia !== 'undefined' && matchMedia(query).matches);
+  useEffect(() => {
+    const m = matchMedia(query);
+    const on = () => setPhone(m.matches);
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, []);
+  return phone;
+}
+
+/** Height of the phone's bottom sheet plus its tab bar, so the 3D view centres above it. */
+function useSheetInset(phone: boolean, ready: boolean): number {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    if (!phone || !ready) { setInset(0); return; }
+    const measure = () => {
+      const tabs = document.querySelector('.phone-tabs')?.getBoundingClientRect();
+      setInset(tabs ? window.innerHeight - tabs.top + 8 : 0);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const t = setTimeout(measure, 50);
+    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
+  }, [phone, ready]);
+  return inset;
 }
 
 /** How much of the window's width a side panel covers (plus margin), tracked through resizes. */

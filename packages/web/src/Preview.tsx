@@ -18,6 +18,8 @@ interface PreviewProps {
   /** Pixels covered by side panels; the view is centred in the space between them. */
   leftInset?: number;
   rightInset?: number;
+  /** Pixels covered at the bottom (the phone's bottom sheet). */
+  bottomInset?: number;
   house?: House | null;
   /** Layout mode: diagnostic run colours, point handles and drawing. */
   layoutEdit?: LayoutEdit | null;
@@ -35,7 +37,7 @@ const BACKGROUND = '#06080d';
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** The 3D preview: the porch's pixels, rendered in the browser by the same engine as the porch. */
-export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, house, layoutEdit }: PreviewProps) {
+export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, bottomInset = 0, house, layoutEdit }: PreviewProps) {
   const built = useMemo(() => buildLayout(layout), [layout]);
   return (
     <Canvas
@@ -51,22 +53,23 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInse
       <Wires layout={layout} />
       <Pixels layout={built} scene={scene} clock={clock} diagnostic={layoutEdit ? { config: layout, selected: layoutEdit.selected } : null} />
       {layoutEdit && <LayoutTools layout={layout} edit={layoutEdit} />}
-      <Camera layout={built} preset={preset} hidden={leftInset + rightInset} />
-      <ViewOffset left={leftInset} right={rightInset} />
+      <Camera layout={built} preset={preset} hidden={leftInset + rightInset} hiddenY={bottomInset} />
+      <ViewOffset left={leftInset} right={rightInset} bottom={bottomInset} />
     </Canvas>
   );
 }
 
 /** Shifts the projection so the scene centres in the area between the side panels. */
-function ViewOffset({ left, right }: { left: number; right: number }) {
+function ViewOffset({ left, right, bottom }: { left: number; right: number; bottom: number }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
   useEffect(() => {
-    const shift = (left - right) / 2;
-    if (shift !== 0 && left + right < size.width * 0.8) camera.setViewOffset(size.width, size.height, -shift, 0, size.width, size.height);
+    const dx = left + right < size.width * 0.8 ? (left - right) / 2 : 0;
+    const dy = bottom < size.height * 0.8 ? bottom / 2 : 0; // move the scene up into the area above the sheet
+    if (dx !== 0 || dy !== 0) camera.setViewOffset(size.width, size.height, -dx, dy, size.width, size.height);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
-  }, [camera, size, left, right]);
+  }, [camera, size, left, right, bottom]);
   return null;
 }
 
@@ -224,10 +227,11 @@ function layoutBox(layout: Layout): THREE.Box3 {
   return box;
 }
 
-function Camera({ layout, preset, hidden: hiddenPx }: { layout: Layout; preset: { name: CameraPreset; nonce: number }; hidden: number }) {
+function Camera({ layout, preset, hidden: hiddenPx, hiddenY: hiddenYPx = 0 }: { layout: Layout; preset: { name: CameraPreset; nonce: number }; hidden: number; hiddenY?: number }) {
   const ref = useRef<CameraControls>(null);
   const first = useRef(true);
   const width = useThree((s) => s.size.width);
+  const height = useThree((s) => s.size.height);
   useEffect(() => {
     const controls = ref.current;
     if (!controls) return;
@@ -242,10 +246,12 @@ function Camera({ layout, preset, hidden: hiddenPx }: { layout: Layout; preset: 
     const animate = !first.current && !reducedMotion();
     // fitToBox snaps the view to the nearest axis, so fit first (sets distance and target), then turn
     // to the preset's angle, which keeps that distance.
-    void controls.fitToBox(box, animate, { paddingLeft: side, paddingRight: side, paddingTop: pad, paddingBottom: pad });
+    const hiddenY = height > 0 ? Math.min(0.7, hiddenYPx / height) : 0;
+    const vert = pad + (Math.max(size.y, 1) * hiddenY) / (2 * (1 - hiddenY));
+    void controls.fitToBox(box, animate, { paddingLeft: side, paddingRight: side, paddingTop: vert, paddingBottom: vert });
     void controls.rotateTo(p.azimuth, p.polar, animate);
     first.current = false;
-  }, [layout, preset, hiddenPx, width]);
+  }, [layout, preset, hiddenPx, hiddenYPx, width, height]);
   return (
     <CameraControls
       ref={ref}
