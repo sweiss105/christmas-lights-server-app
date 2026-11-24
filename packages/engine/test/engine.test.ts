@@ -97,9 +97,10 @@ describe('engine', () => {
     for (const id of Object.keys(EFFECTS)) {
       e.setScene({ name: id, layers: [{ id: 'l', effect: id }] });
       const a = Buffer.from(e.render(0.0));
-      const b = Buffer.from(e.render(1.7));
       expect(a.length).toBe(45);
-      if (id !== 'solid') expect(a.equals(b), `${id} should animate`).toBe(false);
+      // Sparse effects (e.g. WLED's Ripple on a 15-pixel layout) may stay dark for a while, so look at a few times.
+      const later = [1.7, 4.3, 9.1].map((t) => Buffer.from(e.render(t)));
+      if (id !== 'solid') expect(later.some((b) => !a.equals(b)), `${id} should animate`).toBe(true);
     }
   });
 

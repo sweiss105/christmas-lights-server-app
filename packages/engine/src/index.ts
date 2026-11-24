@@ -3,5 +3,5 @@ export * from './color.js';
 export * from './effects.js';
 export * from './scene.js';
 
-/** Palette names for the editor (built-in palettes; WLED's are added to this list when ported). */
-export { PALETTE_NAMES } from './fx/palettes.js';
+/** Palette names for the editor: WLED's 72 in the controller's order, then our own that don't clash by name. */
+export { PALETTE_NAMES, WLED_PALETTE_NAMES } from './wled/palettes.js';

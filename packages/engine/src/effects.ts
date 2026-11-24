@@ -1,6 +1,7 @@
 import FastNoiseLite from 'fastnoise-lite';
 import { clamp01, hsv, lerp, parseColor } from './color.js';
 import type { Layout } from './layout.js';
+import { WLED_EFFECTS } from './wled/index.js';
 
 export type ParamSpec =
   | { key: string; label: string; type: 'number'; min: number; max: number; step?: number; default: number }
@@ -24,7 +25,7 @@ export interface EffectDef {
   name: string;
   description: string;
   category: EffectCategory;
-  /** Name of the WLED effect this one recreates (written fresh, not ported), if any. */
+  /** Name of the WLED effect this one recreates or ports (ports live in src/wled/), if any. */
   wled?: string;
   params: ParamSpec[];
   create(params: Params, layout: Layout): RenderFn;
@@ -256,5 +257,5 @@ const ripple: EffectDef = {
 };
 
 export const EFFECTS: Record<string, EffectDef> = Object.fromEntries(
-  [solid, rainbow, sweep, twinkle, noise, stripes, ripple].map((e) => [e.id, e]),
+  [solid, rainbow, sweep, twinkle, noise, stripes, ripple, ...WLED_EFFECTS].map((e) => [e.id, e]),
 );
