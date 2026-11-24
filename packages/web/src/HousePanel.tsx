@@ -15,6 +15,7 @@ export function HousePanel({ show, onClose }: { show: Show; onClose: () => void 
   const file = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [target, setTarget] = useState<'house' | string>('house');
+  const lastGlow = useRef(1); // strength to come back to when the glow is switched back on
   const saveHouse = useMemo(() => latestWins((h: Partial<House>) => api.setHouse(h), show.reportError), [show.reportError]);
   const savePart = useMemo(() => latestWins(({ id, ...p }: Partial<HousePart> & { id: string }) => api.setHousePart(id, p), show.reportError), [show.reportError]);
   if (!house) return null;
@@ -23,7 +24,7 @@ export function HousePanel({ show, onClose }: { show: Show; onClose: () => void 
   const updateHouse = (patch: Partial<House>) => {
     const next = { ...house, ...patch };
     show.setHouseLocal(next);
-    saveHouse({ position: next.position, rotation: next.rotation, scale: next.scale, opacity: next.opacity });
+    saveHouse({ position: next.position, rotation: next.rotation, scale: next.scale, opacity: next.opacity, glow: next.glow });
   };
   const updatePart = (id: string, patch: Partial<HousePart>) => {
     const parts = house.parts.map((p) => (p.id === id ? { ...p, ...patch } : p));
@@ -95,6 +96,7 @@ export function HousePanel({ show, onClose }: { show: Show; onClose: () => void 
             <Num label="Turn (°)" value={t.rotation} min={0} max={359} step={0.5} onChange={(v) => set({ rotation: v })} />
             <Num label="Scale" value={t.scale} min={0.5} max={2} step={0.002} onChange={(v) => set({ scale: v })} />
             {!part && <Num label="Opacity" value={house.opacity} min={0.1} max={1} step={0.05} onChange={(v) => updateHouse({ opacity: v })} />}
+            {!part && <GlowControls value={house.glow ?? 1} last={lastGlow} onChange={(v) => updateHouse({ glow: v })} />}
             {part && (
               <div className="row">
                 <button className="btn small ghost danger-quiet" onClick={() => {
@@ -107,6 +109,26 @@ export function HousePanel({ show, onClose }: { show: Show; onClose: () => void 
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The lights' coloured spill on the house in the preview (built models only; photo scans have
+ * their daylight baked in). 0 is off.
+ */
+function GlowControls({ value, last, onChange }: { value: number; last: { current: number }; onChange: (v: number) => void }) {
+  const on = value > 0;
+  if (on) last.current = value;
+  return (
+    <>
+      <div className="field toggle-field">
+        <button className={`switch ${on ? 'on' : ''}`} role="switch" aria-checked={on} onClick={() => onChange(on ? 0 : last.current || 1)}>
+          <span className="track" aria-hidden><span className="thumb" /></span>
+          <span className="switch-label">Light glow on the house</span>
+        </button>
+      </div>
+      {on && <Num label="Glow strength" value={value} min={0.1} max={3} step={0.05} onChange={(v) => onChange(Math.max(0.1, v))} />}
+    </>
   );
 }
 

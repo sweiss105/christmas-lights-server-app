@@ -7,6 +7,8 @@ import { runHue } from './layoutColors';
 import type { ServerClock } from './clock';
 import type { House } from './api';
 import { HouseModel } from './HouseModel';
+import { clusterLights, glowColors } from './glow';
+import { createGlowUniforms, type GlowUniforms } from './glowMaterial';
 
 export type CameraPreset = 'front' | 'close' | 'angle' | 'top';
 
@@ -48,6 +50,9 @@ const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(pr
 export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, bottomInset = 0, house, layoutEdit, selection, onProjector, diagnostic, markers }: PreviewProps) {
   const built = useMemo(() => buildLayout(layout), [layout]);
   const diag = useMemo(() => (layoutEdit ? { config: layout, selected: layoutEdit.selected } : diagnostic ? { config: layout, selected: null } : null), [layoutEdit, diagnostic, layout]);
+  const glow = useMemo(createGlowUniforms, []);
+  // The lights' spill on the house: only on a shown house, and not with diagnostic colours (layout mode, mapping review).
+  const glowStrength = house?.parts.some((p) => p.visible) && !diag ? (house.glow ?? 1) : 0;
   return (
     <Canvas
       className="preview-canvas"
@@ -59,9 +64,9 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInse
       <fog attach="fog" args={[BACKGROUND, 18, 60]} />
       {/* A house model brings its own ground (lawns, slopes, steps below porch level), which a flat floor at 0 m would hide. */}
       {!house?.parts.some((p) => p.visible) && <Ground layout={built} />}
-      {house && <HouseModel house={house} onPick={layoutEdit?.drawing ? layoutEdit.onAddPoint : undefined} />}
+      {house && <HouseModel house={house} glow={glow} onPick={layoutEdit?.drawing ? layoutEdit.onAddPoint : undefined} />}
       <Wires layout={layout} />
-      <Pixels layout={built} scene={scene} clock={clock} diagnostic={diag} />
+      <Pixels layout={built} scene={scene} clock={clock} glow={glow} glowStrength={glowStrength} diagnostic={diag} />
       {markers && <Markers markers={markers} />}
       {layoutEdit && <LayoutTools layout={layout} edit={layoutEdit} />}
       {selection && <SelectionHighlight layout={built} selection={selection} />}
@@ -168,8 +173,14 @@ function diagnosticColors(layout: Layout, config: LayoutConfig, selected: string
   });
 }
 
-function Pixels({ layout, scene, clock, diagnostic }: { layout: Layout; scene: SceneConfig | null; clock: ServerClock; diagnostic: { config: LayoutConfig; selected: string | null } | null }) {
-  const { geometry, colors, index } = useMemo(() => {
+/** How bright the spill is at strength 1 (the house setting), tuned by eye on a night view. */
+const GLOW_GAIN = 1.07; // two-thirds of the first tuning (1.6), at the owner's request
+
+function Pixels({ layout, scene, clock, glow, glowStrength, diagnostic }: {
+  layout: Layout; scene: SceneConfig | null; clock: ServerClock; glow: GlowUniforms; glowStrength: number;
+  diagnostic: { config: LayoutConfig; selected: string | null } | null;
+}) {
+  const { geometry, colors, index, clusters } = useMemo(() => {
     const idx: number[] = [];
     for (let i = 0; i < layout.count; i++) if (layout.mapped[i] && !Number.isNaN(layout.positions[i * 3]!)) idx.push(i);
     const pos = new Float32Array(idx.length * 3);
@@ -179,8 +190,12 @@ function Pixels({ layout, scene, clock, diagnostic }: { layout: Layout; scene: S
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
     g.computeBoundingSphere();
-    return { geometry: g, colors: col, index: Int32Array.from(idx) };
+    return { geometry: g, colors: col, index: Int32Array.from(idx), clusters: clusterLights(pos) };
   }, [layout]);
+  useEffect(() => {
+    glow.uGlowPos.value.set(clusters.centers);
+    glow.uGlowGroup.value.set(clusters.groups);
+  }, [glow, clusters]);
   useEffect(() => () => geometry.dispose(), [geometry]);
 
   // Preview at the scene's designed colours: full brightness, no output gamma (the screen applies its own).
@@ -208,6 +223,7 @@ function Pixels({ layout, scene, clock, diagnostic }: { layout: Layout; scene: S
   useFrame(({ camera }) => {
     const fov = (camera as THREE.PerspectiveCamera).fov ?? 40;
     material.uniforms.uScale!.value = (size.height * dpr) / (2 * Math.tan((fov * Math.PI) / 360));
+    glow.uGlowStrength.value = diagnostic ? 0 : glowStrength * GLOW_GAIN;
     if (diagnostic) return;
     const frame = engine.render(clock.now());
     for (let j = 0; j < index.length; j++) {
@@ -215,6 +231,7 @@ function Pixels({ layout, scene, clock, diagnostic }: { layout: Layout; scene: S
       colors[o] = frame[i]! / 255; colors[o + 1] = frame[i + 1]! / 255; colors[o + 2] = frame[i + 2]! / 255;
     }
     (geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+    if (glowStrength > 0) glowColors(colors, clusters, glow.uGlowCol.value); // O(pixels), no allocation
   });
 
   return <points geometry={geometry} material={material} frustumCulled={false} />;
