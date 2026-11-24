@@ -33,7 +33,8 @@ export interface MappingParams {
   level: number;
 }
 
-export const DEFAULT_MAPPING: MappingParams = { k: 10, passes: 2, holdMs: 250, level: 1 };
+// Level 0.25: at full brightness the LEDs bloom into big blobs on a phone camera at night (first night test).
+export const DEFAULT_MAPPING: MappingParams = { k: 10, passes: 2, holdMs: 250, level: 0.25 };
 
 export const MAPPING_LIMITS = { k: [2, 64], passes: [1, 64], holdMs: [100, 1000], level: [0.05, 1] } as const;
 

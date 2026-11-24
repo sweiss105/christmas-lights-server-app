@@ -4,13 +4,14 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { LayoutConfig, Vec3 } from '@xmas/engine';
-import type { RunSolve, SolveResult, ViewInput } from '@xmas/engine/mapping';
+import { DEFAULT_MAPPING, type RunSolve, type SolveResult, type ViewInput } from '@xmas/engine/mapping';
 import { api, type House, type MappingView } from '../api';
+import { DEFAULT_CAMERA, type CameraChoice } from './cameraControl';
 
 export type RunRole = 'trusted' | 'measure';
 
 const ROLES_KEY = 'xmas.mapping.roles';
-const SETTINGS_KEY = 'xmas.mapping.settings';
+const SETTINGS_KEY = 'xmas.mapping.settings.v2'; // v2: the default light level dropped to 25%
 
 const readJson = <T,>(key: string, fallback: T): T => { try { const v = localStorage.getItem(key); return v ? { ...fallback, ...JSON.parse(v) } : fallback; } catch { return fallback; } };
 const writeJson = (key: string, v: unknown) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private mode */ } };
@@ -23,11 +24,20 @@ export function useRunRoles(): [Record<string, RunRole>, (id: string, role: RunR
 }
 
 export interface CaptureSettings { k: number; passes: number; holdMs: number; level: number }
-export const DEFAULT_SETTINGS: CaptureSettings = { k: 10, passes: 2, holdMs: 250, level: 1 };
+export const DEFAULT_SETTINGS: CaptureSettings = { ...DEFAULT_MAPPING };
 export function useCaptureSettings(): [CaptureSettings, (s: Partial<CaptureSettings>) => void] {
   const [s, setS] = useState<CaptureSettings>(() => readJson(SETTINGS_KEY, DEFAULT_SETTINGS));
   const set = useCallback((p: Partial<CaptureSettings>) => setS((old) => { const next = { ...old, ...p }; writeJson(SETTINGS_KEY, next); return next; }), []);
   return [s, set];
+}
+
+const CAMERA_KEY = 'xmas.mapping.camera';
+
+/** Which camera, frame rate, locks and recording to use; kept on this phone. */
+export function useCameraChoice(): [CameraChoice, (c: Partial<CameraChoice>) => void] {
+  const [c, setC] = useState<CameraChoice>(() => readJson(CAMERA_KEY, DEFAULT_CAMERA));
+  const set = useCallback((p: Partial<CameraChoice>) => setC((old) => { const next = { ...old, ...p }; writeJson(CAMERA_KEY, next); return next; }), []);
+  return [c, set];
 }
 
 export interface MappingViews {

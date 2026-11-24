@@ -5,6 +5,7 @@
 import { buildLayout, type LayoutConfig, type Vec3 } from '@xmas/engine';
 import { simulateFrames, slotMasks, type DecodeResult, type MappingPlan, type SimView } from '@xmas/engine/mapping';
 import { DecodeWorker } from './workerProtocol';
+import type { CameraChoice, Recorder } from './cameraControl';
 
 /** Long side of the picture the decoder works on (the video is scaled down to this). */
 export const PROCESS_SIZE = 1280;
@@ -21,13 +22,15 @@ export interface FrameSource {
 type VideoFrameMeta = { presentationTime?: number; captureTime?: number; expectedDisplayTime?: number };
 type RVFC = (cb: (now: number, meta: VideoFrameMeta) => void) => number;
 
-/** The back camera, as large as the phone offers (1080p is plenty). */
-export async function openCamera(video: HTMLVideoElement): Promise<MediaStream> {
+/** The chosen back camera (or the default one), as large as the phone offers (1080p is plenty). */
+export async function openCamera(video: HTMLVideoElement, choice?: Pick<CameraChoice, 'deviceId' | 'fps'>): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser can’t use the camera here (it needs HTTPS and a recent Safari or Chrome).');
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-  });
+  const size = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: choice?.fps ?? 30 } };
+  const open = (which: MediaTrackConstraints) => navigator.mediaDevices.getUserMedia({ audio: false, video: { ...which, ...size } });
+  // A camera saved earlier may be gone (another phone, or Safari renamed it): fall back to the default.
+  const stream = choice?.deviceId
+    ? await open({ deviceId: { exact: choice.deviceId } }).catch(() => open({ facingMode: { ideal: 'environment' } }))
+    : await open({ facingMode: { ideal: 'environment' } });
   video.srcObject = stream;
   video.muted = true;
   video.playsInline = true;
@@ -146,20 +149,30 @@ export interface ViewRun {
   cancel: () => void;
 }
 
+/** Frames allowed to wait for the decoder (each is a few MB) before new ones are skipped. */
+const MAX_BACKLOG = 40;
+
 /** Film and decode one view: feed frames from shortly before the expected start until just after the end. */
-export function runView(source: FrameSource, plan: MappingPlan, startGuessMs: number): ViewRun {
+export function runView(source: FrameSource, plan: MappingPlan, startGuessMs: number, recorder?: Recorder | null): ViewRun {
   const worker = new DecodeWorker(plan, { width: source.width, height: source.height, startGuessMs });
   const from = startGuessMs - 1200, until = startGuessMs + plan.durationMs + 900;
   let cancelled = false;
+  let skipped = 0;
   let stop: () => void = () => {};
   const result = new Promise<DecodeResult>((resolve, reject) => {
-    stop = source.start((t, data) => { if (t >= from && t <= until) worker.frame(t, source.width, source.height, data); });
+    stop = source.start((t, data) => {
+      if (t < from || t > until) return;
+      if (recorder && 'rgba' in data) recorder.add(t, data.rgba, source.width); // before the buffer moves to the worker
+      // If decoding falls behind (60 fps on a busy phone), skip frames rather than pile up full-size pictures.
+      if (worker.backlog > MAX_BACKLOG) { skipped++; return; }
+      worker.frame(t, source.width, source.height, data);
+    });
     const check = setInterval(() => {
       if (cancelled) { clearInterval(check); stop(); worker.cancel(); reject(new Error('cancelled')); return; }
       if (performance.now() < until) return;
       clearInterval(check);
       stop();
-      worker.finish().then(resolve, reject);
+      worker.finish().then((r) => resolve({ ...r, stats: { ...r.stats, skipped } as typeof r.stats }), reject);
     }, 100);
   });
   return { result, cancel: () => { cancelled = true; } };

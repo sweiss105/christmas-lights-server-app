@@ -9,14 +9,15 @@ import { planMapping, solveMapping, type DecodeResult, type MappingPlan } from '
 import { api } from '../api';
 import type { Show } from '../useShow';
 import { demoViews, openCamera, paintIdle, runView, simulatedSource, stopCamera, videoSource, type ViewRun } from './capture';
-import { solverViews, useCaptureSettings, type MappingViews, type RunRole } from './review';
+import { solverViews, useCameraChoice, useCaptureSettings, type MappingViews, type RunRole } from './review';
+import { applyBaseControls, describeCamera, listBackCameras, lockCamera, lockSummary, MAX_RECORDING_BYTES, Recorder, unlockCamera, type BackCamera, type CameraChoice, type CameraInfo } from './cameraControl';
 
 type Phase =
   | { kind: 'idle' }
   | { kind: 'starting' }
   | { kind: 'running'; startMs: number; endMs: number }
-  | { kind: 'decoding' }
-  | { kind: 'done'; result: DecodeResult; placed: string | null }
+  | { kind: 'decoding'; uploading?: boolean }
+  | { kind: 'done'; result: DecodeResult; placed: string | null; upload: string | null }
   | { kind: 'error'; message: string };
 
 interface Props {
@@ -44,6 +45,11 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [settings, setSettings] = useCaptureSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [cam, setCam] = useCameraChoice();
+  const [cameras, setCameras] = useState<BackCamera[]>([]);
+  const [camInfo, setCamInfo] = useState<CameraInfo | null>(null);
+  /** Brightness test running (lights held steady), until this time. */
+  const [testUntil, setTestUntil] = useState<number | null>(null);
   const [now, setNow] = useState(() => performance.now());
   const streaming = show.status?.output.enabled ?? false;
 
@@ -57,16 +63,33 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
     if (demo) return;
     let cancelled = false;
     const video = videoRef.current!;
-    openCamera(video).then((s) => {
+    setCamera('off');
+    openCamera(video, cam).then(async (s) => {
       if (cancelled) { stopCamera(s); return; }
       streamRef.current = s;
+      const track = s.getVideoTracks()[0]!;
+      const applied = await applyBaseControls(track, cam);
+      if (cancelled) return;
+      setCamInfo(describeCamera(track, applied));
+      void listBackCameras().then((c) => { if (!cancelled) setCameras(c); });
       setCamera('on');
       const check = () => setPortrait(video.videoHeight > video.videoWidth);
       check();
       video.addEventListener('resize', check);
     }, (e: Error) => { if (!cancelled) { setCamera('denied'); setCameraError(e.name === 'NotAllowedError' ? 'Camera access was refused. Allow it for this site in Safari’s settings (aA → Website Settings → Camera), then reopen this screen.' : e.message); } });
     return () => { cancelled = true; stopCamera(streamRef.current); streamRef.current = null; runRef.current?.cancel(); };
-  }, [demo]);
+  }, [demo, cam.deviceId, cam.fps, cam.zoomOut]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Brightness test: keep the held lights in step with the slider, and end it on time.
+  useEffect(() => {
+    if (testUntil === null || demo) return;
+    const left = testUntil - performance.now();
+    if (left <= 0) { setTestUntil(null); return; }
+    const t = setTimeout(() => { void api.mappingPreview({ k: settings.k, level: settings.level, seconds: Math.ceil(left / 1000) }).catch(show.reportError); }, 150);
+    const end = setTimeout(() => setTestUntil(null), left);
+    return () => { clearTimeout(t); clearTimeout(end); };
+  }, [testUntil, settings.k, settings.level, demo, show.reportError]);
+  const stopTest = () => { setTestUntil(null); if (!demo) void api.mappingStop().catch(() => {}); };
 
   // Demo: a still simulated picture of the next spot.
   useEffect(() => {
@@ -95,10 +118,18 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
   const start = async () => {
     if (!demo && !streaming) return;
     setPhase({ kind: 'starting' });
+    setTestUntil(null); // the sequence replaces the brightness test (its lights stay on until then, for the exposure lock)
     let wake: { release: () => Promise<void> } | null = null;
     try {
       wake = await (navigator as unknown as { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen').catch(() => null) ?? null;
       let p: MappingPlan, startMs: number, source;
+      let recorder: Recorder | null = null;
+      const track = streamRef.current?.getVideoTracks()[0] ?? null;
+      if (!demo && track && cam.lock) {
+        // Freeze exposure while the porch shows its normal look (the sequence then goes dark and flashes).
+        const locked = await lockCamera(track, cam);
+        setCamInfo(describeCamera(track, { ...(camInfo?.applied ?? {}), ...locked }));
+      }
       if (demo) {
         p = plan;
         startMs = performance.now() + LEAD_MS;
@@ -109,25 +140,42 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
         p = res.plan;
         startMs = show.clock.toLocal(res.startsAt) * 1000 + LATENCY_GUESS_MS;
         source = videoSource(videoRef.current!);
+        if (cam.record) recorder = new Recorder(source.width, source.height);
       }
-      const run = runView(source, p, startMs);
+      const run = runView(source, p, startMs, recorder);
       runRef.current = run;
       setNow(performance.now());
       setPhase({ kind: 'running', startMs, endMs: startMs + p.durationMs });
       const done = run.result.then((r) => r);
       // Switch the label to "reading" once the lights are done.
       const wait = setTimeout(() => setPhase((ph) => (ph.kind === 'running' ? { kind: 'decoding' } : ph)), startMs + p.durationMs - performance.now() + 300);
-      const result = await done;
+      const result = await done.finally(() => { if (track && cam.lock) void unlockCamera(track); });
       clearTimeout(wait);
       runRef.current = null;
-      if (!result.ok) { setPhase({ kind: 'error', message: result.error ?? 'No lights could be read.' }); return; }
+      const label = `Spot ${spotNo}`;
+      // Footage goes up even when decoding failed: that's when it's most useful.
+      const sendFootage = async (viewId: string): Promise<string | null> => {
+        if (!recorder) return null;
+        const info = track ? describeCamera(track, camInfo?.applied ?? {}) : null;
+        const blob = await recorder.finish({ label, viewId, startGuessMs: startMs, plan: { params: p.params, durationMs: p.durationMs }, decoder: { width: source.width, height: source.height }, stats: result.stats, camera: info, choice: cam, userAgent: navigator.userAgent });
+        if (blob.size > MAX_RECORDING_BYTES) return `Footage too large to send (${Math.round(blob.size / 1e6)} MB)`;
+        setPhase({ kind: 'decoding', uploading: true });
+        try { const r = await api.uploadRecording(blob, { view: viewId, label, gz: recorder.compressed }); return `Footage sent (${(r.bytes / 1e6).toFixed(1)} MB, ${recorder.frames} frames)`; }
+        catch (e) { return `Footage not sent: ${(e as Error).message}`; }
+      };
+      if (!result.ok) {
+        const note = await sendFootage('failed');
+        setPhase({ kind: 'error', message: `${result.error ?? 'No lights could be read.'}${note ? ` ${note}.` : ''}` });
+        return;
+      }
       const saved = await views.add({
         width: source.width, height: source.height, params: p.params,
         detections: result.detections.map((d) => ({ pixel: d.pixel, x: d.x, y: d.y, strength: d.strength, margin: d.margin })),
         stats: { ...result.stats },
-        label: `Spot ${spotNo}`,
+        label,
       });
-      setPhase({ kind: 'done', result, placed: saved.id });
+      const upload = await sendFootage(saved.id);
+      setPhase({ kind: 'done', result, placed: saved.id, upload });
     } catch (e) {
       runRef.current = null;
       const msg = (e as Error).message;
@@ -175,14 +223,30 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
             </div>
           )}
           <SpotList views={views} placement={placement} />
+          {testUntil !== null ? (
+            <div className="map-test" role="group" aria-label="Brightness test">
+              <p className="map-guide">The lights to be measured are on. Each should look like a small, separate dot on the screen: not a big glowing blob, and not so dim you can hardly see it.</p>
+              <label className="field slider compact">
+                <span className="field-label">Light level <span className="field-value">{Math.round(settings.level * 100)}% of brightness</span></span>
+                <input type="range" min={5} max={100} step={5} value={Math.round(settings.level * 100)} aria-label="Light level" style={{ ['--fill' as string]: `${settings.level * 100}%` }} onChange={(e) => setSettings({ level: Number(e.target.value) / 100 })} />
+              </label>
+              <div className="map-row two">
+                <button className="btn" onClick={stopTest}>Done testing</button>
+                <span className="hint-inline">Press Start straight after: the camera sets its exposure on these lights.</span>
+              </div>
+            </div>
+          ) : (
+            <button className="btn map-test-btn" disabled={!demo && (!streaming || camera !== 'on')} onClick={() => setTestUntil(performance.now() + 25_000)}>Test brightness</button>
+          )}
           <button className="btn go map-start" disabled={(!demo && (!streaming || camera !== 'on'))} onClick={() => void start()}>
             <CameraIcon /> Start · about {seconds} s
           </button>
           <div className="map-row">
             <button className="btn small ghost" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((o) => !o)}>{settingsOpen ? 'Hide settings' : 'Settings'}</button>
-            <span className="hint-inline">Every {plan.params.k}th light · {plan.params.passes} pass{plan.params.passes === 1 ? '' : 'es'} · {plan.params.holdMs} ms</span>
+            <span className="hint-inline">Every {plan.params.k}th light · {plan.params.passes} pass{plan.params.passes === 1 ? '' : 'es'} · {plan.params.holdMs} ms · {Math.round(plan.params.level * 100)}% level</span>
           </div>
           {settingsOpen && <Settings settings={settings} onChange={setSettings} plan={plan} />}
+          {settingsOpen && !demo && <CameraSettings choice={cam} onChange={setCam} cameras={cameras} info={camInfo} />}
         </>)}
 
         {phase.kind === 'starting' && <p className="map-head" role="status">Getting the lights ready…</p>}
@@ -195,14 +259,15 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
         </>)}
 
         {phase.kind === 'decoding' && (<>
-          <h2 className="map-head" role="status">Reading the lights…</h2>
+          <h2 className="map-head" role="status">{phase.uploading ? 'Sending the footage…' : 'Reading the lights…'}</h2>
           <p className="map-guide">You can move now.</p>
-          <Progress value={1} label="Decoding" />
+          <Progress value={1} label={phase.uploading ? 'Uploading' : 'Decoding'} />
         </>)}
 
         {phase.kind === 'done' && (<>
           <h2 className="map-head">Found {phase.result.detections.length} lights</h2>
           <p className="map-guide">{placedText(placement.get(phase.placed ?? ''))}{guidance(views.views.length)}</p>
+          {phase.upload && <p className="hint">{phase.upload}.</p>}
           <div className="map-row two">
             <button className="btn go" onClick={() => setPhase({ kind: 'idle' })}>Next spot</button>
             <button className="btn" onClick={onReview}>Review</button>
@@ -261,14 +326,58 @@ function Settings({ settings, onChange, plan }: { settings: { k: number; passes:
   );
   return (
     <div className="map-settings">
-      {seg('Light every', settings.k, [8, 10, 14, 20], (v) => `${v}th`, (k) => onChange({ k }))}
-      {seg('Passes per spot', settings.passes, [1, 2, 4], (v) => `${v}`, (passes) => onChange({ passes }))}
-      {seg('Hold each pattern', settings.holdMs, [200, 250, 300, 400], (v) => `${v} ms`, (holdMs) => onChange({ holdMs }))}
+      {seg('Light every', settings.k, [10, 14, 20, 30], (v) => `${v}th`, (k) => onChange({ k }))}
+      {seg('Passes per spot', settings.passes, [1, 2, 3, 4], (v) => `${v}`, (passes) => onChange({ passes }))}
+      {seg('Hold each pattern', settings.holdMs, [250, 400, 500, 750], (v) => `${v} ms`, (holdMs) => onChange({ holdMs }))}
       <label className="field slider compact">
         <span className="field-label">Light level <span className="field-value">{Math.round(settings.level * 100)}% of brightness</span></span>
         <input type="range" min={10} max={100} step={5} value={Math.round(settings.level * 100)} style={{ ['--fill' as string]: `${settings.level * 100}%` }} onChange={(e) => onChange({ level: Number(e.target.value) / 100 })} />
       </label>
       <p className="hint">Each spot lights every {plan.params.k}th light of every string, {plan.params.passes} time{plan.params.passes === 1 ? '' : 's'} with different lights, so {plan.passes.reduce((a, p) => a + p.pixels.length, 0)} of {plan.pixelCount} lights get measured; the ones between are filled in along the wire. Fewer, slower patterns help on a weak Wi-Fi link.</p>
+    </div>
+  );
+}
+
+/** Camera, frame rate, locking and recording. */
+function CameraSettings({ choice, onChange, cameras, info }: { choice: CameraChoice; onChange: (c: Partial<CameraChoice>) => void; cameras: BackCamera[]; info: CameraInfo | null }) {
+  const s = info?.settings as { width?: number; height?: number; frameRate?: number; zoom?: number } | undefined;
+  const zoomCap = info?.capabilities.zoom as { min?: number } | undefined;
+  return (
+    <div className="map-settings">
+      {cameras.length > 1 && (
+        <label className="field">
+          <span className="field-label">Camera</span>
+          <select value={choice.deviceId} onChange={(e) => onChange({ deviceId: e.target.value })}>
+            <option value="">Default back camera</option>
+            {cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label}</option>)}
+          </select>
+        </label>
+      )}
+      {zoomCap?.min !== undefined && zoomCap.min < 1 && (
+        <label className="check"><input type="checkbox" checked={choice.zoomOut} onChange={(e) => onChange({ zoomOut: e.target.checked })} /> Wide view ({zoomCap.min}× zoom)</label>
+      )}
+      <div className="field">
+        <span className="field-label">Frame rate</span>
+        <div className="segmented" role="radiogroup" aria-label="Frame rate">
+          {([30, 60] as const).map((f) => <button key={f} role="radio" aria-checked={choice.fps === f} className={choice.fps === f ? 'active' : ''} onClick={() => onChange({ fps: f })}>{f} fps</button>)}
+        </div>
+      </div>
+      <label className="check"><input type="checkbox" checked={choice.lock} onChange={(e) => onChange({ lock: e.target.checked })} /> Lock exposure, colour and focus while filming</label>
+      {choice.lock && (
+        <div className="field">
+          <span className="field-label">Darken while filming</span>
+          <div className="segmented" role="radiogroup" aria-label="Darken while filming">
+            {[0, -1, -2].map((v) => <button key={v} role="radio" aria-checked={choice.ev === v} className={choice.ev === v ? 'active' : ''} onClick={() => onChange({ ev: v })}>{v === 0 ? 'None' : `${v} EV`}</button>)}
+          </div>
+        </div>
+      )}
+      <label className="check"><input type="checkbox" checked={choice.record} onChange={(e) => onChange({ record: e.target.checked })} /> Send a small copy of the footage (for fixing problems)</label>
+      {info && (
+        <p className="hint">
+          {info.label || 'Camera'}{s?.width ? ` · ${s.width}×${s.height}` : ''}{s?.frameRate ? ` · ${Math.round(s.frameRate)} fps` : ''}{s?.zoom ? ` · zoom ${s.zoom}` : ''}
+          {Object.keys(info.applied).length ? ` · ${lockSummary(info.applied)}` : ''}
+        </p>
+      )}
     </div>
   );
 }

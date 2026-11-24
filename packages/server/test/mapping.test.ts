@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib';
 import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,13 +75,13 @@ describe('mapping sequence plan', () => {
 describe('mapping mode on the server', () => {
   it('takes over the output while the sequence plays, then gives the show back', async () => {
     const { app } = await makeApp();
-    const res = await app.server.inject({ method: 'POST', url: '/api/mapping/start', payload: { k: 5, passes: 1, holdMs: 200, leadMs: 1000 } });
+    const res = await app.server.inject({ method: 'POST', url: '/api/mapping/start', payload: { k: 5, passes: 1, holdMs: 200, level: 1, leadMs: 1000 } });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { startsAt: number; endsAt: number; plan: MappingPlan; streaming: boolean; active: boolean };
     expect(body.active).toBe(true);
     expect(body.streaming).toBe(false); // the UI warns: nothing reaches the porch until streaming is on
     const l = buildLayout(layout());
-    const plan = planMapping(l, { k: 5, passes: 1, holdMs: 200 });
+    const plan = planMapping(l, { k: 5, passes: 1, holdMs: 200, level: 1 });
     expect(body.plan).toEqual(JSON.parse(JSON.stringify(plan)));
 
     // During the lead-in the frame is dark (GET /api/frame shows what the porch would be sent).
@@ -154,6 +155,32 @@ describe('mapping mode on the server', () => {
     expect((await app.server.inject({ method: 'POST', url: '/api/mapping/views', payload: { ...view, detections: [{ pixel: 999, x: 1, y: 1 }] } })).statusCode).toBe(400);
     expect((await app.server.inject({ method: 'DELETE', url: `/api/mapping/views/${saved.id}` })).statusCode).toBe(200);
     expect((await app.server.inject('/api/mapping/views')).json()).toEqual([]);
+  });
+
+  it('brightness test: holds every k-th light at the chosen level, then gives the show back', async () => {
+    const { app } = await makeApp();
+    const res = await app.server.inject({ method: 'POST', url: '/api/mapping/preview', payload: { k: 10, level: 0.5, seconds: 5 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().preview.lights).toBeGreaterThan(0);
+    const frame = (await app.server.inject('/api/frame')).rawPayload;
+    const lit = [...Array(frame.length / 3).keys()].filter((i) => frame[i * 3]! > 0);
+    expect(lit.length).toBe(res.json().preview.lights);
+    expect(new Set(lit.map((i) => frame[i * 3])).size).toBe(1); // all at one level
+    await app.server.inject({ method: 'POST', url: '/api/mapping/stop' });
+    expect((await app.server.inject({ method: 'POST', url: '/api/mapping/preview', payload: { seconds: 99 } })).statusCode).toBe(400);
+  });
+
+  it('keeps uploaded footage recordings (gzip), the newest few, with safe file names', async () => {
+    const { app, dir } = await makeApp();
+    const gz = gzipSync(Buffer.from('frames'));
+    const post = (label: string, body: Buffer) => app.server.inject({ method: 'POST', url: `/api/mapping/recordings?label=${encodeURIComponent(label)}&view=v1`, headers: { 'content-type': 'application/octet-stream' }, payload: body });
+    const res = await post('Spot 1/../x', gz);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().saved).toMatch(/^[\w-]+_Spot-1-x_v1\.bin\.gz$/);
+    expect(await readdir(join(dir, 'mapping-recordings'))).toContain(res.json().saved);
+    expect((await post('x', Buffer.from('not gzip at all'))).statusCode).toBe(400);
+    for (let i = 0; i < 7; i++) expect((await post(`s${i}`, gz)).statusCode).toBe(200);
+    expect((await app.server.inject('/api/mapping/recordings')).json()).toHaveLength(6);
   });
 
   it('saves a backup on request (before accepting mapped positions)', async () => {

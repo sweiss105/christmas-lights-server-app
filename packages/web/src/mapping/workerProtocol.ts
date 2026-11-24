@@ -26,13 +26,15 @@ export class DecodeWorker {
   private fail: ((e: Error) => void) | null = null;
   private error: Error | null = null;
   framesSent = 0;
+  /** Frames the worker has finished with (reported every 10). */
+  framesDone = 0;
   synced = false;
 
   constructor(plan: MappingPlan, options: DecoderOptions) {
     this.worker = new Worker(new URL('./decode.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<WorkerOut>) => {
       const m = e.data;
-      if (m.type === 'progress') this.synced = m.synced;
+      if (m.type === 'progress') { this.synced = m.synced; this.framesDone = m.frames; }
       else if (m.type === 'result') this.done?.(m.result);
       else if (m.type === 'error') { this.error = new Error(m.message); this.fail?.(this.error); }
     };
@@ -48,6 +50,9 @@ export class DecodeWorker {
     const buf = 'rgba' in data ? data.rgba : data.lum;
     this.post({ type: 'frame', t, width, height, ...data }, [buf]);
   }
+
+  /** Frames sent but not yet decoded. */
+  get backlog() { return this.framesSent - this.framesDone; }
 
   finish(): Promise<DecodeResult> {
     return new Promise((resolve, reject) => {
