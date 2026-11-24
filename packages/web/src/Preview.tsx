@@ -166,7 +166,7 @@ function diagnosticColors(layout: Layout, config: LayoutConfig, selected: string
 }
 
 /** How bright the spill is at strength 1 (the house setting), tuned by eye on a night view. */
-const GLOW_GAIN = 1.6;
+const GLOW_GAIN = 1.07; // two-thirds of the first tuning (1.6), at the owner's request
 
 function Pixels({ layout, scene, clock, glow, glowStrength, diagnostic }: {
   layout: Layout; scene: SceneConfig | null; clock: ServerClock; glow: GlowUniforms; glowStrength: number;
