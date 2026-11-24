@@ -398,6 +398,7 @@ h1, h2 { margin: 0; }
 .num.wide { width: 100%; min-height: var(--hit); }
 .points { list-style: none; margin: 0; padding: 0 12px 8px; }
 .point-row { display: grid; grid-template-columns: 38px 1fr 1fr 1fr 32px 32px; gap: 4px; align-items: center; margin: 3px 0; }
+.point-row.coiled { grid-template-columns: 32px 1fr 1fr 1fr 30px 30px 30px; }
 .point-row .num { width: 100%; min-height: 36px; padding: 0 6px; }
 .point-idx { font-size: 0.72rem; font-weight: 700; color: var(--text-2); }
 .btn.drawing { background: rgba(122, 162, 255, 0.25); border-color: rgba(122, 162, 255, 0.6); color: #cfdcff; }

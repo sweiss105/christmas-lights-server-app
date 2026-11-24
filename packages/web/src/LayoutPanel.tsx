@@ -130,11 +130,11 @@ function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, o
       </label>
       {run.coil && (
         <div className="field-row">
-          <label className="field"><span className="field-label">One turn every (cm)</span>
+          <label className="field"><span className="field-label">Turn every (cm)</span>
             <input className="num wide" type="number" min={1} step={1} value={Math.round(run.coil.pitch * 100)} aria-label="Turn spacing in centimetres"
               onChange={(e) => { const v = num(e.target.value, run.coil!.pitch * 100); if (v > 0) draft.edit(updateRun(l, id, { coil: { ...run.coil!, pitch: v / 100 } }), { merge: `${id}.pitch` }); }} onBlur={() => draft.endGesture()} />
           </label>
-          <label className="field"><span className="field-label">Rail thickness (cm)</span>
+          <label className="field"><span className="field-label">Rail size (cm)</span>
             <input className="num wide" type="number" min={1} max={100} step={1} value={Math.round(run.coil.radius * 200)} aria-label="Rail thickness in centimetres"
               onChange={(e) => { const v = num(e.target.value, run.coil!.radius * 200); if (v > 0 && v <= 100) draft.edit(updateRun(l, id, { coil: { ...run.coil!, radius: v / 200 } }), { merge: `${id}.radius` }); }} onBlur={() => draft.endGesture()} />
           </label>
@@ -144,20 +144,20 @@ function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, o
       <div className="section-head"><h3>Path points</h3><span className="hint-inline">metres: across · up · towards street</span></div>
       <ol className="points">
         {points.map((p, i) => (
-          <li key={i} className="point-row">
+          <li key={i} className={`point-row ${run.coil ? 'coiled' : ''}`}>
             <span className="point-idx">{i === 0 ? 'Start' : i === points.length - 1 ? 'End' : i + 1}</span>
             {[0, 1, 2].map((a) => (
               <input key={a} className="num" type="number" step={0.05} value={p[a]} aria-label={`Point ${i + 1} ${['across', 'up', 'towards street'][a]}`}
                 onChange={(e) => { const q = [...p] as Vec3; q[a] = num(e.target.value, p[a]!); draft.edit(setPoint(l, id, i, q), { merge: `${id}.p${i}` }); }}
                 onBlur={() => draft.endGesture()} />
             ))}
-            {run.coil && i < points.length - 1 && (() => {
+            {run.coil && (i < points.length - 1 ? (() => {
               const straight = run.coil.skip?.includes(i) ?? false;
               const skip = straight ? run.coil.skip!.filter((n) => n !== i) : [...(run.coil.skip ?? []), i].sort((a, b) => a - b);
               return <button className="icon-btn small" aria-pressed={!straight} aria-label={`Path to point ${i + 2}: ${straight ? 'straight' : 'coiled'}`}
                 title={straight ? 'Straight to the next point (e.g. down a post). Click to coil.' : 'Coiled to the next point. Click to run straight.'}
-                onClick={() => draft.edit(updateRun(l, id, { coil: { ...run.coil!, skip: skip.length ? skip : undefined } }))}>{straight ? '│' : '∿'}</button>;
-            })()}
+                onClick={() => draft.edit(updateRun(l, id, { coil: { ...run.coil!, skip: skip.length ? skip : undefined } }))}><SegmentIcon straight={straight} /></button>;
+            })() : <span />)}
             <button className="icon-btn small" aria-label={`Add a point after point ${i + 1}`} onClick={() => draft.edit(insertPoint(l, id, i))}>+</button>
             <button className="icon-btn small" aria-label={`Remove point ${i + 1}`} disabled={points.length < 2} onClick={() => draft.edit(removePoint(l, id, i))}>−</button>
           </li>
@@ -195,5 +195,14 @@ function IdentifyButton({ show, run, saved }: { show: Show; run: RunConfig; save
       }}>
       {flashing ? 'Flashing…' : 'Identify'}
     </button>
+  );
+}
+
+/** A wavy line for a coiled stretch, a straight one for a straight stretch. */
+function SegmentIcon({ straight }: { straight: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      {straight ? <path d="M3 9h12" /> : <path d="M2 9c1.5-4 3-4 4.5 0s3 4 4.5 0 3-4 4.5 0" />}
+    </svg>
   );
 }
