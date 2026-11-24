@@ -266,6 +266,58 @@ describe('playlists and the nightly schedule', () => {
   });
 });
 
+describe('backup and restore', () => {
+  it('downloads everything as one file and restores it, saving the current state first', async () => {
+    const { app, statePath } = await makeApp();
+    await app.server.inject({ method: 'PUT', url: '/api/presets/Look', payload: { effect: 'solid' } });
+    const backup = await app.server.inject('/api/backup');
+    expect(backup.statusCode).toBe(200);
+    expect(backup.headers['content-disposition']).toMatch(/attachment; filename="xmas-lights-backup-\d{4}-\d{2}-\d{2}\.json"/);
+    const data = backup.json();
+    expect(data.scenes.Red).toBeTruthy();
+    expect(data.presets.Look).toBeTruthy();
+    // Change things, then restore the backup.
+    await app.server.inject({ method: 'PUT', url: '/api/scenes/Green', payload: { layers: [{ id: 'l', effect: 'solid', params: { color: '#00ff00' } }] } });
+    await app.server.inject({ method: 'DELETE', url: '/api/presets/Look' });
+    const r = await app.server.inject({ method: 'POST', url: '/api/restore', payload: data });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().savedFirst).toMatch(/^before-restore-/);
+    expect((await app.server.inject('/api/scenes')).json().scenes.map((x: { name: string }) => x.name)).toEqual(['Red']);
+    expect((await app.server.inject('/api/presets')).json()).toHaveLength(1);
+    expect(JSON.parse(await readFile(statePath, 'utf8')).scenes.Green).toBeUndefined();
+    // The automatic copy made before restoring still has Green, and can itself be restored.
+    const list = (await app.server.inject('/api/backups')).json();
+    const before = list.find((b: { file: string }) => b.file.startsWith('before-restore-'));
+    expect(before).toBeTruthy();
+    await app.server.inject({ method: 'POST', url: `/api/backups/${before.file}/restore` });
+    expect((await app.server.inject('/api/scenes')).json().scenes.map((x: { name: string }) => x.name)).toContain('Green');
+  });
+
+  it('rejects a restore that is not a valid show, and leaves everything as it was', async () => {
+    const { app } = await makeApp();
+    expect((await app.server.inject({ method: 'POST', url: '/api/restore', payload: { hello: 'world' } })).statusCode).toBe(400);
+    const badLayout = { ...(await app.server.inject('/api/backup')).json(), layout: { controllers: [], runs: [{ id: 'r', controller: 'nope', start: 0, count: 1, points: [[0, 0, 0]] }] } };
+    expect((await app.server.inject({ method: 'POST', url: '/api/restore', payload: badLayout })).statusCode).toBe(400);
+    expect((await app.server.inject('/api/status')).json().pixels).toBe(10);
+    expect((await app.server.inject('/api/backups/../../etc/passwd/restore')).statusCode).toBe(404);
+  });
+
+  it('keeps one automatic backup per day, and only the last 14', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'xmas-bak-'));
+    let now = Date.parse('2026-12-01T12:00:00Z');
+    const state: ShowState = {
+      layout: { controllers: [{ id: 'a', name: 'A', host: '127.0.0.1', port: 9, pixelCount: 1 }], runs: [] },
+      scenes: {}, activeScene: null, output: { brightness: 1, gamma: 1, fps: 40, enabled: false },
+    };
+    const app = await createApp({ state, statePath: join(dir, 'state.json'), now: () => now });
+    cleanups.push(() => app.server.close());
+    for (let d = 0; d < 20; d++) { await app.tick(); await app.tick(); now += 86_400_000; }
+    const daily = (await app.server.inject('/api/backups')).json().filter((b: { file: string }) => b.file.startsWith('daily-'));
+    expect(daily).toHaveLength(14);
+    expect(daily[0].file).toBe('daily-2026-12-20.json'); // newest first
+  });
+});
+
 describe('crossfade on Go', () => {
   it('Go fades over output.transition seconds; 0 cuts; the setting is validated and saved', async () => {
     const { app } = await makeApp({

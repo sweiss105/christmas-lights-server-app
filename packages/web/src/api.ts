@@ -117,6 +117,9 @@ export const api = {
   stopPlaylist: () => call<{ playing: null }>('POST', '/api/playlists/stop'),
   schedule: () => call<ScheduleStatus | { enabled: false }>('GET', '/api/schedule'),
   saveSchedule: (s: Schedule) => call<ScheduleStatus>('PUT', '/api/schedule', s),
+  backups: () => call<{ file: string; bytes: number; modified: number }[]>('GET', '/api/backups'),
+  restore: (data: unknown) => call<{ restored: true; savedFirst: string }>('POST', '/api/restore', data),
+  restoreBackup: (file: string) => call<{ restored: true; savedFirst: string }>('POST', `/api/backups/${enc(file)}/restore`),
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),

@@ -5,6 +5,7 @@ import { History, uniqueName, type SceneEditor } from './editor';
 import { appendPoint, setPoint } from './layoutOps';
 import { LayoutPanel } from './LayoutPanel';
 import { EditorPanel } from './EditorPanel';
+import { BackupPanel } from './BackupPanel';
 import { HousePanel } from './HousePanel';
 import { PlaylistsView, ScheduleView } from './ShowPanels';
 import { latestWins } from './latest';
@@ -34,6 +35,7 @@ export function App() {
 
   const [mode, setMode] = useState<EditMode>('blind');
   const [houseOpen, setHouseOpen] = useState(false);
+  const [backupsOpen, setBackupsOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState(false);
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [drawing, setDrawing] = useState(false);
@@ -56,7 +58,7 @@ export function App() {
 
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : ''}`}>
-      <Preview layout={layoutMode ? layoutDraft.value : layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + (houseOpen && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
+      <Preview layout={layoutMode ? layoutDraft.value : layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
           onAddPoint: (p) => { if (selectedRun) layoutDraft.edit(appendPoint(layoutDraft.value, selectedRun, p)); },
@@ -93,9 +95,11 @@ export function App() {
         <span className="divider" aria-hidden />
         <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode}
           onClick={() => { setLayoutMode((m) => !m); setDrawing(false); }}>Layout</button>
-        <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => setHouseOpen((o) => !o)}>House</button>
+        <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
+        <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
       </div>
       {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
+      {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
 
       {layoutMode
         ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>

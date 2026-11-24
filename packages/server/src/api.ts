@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -261,6 +261,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
 
   /** Called every second: advance a playlist, and switch the show on/off when the schedule says so. */
   const tick = async () => {
+    await dailyBackup().catch((e) => server.log.error(e));
     await advancePlaylist();
     const s = state.schedule;
     if (!s?.enabled) { lastInWindow = undefined; return; }
@@ -286,6 +287,81 @@ export async function createApp(opts: AppOptions): Promise<App> {
   };
   const ticker = opts.now ? null : setInterval(() => { tick().catch((e) => server.log.error(e)); }, 1000);
   ticker?.unref();
+
+  // ---- backup and restore --------------------------------------------------------
+  const backupDir = join(dirname(opts.statePath), 'backups');
+  const BACKUP_NAME = /^[a-z0-9-]+\.json$/;
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+  const writeBackup = async (file: string) => {
+    await mkdir(backupDir, { recursive: true });
+    await writeFile(join(backupDir, file), JSON.stringify(state, null, 2) + '\n');
+  };
+  const listBackups = async () => {
+    let names: string[] = [];
+    try { names = (await readdir(backupDir)).filter((f) => BACKUP_NAME.test(f)); } catch { return []; }
+    const out = await Promise.all(names.map(async (file) => { const st = await stat(join(backupDir, file)); return { file, bytes: st.size, modified: st.mtimeMs }; }));
+    return out.sort((a, b) => b.file.localeCompare(a.file));
+  };
+  /** Keep only the newest `keep` backups whose names start with `prefix`. */
+  const prune = async (prefix: string, keep: number) => {
+    const old = (await listBackups()).filter((b) => b.file.startsWith(prefix)).slice(keep);
+    await Promise.all(old.map((b) => rm(join(backupDir, b.file), { force: true })));
+  };
+
+  /** Replace the whole show with `data` after checking it. The porch keeps streaming (or not) as it is. */
+  const restoreFrom = async (data: unknown): Promise<string> => {
+    const d = data as Partial<ShowState> | null;
+    if (!d || typeof d !== 'object' || !d.layout || typeof d.scenes !== 'object' || !d.output) throw new HttpError(400, 'not a lights backup (needs layout, scenes and output)');
+    let next: Engine;
+    try { next = new Engine(buildLayout(d.layout)); } catch (e) { throw bad(e); }
+    for (const sc of Object.values(d.scenes ?? {})) {
+      try { validateScene(sc, next.layout); } catch (e) { throw new HttpError(400, `scene "${sc?.name}": ${(e as Error).message}`); }
+    }
+    const savedFirst = `before-restore-${new Date(now()).toISOString().replace(/[:.]/g, '-').toLowerCase()}.json`;
+    await writeBackup(savedFirst);
+    await prune('before-restore-', 10);
+    const enabled = state.output.enabled;
+    for (const k of Object.keys(state)) delete (state as unknown as Record<string, unknown>)[k];
+    Object.assign(state, structuredClone(d), { output: { ...d.output, enabled } });
+    next.setOutput({ brightness: state.output.brightness, gamma: state.output.gamma });
+    const staged = state.activeScene && (state.stage?.name === state.activeScene ? state.stage : state.scenes[state.activeScene]);
+    if (staged) { try { next.setScene(staged); } catch { state.activeScene = null; } }
+    engine = next;
+    lastInWindow = undefined;
+    await persist();
+    return savedFirst;
+  };
+
+  server.get('/api/backup', async (_req, reply) => {
+    reply.header('content-disposition', `attachment; filename="xmas-lights-backup-${day(now())}.json"`);
+    return state;
+  });
+  server.post('/api/restore', { bodyLimit: 20 * 1024 * 1024 }, async (req) => ({ restored: true, savedFirst: await restoreFrom(req.body) }));
+  server.get('/api/backups', async () => listBackups());
+  server.get<{ Params: { file: string } }>('/api/backups/:file', async (req, reply) => {
+    if (!BACKUP_NAME.test(req.params.file)) throw new HttpError(404, 'no such backup');
+    try { const body = await readFile(join(backupDir, req.params.file), 'utf8'); reply.header('content-type', 'application/json').header('content-disposition', `attachment; filename="${req.params.file}"`); return body; }
+    catch { throw new HttpError(404, 'no such backup'); }
+  });
+  server.post<{ Params: { file: string } }>('/api/backups/:file/restore', async (req) => {
+    if (!BACKUP_NAME.test(req.params.file)) throw new HttpError(404, 'no such backup');
+    let data: unknown;
+    try { data = JSON.parse(await readFile(join(backupDir, req.params.file), 'utf8')); } catch { throw new HttpError(404, 'no such backup'); }
+    return { restored: true, savedFirst: await restoreFrom(data) };
+  });
+
+  /** One automatic backup per day, keeping two weeks. */
+  let lastDaily = '';
+  const dailyBackup = async () => {
+    const d = day(now());
+    if (d === lastDaily) return;
+    lastDaily = d;
+    const file = `daily-${d}.json`;
+    if ((await listBackups()).some((b) => b.file === file)) return;
+    await writeBackup(file);
+    await prune('daily-', 14);
+  };
 
   // ---- identify: flash one run on the porch -----------------------------------
   let identify: { run: string; until: number } | null = null;
