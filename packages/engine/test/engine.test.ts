@@ -235,3 +235,43 @@ describe('clipping masks (mask only the layer directly below)', () => {
     expect(() => one().setScene({ name: 'x', layers: [base, { id: 'm', effect: 'solid', blend: 'mask', maskScope: 'nope' as 'layer' }] })).toThrow(/mask scope/);
   });
 });
+
+describe('feathered groups (soft-edged selections)', () => {
+  // 11 pixels 0.1 m apart along x: pixel i is at x = i * 0.1.
+  const cfg = (feather?: number): LayoutConfig => ({
+    controllers: [{ id: 'c', name: 'C', host: 'x', pixelCount: 11 }],
+    runs: [{ id: 'r', controller: 'c', start: 0, count: 11, points: [[0, 0, 0], [1, 0, 0]] }],
+    groups: { sel: { pixels: [0, 1, 2], ...(feather !== undefined && { feather }) } },
+  });
+
+  it('a group without feather has hard edges, as before', () => {
+    const l = buildLayout(cfg());
+    expect([...l.groups.get('sel')!]).toEqual([1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(l.groupWeights.get('sel')).toBeUndefined();
+  });
+
+  it('feather fades the group out over the given distance in metres', () => {
+    const l = buildLayout(cfg(0.4));
+    const w = l.groupWeights.get('sel')!;
+    expect(w[2]).toBe(1);
+    expect(w[4]).toBeCloseTo(0.5, 5); // 0.2 m from the selection, half of 0.4 m
+    expect(w[6]).toBe(0); // 0.4 m away: fully outside
+    expect(w[3]!).toBeGreaterThan(w[4]!);
+    expect([...l.groups.get('sel')!].slice(0, 7)).toEqual([1, 1, 1, 1, 1, 1, 0]); // pixels the fade touches count as members
+  });
+
+  it('the engine applies a feathered group as per-pixel opacity', () => {
+    const e = new Engine(buildLayout(cfg(0.4)));
+    e.setOutput({ brightness: 1, gamma: 1 });
+    e.setScene({ name: 's', layers: [{ id: 'w', effect: 'solid', params: { color: '#ffffff' }, group: 'sel' }] });
+    const f = e.render(0);
+    expect(f[2 * 3]).toBe(255);
+    expect(f[4 * 3]).toBe(128);
+    expect(f[7 * 3]).toBe(0);
+  });
+
+  it('rejects a negative or huge feather', () => {
+    expect(() => buildLayout(cfg(-1))).toThrow(/feather/);
+    expect(() => buildLayout(cfg(100))).toThrow(/feather/);
+  });
+});

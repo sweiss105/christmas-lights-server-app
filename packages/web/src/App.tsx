@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { EFFECTS, paletteColors, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
 import { History, uniqueName, type SceneEditor } from './editor';
 import { appendPoint, setPoint } from './layoutOps';
 import { LayoutPanel } from './LayoutPanel';
+import { SelectPanel } from './SelectPanel';
+import { SelectionOverlay, type SelectTool } from './SelectionOverlay';
+import type { SelectMode, Selection } from './selection';
 import { EditorPanel } from './EditorPanel';
 import { BackupPanel } from './BackupPanel';
 import { HousePanel } from './HousePanel';
@@ -37,6 +40,13 @@ export function App() {
   const [houseOpen, setHouseOpen] = useState(false);
   const [backupsOpen, setBackupsOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selection, setSelection] = useState<Selection>(() => new Set());
+  const [selectTool, setSelectTool] = useState<SelectTool>('box');
+  const [selectModeKind, setSelectModeKind] = useState<SelectMode>('replace');
+  const [brushSize, setBrushSize] = useState(24);
+  const [projector, setProjector] = useState<{ fn: () => Float32Array } | null>(null);
+  const onProjector = useCallback((p: (() => Float32Array) | null) => setProjector(p ? { fn: p } : null), []);
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [drawing, setDrawing] = useState(false);
   const layoutDraft = useLayoutDraft(layout);
@@ -59,6 +69,7 @@ export function App() {
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : ''}`}>
       <Preview layout={layoutMode ? layoutDraft.value : layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
+        selection={selectMode ? selection : null} onProjector={selectMode ? onProjector : undefined}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
           onAddPoint: (p) => { if (selectedRun) layoutDraft.edit(appendPoint(layoutDraft.value, selectedRun, p)); },
@@ -71,8 +82,10 @@ export function App() {
 
       <TopBar show={show} mode={mode} tools={
         <div className="tools" role="toolbar" aria-label="Tools">
+          <button className={`viewbar-btn ${selectMode ? 'active' : ''}`} aria-pressed={selectMode}
+            onClick={() => { setSelectMode((m) => !m); setLayoutMode(false); setDrawing(false); }}>Select</button>
           <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode}
-            onClick={() => { setLayoutMode((m) => !m); setDrawing(false); }}>Layout</button>
+            onClick={() => { setLayoutMode((m) => !m); setSelectMode(false); setDrawing(false); }}>Layout</button>
           <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
           <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
         </div>
@@ -80,7 +93,13 @@ export function App() {
 
       <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); }} />
 
-      {layoutMode
+      {selectMode && projector && (
+        <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} selection={selection} onChange={setSelection} />
+      )}
+      {selectMode
+        ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
+            mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} />
+        : layoutMode
         ? <LayoutPanel show={show} draft={layoutDraft} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
         : <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />}
 
@@ -103,7 +122,9 @@ export function App() {
       {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
       {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
 
-      {layoutMode
+      {selectMode
+        ? <div className="caption layout" role="status">{selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over' : selectTool === 'lasso' ? 'draw around' : 'drag a box around'} lights · ${selection.size} selected`}</div>
+        : layoutMode
         ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
         : <ViewCaption view={view} show={show} selected={selected} />}
       <Health show={show} />

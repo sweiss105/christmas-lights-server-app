@@ -42,6 +42,8 @@ export interface OutputSettings {
 interface CompiledLayer {
   render: RenderFn;
   mask: Uint8Array;
+  /** Per-pixel weights for a feathered group, else null. */
+  weight: Float32Array | null;
   opacity: number;
   blend: BlendMode;
   maskScope: MaskScope;
@@ -113,6 +115,7 @@ export class Engine {
     this.layers = valid.layers.filter((l) => l.enabled).map((l) => ({
       render: EFFECTS[l.effect]!.create(l.params!, this.layout),
       mask: this.layout.groups.get(l.group!)!,
+      weight: this.layout.groupWeights.get(l.group!) ?? null,
       opacity: l.opacity!,
       blend: l.blend!,
       maskScope: l.maskScope ?? 'below',
@@ -150,12 +153,12 @@ export class Engine {
           if (!clip.mask[i]) { keep[i] = 1; continue; }
           const j = i * 3;
           const luma = 0.2126 * tmp[j]! + 0.7152 * tmp[j + 1]! + 0.0722 * tmp[j + 2]!;
-          keep[i] = 1 + ((invert ? 1 - luma : luma) - 1) * clip.opacity;
+          keep[i] = 1 + ((invert ? 1 - luma : luma) - 1) * clip.opacity * (clip.weight ? clip.weight[i]! : 1);
         }
         layer.render(t, tmp);
         for (let i = 0; i < n; i++) {
           if (!mask[i]) continue;
-          const oi = o * keep[i]!;
+          const oi = o * keep[i]! * (layer.weight ? layer.weight[i]! : 1);
           for (let c = i * 3; c < i * 3 + 3; c++) {
             const a = acc[c]!;
             acc[c] = a + (blend(mode, a, tmp[c]!) - a) * oi;
@@ -173,16 +176,18 @@ export class Engine {
           if (!mask[i]) continue;
           const j = i * 3;
           const luma = 0.2126 * tmp[j]! + 0.7152 * tmp[j + 1]! + 0.0722 * tmp[j + 2]!; // Rec. 709 brightness
-          const keep = 1 + ((invert ? 1 - luma : luma) - 1) * o; // opacity weakens the mask
+          const keep = 1 + ((invert ? 1 - luma : luma) - 1) * o * (layer.weight ? layer.weight[i]! : 1); // opacity (and a feathered group) weakens the mask
           acc[j] = acc[j]! * keep; acc[j + 1] = acc[j + 1]! * keep; acc[j + 2] = acc[j + 2]! * keep;
         }
         continue;
       }
+      const weight = layer.weight;
       for (let i = 0; i < n; i++) {
         if (!mask[i]) continue;
+        const oi = weight ? o * weight[i]! : o;
         for (let c = i * 3; c < i * 3 + 3; c++) {
           const a = acc[c]!;
-          acc[c] = a + (blend(mode, a, tmp[c]!) - a) * o;
+          acc[c] = a + (blend(mode, a, tmp[c]!) - a) * oi;
         }
       }
     }

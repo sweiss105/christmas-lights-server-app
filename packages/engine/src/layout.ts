@@ -37,7 +37,11 @@ export interface GroupConfig {
   runs?: string[];
   /** Explicit global pixel indices. */
   pixels?: number[];
+  /** Soft edge in metres: effects on this group fade out over this distance around it. 0 or absent = hard edge. */
+  feather?: number;
 }
+
+export const MAX_FEATHER = 10;
 
 export interface LayoutConfig {
   controllers: ControllerConfig[];
@@ -57,6 +61,8 @@ export interface Layout {
   /** Offset of each controller's first pixel in the global index space. */
   controllerOffset: Map<string, number>;
   groups: Map<string, Uint8Array>;
+  /** Per-pixel weights 0..1 for feathered groups (absent for hard-edged ones). */
+  groupWeights: Map<string, Float32Array>;
   bounds: { min: Vec3; max: Vec3 };
 }
 
@@ -142,6 +148,7 @@ export function buildLayout(config: LayoutConfig): Layout {
   }
 
   const groups = new Map<string, Uint8Array>();
+  const groupWeights = new Map<string, Float32Array>();
   const all = new Uint8Array(count).fill(1);
   groups.set('all', all);
   for (const [name, g] of Object.entries(config.groups ?? {})) {
@@ -155,6 +162,13 @@ export function buildLayout(config: LayoutConfig): Layout {
       if (p < 0 || p >= count) throw new LayoutError(`group "${name}" pixel ${p} out of range`);
       m[p] = 1;
     }
+    const feather = g.feather ?? 0;
+    if (!(Number.isFinite(feather) && feather >= 0 && feather <= MAX_FEATHER)) throw new LayoutError(`group "${name}" feather must be 0..${MAX_FEATHER} m`);
+    if (feather > 0) {
+      const w = featherWeights(m, positions, mapped, feather);
+      for (let i = 0; i < count; i++) if (w[i]! > 0) m[i] = 1;
+      groupWeights.set(name, w);
+    }
     groups.set(name, m);
   }
   // Every run is also addressable as a group named "run:<id>".
@@ -164,5 +178,29 @@ export function buildLayout(config: LayoutConfig): Layout {
     groups.set(`run:${id}`, m);
   }
 
-  return { config, count, positions, normalized, mapped, controllerOffset, groups, bounds: { min, max } };
+  return { config, count, positions, normalized, mapped, controllerOffset, groups, groupWeights, bounds: { min, max } };
+}
+
+/**
+ * Weights for a feathered group: 1 inside, easing to 0 at `feather` metres from the nearest selected
+ * pixel (a cosine curve, so the edge has no visible step).
+ */
+function featherWeights(selected: Uint8Array, positions: Float32Array, mapped: Uint8Array, feather: number): Float32Array {
+  const n = selected.length;
+  const w = new Float32Array(n);
+  const sel: number[] = [];
+  for (let i = 0; i < n; i++) if (selected[i]) { w[i] = 1; if (mapped[i]) sel.push(i); }
+  for (let i = 0; i < n; i++) {
+    if (selected[i] || !mapped[i]) continue;
+    const x = positions[i * 3]!, y = positions[i * 3 + 1]!, z = positions[i * 3 + 2]!;
+    let best = Infinity;
+    for (const j of sel) {
+      const dx = positions[j * 3]! - x, dy = positions[j * 3 + 1]! - y, dz = positions[j * 3 + 2]! - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < best) best = d2;
+    }
+    const d = Math.sqrt(best);
+    w[i] = d >= feather ? 0 : 0.5 + 0.5 * Math.cos((Math.PI * d) / feather);
+  }
+  return w;
 }

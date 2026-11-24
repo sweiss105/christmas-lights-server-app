@@ -23,6 +23,10 @@ interface PreviewProps {
   house?: House | null;
   /** Layout mode: diagnostic run colours, point handles and drawing. */
   layoutEdit?: LayoutEdit | null;
+  /** Select mode: highlight these lights. */
+  selection?: Set<number> | null;
+  /** Receives a function that projects every light to canvas pixels (x, y pairs; NaN if not visible). */
+  onProjector?: (project: (() => Float32Array) | null) => void;
 }
 
 export interface LayoutEdit {
@@ -37,7 +41,7 @@ const BACKGROUND = '#06080d';
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** The 3D preview: the porch's pixels, rendered in the browser by the same engine as the porch. */
-export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, bottomInset = 0, house, layoutEdit }: PreviewProps) {
+export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, bottomInset = 0, house, layoutEdit, selection, onProjector }: PreviewProps) {
   const built = useMemo(() => buildLayout(layout), [layout]);
   return (
     <Canvas
@@ -53,6 +57,8 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInse
       <Wires layout={layout} />
       <Pixels layout={built} scene={scene} clock={clock} diagnostic={layoutEdit ? { config: layout, selected: layoutEdit.selected } : null} />
       {layoutEdit && <LayoutTools layout={layout} edit={layoutEdit} />}
+      {selection && <SelectionHighlight layout={built} selection={selection} />}
+      {onProjector && <Projector layout={built} onProjector={onProjector} />}
       <Camera layout={built} preset={preset} hidden={leftInset + rightInset} hiddenY={bottomInset} />
       <ViewOffset left={leftInset} right={rightInset} bottom={bottomInset} />
     </Canvas>
@@ -343,4 +349,66 @@ function DrawSurface({ z, onAdd }: { z: number; onAdd: (p: Vec3) => void }) {
       </mesh>
     </group>
   );
+}
+
+// ---- select mode ------------------------------------------------------------------------------
+
+/** Hands the app a function that projects every light into canvas pixels for the current view. */
+function Projector({ layout, onProjector }: { layout: Layout; onProjector: (p: (() => Float32Array) | null) => void }) {
+  const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
+  useEffect(() => {
+    const v = new THREE.Vector3();
+    onProjector(() => {
+      camera.updateMatrixWorld();
+      const out = new Float32Array(layout.count * 2).fill(NaN);
+      for (let i = 0; i < layout.count; i++) {
+        if (!layout.mapped[i]) continue;
+        v.set(layout.positions[i * 3]!, layout.positions[i * 3 + 1]!, layout.positions[i * 3 + 2]!).project(camera);
+        if (v.z > 1 || v.z < -1) continue; // behind the camera or past the far plane
+        out[i * 2] = ((v.x + 1) / 2) * size.width;
+        out[i * 2 + 1] = ((1 - v.y) / 2) * size.height;
+      }
+      return out;
+    });
+    return () => onProjector(null);
+  }, [camera, size, layout, onProjector]);
+  return null;
+}
+
+/** A white ring around each selected light. */
+function SelectionHighlight({ layout, selection }: { layout: Layout; selection: Set<number> }) {
+  const geometry = useMemo(() => {
+    const pos: number[] = [];
+    for (const i of selection) if (layout.mapped[i]) pos.push(layout.positions[i * 3]!, layout.positions[i * 3 + 1]!, layout.positions[i * 3 + 2]!);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+    return g;
+  }, [layout, selection]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: 800 } },
+    vertexShader: /* glsl */ `
+      uniform float uScale;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = max(7.0, 0.26 * uScale / -mv.z);
+      }`,
+    fragmentShader: /* glsl */ `
+      void main() {
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        float ring = smoothstep(0.62, 0.72, d) * (1.0 - smoothstep(0.86, 1.0, d));
+        if (ring < 0.01) discard;
+        gl_FragColor = vec4(vec3(0.75, 0.88, 1.0) * ring, ring);
+      }`,
+    transparent: true, depthWrite: false, depthTest: false,
+  }), []);
+  const size = useThree((s) => s.size);
+  const dpr = useThree((s) => s.viewport.dpr);
+  useFrame(({ camera }) => {
+    const fov = (camera as THREE.PerspectiveCamera).fov ?? 40;
+    material.uniforms.uScale!.value = (size.height * dpr) / (2 * Math.tan((fov * Math.PI) / 360));
+  });
+  return <points geometry={geometry} material={material} frustumCulled={false} renderOrder={10} />;
 }
