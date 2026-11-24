@@ -32,6 +32,7 @@ Environment variables:
 | `PORT` | 8080 | |
 | `XMAS_CONFIG` | `config/local.json` | State file; on first run it starts from `config/example.json` |
 | `XMAS_WEB_ROOT` | `packages/web/dist` | Built web UI served at `/` |
+| `XMAS_TZ` (Docker) / `TZ` | UTC | Time zone for Scrolling Text's `#TIME`/`#DATE` tokens, e.g. `America/Chicago` |
 | `XMAS_API_TOKEN` | unset | Requires `Authorization: Bearer <token>` on every `/api` route except `/api/health`. **Set this or put Cloudflare Access in front before you expose the site through cloudflared.** |
 
 ## WLED setup (each controller)

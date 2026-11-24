@@ -8,3 +8,6 @@ export { PALETTE_NAMES, WLED_PALETTE_NAMES } from './wled/palettes.js';
 
 /** Palette colours for editor previews. */
 export { paletteColors } from './wled/swatch.js';
+
+/** Wall clock for effects that show the time or date (Scrolling Text's #TIME etc.). */
+export { setWallClock } from './wled/effects/text.js';

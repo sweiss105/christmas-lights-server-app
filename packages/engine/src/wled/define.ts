@@ -31,6 +31,11 @@ export interface WledEffectOptions {
    */
   stateful?: false | { window?: number; warmup?: number };
   history?: number;
+  /**
+   * For effects that read SEGMENT.name (Scrolling Text): expose the segment name as a `text` param
+   * (key `text`, at most WLED_MAX_SEGNAME_LEN characters) with this default.
+   */
+  text?: { default: string; label?: string };
 }
 
 export interface WledMeta {
@@ -147,6 +152,9 @@ export function paramsFromMeta(m: WledMeta): ParamSpec[] {
   return ps;
 }
 
+/** Longest segment name WLED keeps (const.h), in bytes there; our `text` param counts characters. */
+export const WLED_MAX_SEGNAME_LEN = 64;
+
 /** Cells across the virtual 2D grid; its height follows the house front's aspect ratio. */
 export const GRID_WIDTH = 64;
 export function gridSize(aspect: number): { w: number; h: number } {
@@ -175,7 +183,9 @@ export function wledEffect(opts: WledEffectOptions): EffectDef {
     wled: meta.name,
     category: opts.category,
     description: opts.description,
-    params: paramsFromMeta(meta),
+    params: opts.text
+      ? [{ key: 'text', label: opts.text.label ?? 'Text', type: 'text', default: opts.text.default, maxLength: WLED_MAX_SEGNAME_LEN }, ...paramsFromMeta(meta)]
+      : paramsFromMeta(meta),
     create(p: Params, layout: Layout): RenderFn {
       // ---- geometry: virtual strip or grid, and where each real pixel samples it ----
       const index = new Int32Array(layout.count).fill(-1);
@@ -204,6 +214,7 @@ export function wledEffect(opts: WledEffectOptions): EffectDef {
       const palId = Math.max(0, resolvePaletteId(palName));
       const randomPal = palId === 1 || (palId === 0 && defaultPal === 1);
       const colorParams: Record<string, unknown> = { color1: p.color1, color2: p.color2, color3: p.color3 };
+      const segName = !opts.text ? '' : typeof p.text === 'string' ? p.text : opts.text.default;
 
       const makeSegment = (): Segment => {
         const s = new Segment(width, height);
@@ -216,6 +227,7 @@ export function wledEffect(opts: WledEffectOptions): EffectDef {
         s.check2 = typeof p.check2 === 'boolean' ? p.check2 : !!meta.defaults.o2;
         s.check3 = typeof p.check3 === 'boolean' ? p.check3 : !!meta.defaults.o3;
         s.palette = palId;
+        s.name = segName;
         s.colors.set(colors);
         loadPalette(s.currentPalette, palId, defaultPal, colors, 0, colorParams);
         return s;

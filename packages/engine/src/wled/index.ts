@@ -11,6 +11,7 @@ import { FX1D_B } from './effects/fx1d-b.js';
 import { FX1D_C } from './effects/fx1d-c.js';
 import { FX2D } from './effects/fx2d.js';
 import { PARTICLES } from './effects/particles.js';
+import { TEXT } from './effects/text.js';
 
 export const WLED_EFFECTS: EffectDef[] = [
   ...BASIC,
@@ -23,6 +24,7 @@ export const WLED_EFFECTS: EffectDef[] = [
   ...FX1D_C,
   ...FX2D,
   ...PARTICLES,
+  ...TEXT,
 ];
 
 export { PALETTE_NAMES, WLED_PALETTE_NAMES } from './palettes.js';

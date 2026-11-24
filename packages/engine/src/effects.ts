@@ -9,7 +9,12 @@ export type ParamSpec =
   | { key: string; label: string; type: 'vec3'; default: [number, number, number] }
   | { key: string; label: string; type: 'select'; options: string[]; default: string; labels?: Record<string, string> }
   | { key: string; label: string; type: 'palette'; default: string }
-  | { key: string; label: string; type: 'boolean'; default: boolean };
+  | { key: string; label: string; type: 'boolean'; default: boolean }
+  /** Free text, cut to `maxLength` characters (default 64, WLED's WLED_MAX_SEGNAME_LEN). */
+  | { key: string; label: string; type: 'text'; default: string; maxLength?: number };
+
+/** Default maximum length of a `text` param (WLED_MAX_SEGNAME_LEN). */
+export const TEXT_MAX_LENGTH = 64;
 
 /** Groups for the effect picker. */
 export type EffectCategory = 'Basic' | 'Chase & Running' | 'Twinkle & Sparkle' | 'Fire & Fireworks' | 'Noise & Flow' | 'Waves & Patterns' | '2D' | 'Particles';
@@ -64,6 +69,13 @@ export function resolveParams(def: EffectDef, input: Params = {}): Params {
         if (typeof v !== 'boolean') throw new Error(`${def.id}.${p.key} must be true or false`);
         out[p.key] = v;
         break;
+      case 'text': {
+        if (typeof v !== 'string') throw new Error(`${def.id}.${p.key} must be text`);
+        const max = p.maxLength ?? TEXT_MAX_LENGTH;
+        // Count characters (code points), so a cut never splits an emoji's surrogate pair.
+        out[p.key] = v.length <= max ? v : Array.from(v).slice(0, max).join('');
+        break;
+      }
     }
   }
   return out;

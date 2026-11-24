@@ -193,6 +193,13 @@ function ParamControl({ spec, value, params, onChange, onEnd }: { spec: ParamSpe
           </select>
         </Field>
       );
+    case 'text':
+      return (
+        <Field label={spec.label}>
+          <input className="text" type="text" value={value as string} maxLength={spec.maxLength ?? 64} spellCheck={false}
+            placeholder="Empty shows the time" onChange={(e) => onChange(e.target.value, true)} onBlur={onEnd} />
+        </Field>
+      );
     case 'boolean':
       return (
         <div className="field toggle-field">
