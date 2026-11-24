@@ -1,0 +1,13 @@
+xmas-lights: spatial Christmas light controller
+Copyright (c) 2026 the xmas-lights authors
+
+Licensed under the European Union Public Licence v. 1.2 (EUPL-1.2) or later.
+See LICENSE.
+
+This work includes effects, palettes and maths helpers ported from WLED
+(https://github.com/wled/WLED), version 16.0.1:
+
+  Copyright (c) 2016-present Christian Schwinne and individual WLED contributors
+  Licensed under the EUPL v. 1.2 or later
+
+Ported files say so in their header and name the WLED source file they come from.

@@ -69,6 +69,54 @@ Steps 1–6 pass on the real porch controller.
 - **Docker:** the image builds, and the stop signal reaches the server through `npm` → `tsx` → `node`, with a clean exit 0. On the home server, port 8080 is taken by another service, so `.env` sets `XMAS_PORT=8090`. The compose file now reads `XMAS_PORT`.
 - **Watch for:** `output.enabled` is saved, so a restart resumes streaming if it was on. The container runs as root, so `data/show.json` becomes root-owned once the container saves it. Node on the home server is a per-user install in `~/.local/node`.
 
+## Phase 2 progress (2026-11-24, branch `phase-2-web-ui`)
+
+**Live:** xmas.weiss-audio.com (Cloudflare Access, owner only) serves the web UI from the container on port 8090. It's deployed from clean checkouts of committed code, and only while the owner isn't using the site.
+
+**Done and deployed:**
+- **M1:** 3D preview running the shared engine, in step with the server clock. Scenes list with Blind preview and Go, brightness, streaming switch, blackout, health.
+- **M2:** scene editor. Layers, effect settings generated from param specs, Blind/Live with a LIVE indicator, undo/redo, and new/duplicate/rename/delete scenes.
+- **Presets:** saved layer looks, `/api/presets`. A categorised, searchable layer picker.
+- **House model:** upload a `.glb` scan and align it with the lights (`/api/house`). The owner scans the house with an iPhone 17 Pro Max (Scaniverse); a stand-in model was used for testing.
+- **Layout editor:** runs, points, drag handles, draw on the house, reverse, save, and **Identify** (`/api/identify`, flashes a run while streaming).
+- **Crossfade on Go and Blackout** (`output.transition`, default 1 s).
+- **Palette picker** with gradients.
+
+**WLED effects: done.** 175 effects ported from WLED v16.0.1, the controller's firmware: 126 1D, 53 2D (drawn over the house front) and 23 particle effects, plus Scrolling Text with WLED's fonts.
+- The project is EUPL-1.2 as a result (`LICENSE`, `NOTICE`).
+- The compatibility layer is in `packages/engine/src/wled/`; read `PORTING.md` there.
+- Excluded: the 37 microphone effects (owner's choice), Copy Segment (no segments here) and Image (needs an upload feature).
+- New WLED layers start on the Party palette when the effect names none (owner's choice).
+
+**Also done:**
+- Mask and inverted-mask blend modes, plus clipping masks (`maskScope: 'layer'`).
+- The staged scene survives restarts (`state.stage`).
+- A phone layout with a bottom sheet.
+- `XMAS_TZ` sets the time zone for `#TIME`; it's UTC until the owner gives a zone.
+
+**Show automation and upkeep (done, live):**
+- **Playlists** (`/api/playlists`) and a **nightly schedule** (`/api/schedule`, sunset or a fixed time, in a time zone), both run on the server. The logic is in `packages/server/src/show.ts`.
+- **Backups:** download and restore, plus daily automatic backups in `data/backups/` (last 14 kept). Every restore first saves the current state.
+- **House scans can come in several parts**, each aligned separately (`/api/house/parts`). The owner scanned the house with Polycam in two parts.
+- **Speed:** long-lived caching for hashed UI files, and a split bundle.
+- **`npm run e2e`:** a browser smoke test (see `scripts/e2e-smoke.mjs`).
+
+**Selection, the real house and coiled strings (done, live):**
+- **Select tools:** box, lasso, brush, tap-a-string, and rules (every Nth, string ends, height, house half). Selections save as groups, optionally with a soft edge (`feather`). Done, Esc or picking a scene goes back to the editor.
+- **House model:** the owner's own clean model (`House_Clean.glb`, built from the Polycam scans, metres, Y up, +Z towards the street, named parts such as `railings`, `handrail`, `cement_stairs`). The latest version (door moved) is live; copies are in `~/scans/` on the server.
+- **Untextured models get a clay look:** lit, matte, outlined edges, a dim night sky. Textured photo scans keep the unlit look. With a house shown, the flat ground at 0 m is left out (the yard slopes about 2.5 m down to the street) and layout points may go below 0 m.
+- **Coiled runs:** `coil: { radius, pitch, skip }` on a run winds its lights round the path (one turn per baluster gap, 0.27 m), with `skip` segments straight (e.g. down a post). Edited in the Layout panel.
+- **The porch strings now follow the model's railings** (owner confirmed which sections, 2026-11-24): GPIO16 starts on the left side rail 0.5 m from the house, then the front and the left stair rail (7.8 m). GPIO12 goes up the right stair rail, along the front and the right side to the house, straight down the post, then back along the bottom rails (8.9 m). Coiling the bottom rails is a guess to confirm on the porch.
+
+**Still open:**
+- Light glow from the LEDs onto the house model (preview only), being built.
+- Check the new layout on the real porch at night, including the bottom-rail coil.
+- The schedule needs the owner's location (for sunset) and time zone.
+- A string on the big-stairs handrail is planned; its GPIO, pixel count and start end aren't known yet.
+- The second controller isn't running yet.
+- **Phase 3 (camera mapping) is chosen to run in the app on the owner's iPhone** (not Marimapper): flash lights in coded patterns, capture from a few spots, solve positions.
+- Engine tests fail to load while effect files are half-written. Verify agent work in a clean worktree (`git worktree add` + `npm ci`) before committing.
+
 ## Known gaps and things to watch
 
 - **Health-check timing:** they run every 10 s via HTTP to `/json/info`, so a controller that was offline at startup shows `online:false` until the next check.

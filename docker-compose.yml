@@ -8,6 +8,8 @@ services:
       # Set XMAS_PORT in .env if 8080 is taken on the host (host networking shares its ports).
       PORT: ${XMAS_PORT:-8080}
       XMAS_API_TOKEN: ${XMAS_API_TOKEN:-}
+      # Time zone for Scrolling Text's #TIME/#DATE tokens, e.g. America/Chicago.
+      TZ: ${XMAS_TZ:-UTC}
     volumes:
       - ./data:/data
     stop_grace_period: 10s

@@ -7,9 +7,12 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @xmas/server",
+    "dev:web": "npm run dev -w @xmas/web",
+    "build:web": "npm run build -w @xmas/web",
     "start": "npm run start -w @xmas/server",
     "test": "vitest run",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b && npm run typecheck -w @xmas/web",
+    "e2e": "node scripts/e2e-smoke.mjs"
   },
   "engines": {
     "node": ">=22"
