@@ -3,3 +3,7 @@ export * from './sequence.js';
 export * from './camera.js';
 export * from './decode.js';
 export * from './simulate.js';
+export * from './linalg.js';
+export * from './pose.js';
+export * from './triangulate.js';
+export * from './solve.js';
