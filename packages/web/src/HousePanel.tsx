@@ -1,27 +1,53 @@
 import { useMemo, useRef, useState } from 'react';
-import { api, type House } from './api';
+import { api, type House, type HousePart } from './api';
+import { EyeIcon } from './EditorPanel';
 import { latestWins } from './latest';
 import type { Show } from './useShow';
 
-/** Upload the house scan and line it up with the lights. Changes save as you drag. */
+const size = (bytes: number) => (bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`);
+
+/**
+ * Upload house scans and line them up. Each part (e.g. two halves scanned separately) is first
+ * placed against the others; "Whole house" then lines everything up with the lights.
+ */
 export function HousePanel({ show, onClose }: { show: Show; onClose: () => void }) {
   const house = show.house;
   const file = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const save = useMemo(() => latestWins((h: Partial<House>) => api.setHouse(h), show.reportError), [show.reportError]);
+  const [target, setTarget] = useState<'house' | string>('house');
+  const saveHouse = useMemo(() => latestWins((h: Partial<House>) => api.setHouse(h), show.reportError), [show.reportError]);
+  const savePart = useMemo(() => latestWins(({ id, ...p }: Partial<HousePart> & { id: string }) => api.setHousePart(id, p), show.reportError), [show.reportError]);
   if (!house) return null;
 
-  const update = (patch: Partial<House>) => {
+  const part = house.parts.find((p) => p.id === target) ?? null;
+  const updateHouse = (patch: Partial<House>) => {
     const next = { ...house, ...patch };
     show.setHouseLocal(next);
-    save({ position: next.position, rotation: next.rotation, scale: next.scale, opacity: next.opacity });
+    saveHouse({ position: next.position, rotation: next.rotation, scale: next.scale, opacity: next.opacity });
   };
-  const upload = async (f: File) => {
+  const updatePart = (id: string, patch: Partial<HousePart>) => {
+    const parts = house.parts.map((p) => (p.id === id ? { ...p, ...patch } : p));
+    show.setHouseLocal({ ...house, parts });
+    const p = parts.find((x) => x.id === id)!;
+    savePart({ id, position: p.position, rotation: p.rotation, scale: p.scale, visible: p.visible, name: p.name });
+  };
+  const upload = async (files: FileList) => {
     setUploading(true);
-    try { show.setHouseLocal({ ...house, ...(await api.uploadHouseModel(f)) }); } catch (e) { show.reportError(e); }
+    let added = house.parts;
+    try {
+      for (const f of Array.from(files)) {
+        const p = await api.uploadHousePart(f, f.name.replace(/\.glb$/i, ''));
+        added = [...added, p];
+        show.setHouseLocal({ ...house, parts: added });
+      }
+    } catch (e) { show.reportError(e); }
     setUploading(false);
   };
-  const axis = (i: number, v: number) => { const p = [...house.position] as House['position']; p[i] = v; update({ position: p }); };
+
+  // Controls for whichever is selected: the whole house, or one part relative to the others.
+  const t = part ?? house;
+  const set = (patch: Partial<House & HousePart>) => (part ? updatePart(part.id, patch) : updateHouse(patch));
+  const axis = (i: number, v: number) => { const p = [...t.position] as House['position']; p[i] = v; set({ position: p }); };
 
   return (
     <div className="house-panel glass" role="dialog" aria-label="House model">
@@ -30,27 +56,53 @@ export function HousePanel({ show, onClose }: { show: Show; onClose: () => void 
         <button className="btn small ghost" onClick={onClose}>Done</button>
       </div>
       <div className="house-body">
-        {house.model
-          ? <p className="hint">Scan loaded ({house.model.bytes >= 1e6 ? `${(house.model.bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(house.model.bytes / 1e3))} KB`}). Line it up so the lights sit on the porch railings.</p>
-          : <p className="hint">Upload a .glb exported from Scaniverse or Polycam. It appears behind the lights in the preview.</p>}
-        <input ref={file} type="file" accept=".glb,model/gltf-binary" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ''; }} />
+        <p className="hint">
+          {house.parts.length
+            ? 'Place each scan against the others, then use Whole house to line everything up with the lights.'
+            : 'Upload .glb scans (Polycam, Scaniverse). Several scans of one house are fine: upload them all.'}
+        </p>
+        <input ref={file} type="file" accept=".glb,model/gltf-binary" multiple hidden
+          onChange={(e) => { if (e.target.files?.length) void upload(e.target.files); e.target.value = ''; }} />
         <div className="row">
-          <button className="btn small" disabled={uploading} onClick={() => file.current?.click()}>{uploading ? 'Uploading…' : house.model ? 'Replace scan…' : 'Upload scan…'}</button>
-          {house.model && (
-            <button className="btn small ghost danger-quiet" onClick={() => {
-              if (!window.confirm('Remove the house scan?')) return;
-              api.deleteHouseModel().then(() => { const { model: _m, ...rest } = house; show.setHouseLocal(rest); }).catch(show.reportError);
-            }}>Remove</button>
-          )}
+          <button className="btn small" disabled={uploading} onClick={() => file.current?.click()}>{uploading ? 'Uploading…' : 'Upload scans…'}</button>
         </div>
-        {house.model && (
+
+        {house.parts.length > 0 && (
+          <ul className="part-list" role="listbox" aria-label="What to move">
+            <li>
+              <button role="option" aria-selected={target === 'house'} className={`part-row ${target === 'house' ? 'selected' : ''}`} onClick={() => setTarget('house')}>
+                <span className="part-name">Whole house</span><span className="muted">lines up with the lights</span>
+              </button>
+            </li>
+            {house.parts.map((p) => (
+              <li key={p.id} className="part-item">
+                <button role="option" aria-selected={target === p.id} className={`part-row ${target === p.id ? 'selected' : ''}`} onClick={() => setTarget(p.id)}>
+                  <span className="part-name">{p.name}</span><span className="muted">{size(p.bytes)}</span>
+                </button>
+                <button className="icon-btn small" aria-pressed={p.visible} title={p.visible ? 'Hide' : 'Show'} aria-label={`${p.visible ? 'Hide' : 'Show'} ${p.name}`}
+                  onClick={() => updatePart(p.id, { visible: !p.visible })}><EyeIcon off={!p.visible} /></button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {house.parts.length > 0 && (
           <>
-            <Num label="Across (m)" value={house.position[0]} min={-30} max={30} step={0.05} onChange={(v) => axis(0, v)} />
-            <Num label="Up (m)" value={house.position[1]} min={-10} max={10} step={0.05} onChange={(v) => axis(1, v)} />
-            <Num label="Towards street (m)" value={house.position[2]} min={-30} max={30} step={0.05} onChange={(v) => axis(2, v)} />
-            <Num label="Turn (°)" value={house.rotation} min={0} max={359} step={1} onChange={(v) => update({ rotation: v })} />
-            <Num label="Scale" value={house.scale} min={0.5} max={2} step={0.005} onChange={(v) => update({ scale: v })} />
-            <Num label="Opacity" value={house.opacity} min={0.1} max={1} step={0.05} onChange={(v) => update({ opacity: v })} />
+            <div className="section-head"><h3>{part ? `Move “${part.name}”` : 'Whole house'}</h3></div>
+            <Num label="Across (m)" value={t.position[0]} min={-30} max={30} step={0.05} onChange={(v) => axis(0, v)} />
+            <Num label="Up (m)" value={t.position[1]} min={-10} max={10} step={0.05} onChange={(v) => axis(1, v)} />
+            <Num label="Towards street (m)" value={t.position[2]} min={-30} max={30} step={0.05} onChange={(v) => axis(2, v)} />
+            <Num label="Turn (°)" value={t.rotation} min={0} max={359} step={0.5} onChange={(v) => set({ rotation: v })} />
+            <Num label="Scale" value={t.scale} min={0.5} max={2} step={0.002} onChange={(v) => set({ scale: v })} />
+            {!part && <Num label="Opacity" value={house.opacity} min={0.1} max={1} step={0.05} onChange={(v) => updateHouse({ opacity: v })} />}
+            {part && (
+              <div className="row">
+                <button className="btn small ghost danger-quiet" onClick={() => {
+                  if (!window.confirm(`Remove the scan “${part.name}”?`)) return;
+                  api.deleteHousePart(part.id).then(() => { show.setHouseLocal({ ...house, parts: house.parts.filter((x) => x.id !== part.id) }); setTarget('house'); }).catch(show.reportError);
+                }}>Remove this scan</button>
+              </div>
+            )}
           </>
         )}
       </div>

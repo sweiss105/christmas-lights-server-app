@@ -244,40 +244,63 @@ describe('identify a run on the porch', () => {
   });
 });
 
-describe('house model (3D scan)', () => {
+describe('house model (3D scan parts)', () => {
   // The 12-byte glTF binary header: magic "glTF", version 2, total length.
   const glb = (extra = 0) => { const b = Buffer.alloc(12 + extra); b.write('glTF', 0); b.writeUInt32LE(2, 4); b.writeUInt32LE(12 + extra, 8); return b; };
+  const upload = (app: App, name: string, body: Buffer) =>
+    app.server.inject({ method: 'POST', url: `/api/house/parts?name=${encodeURIComponent(name)}`, payload: body, headers: { 'content-type': 'model/gltf-binary' } });
 
-  it('uploads, serves and deletes the house model next to the state file', async () => {
+  it('uploads several scan parts, serves each, and deletes them, with files next to the state file', async () => {
     const { app, statePath } = await makeApp();
-    expect((await app.server.inject('/api/house/model')).statusCode).toBe(404);
-    const up = await app.server.inject({ method: 'PUT', url: '/api/house/model', payload: glb(100), headers: { 'content-type': 'model/gltf-binary' } });
-    expect(up.statusCode).toBe(200);
-    expect(up.json().house.model).toMatchObject({ bytes: 112 });
-    const got = await app.server.inject('/api/house/model');
-    expect(got.statusCode).toBe(200);
+    expect((await app.server.inject('/api/house')).json().parts).toEqual([]);
+    const a = await upload(app, 'Left half', glb(100));
+    const b = await upload(app, 'Right half', glb(50));
+    expect(a.statusCode).toBe(200);
+    const parts = (await app.server.inject('/api/house')).json().parts;
+    expect(parts.map((p: { name: string; bytes: number }) => [p.name, p.bytes])).toEqual([['Left half', 112], ['Right half', 62]]);
+    const id = a.json().id as string;
+    const got = await app.server.inject(`/api/house/parts/${id}/model`);
     expect(got.headers['content-type']).toBe('model/gltf-binary');
     expect(got.rawPayload.length).toBe(112);
-    expect(await readFile(join(dirname(statePath), 'house.glb'))).toHaveLength(112);
-    expect((await app.server.inject({ method: 'DELETE', url: '/api/house/model' })).statusCode).toBe(200);
-    expect((await app.server.inject('/api/house/model')).statusCode).toBe(404);
+    expect(await readFile(join(dirname(statePath), `house-${id}.glb`))).toHaveLength(112);
+    expect((await app.server.inject({ method: 'DELETE', url: `/api/house/parts/${id}` })).statusCode).toBe(200);
+    expect((await app.server.inject(`/api/house/parts/${id}/model`)).statusCode).toBe(404);
+    expect((await app.server.inject('/api/house')).json().parts).toHaveLength(1);
+    expect(b.json().id).not.toBe(id);
   });
 
   it('rejects files that are not binary glTF', async () => {
     const { app } = await makeApp();
-    const r = await app.server.inject({ method: 'PUT', url: '/api/house/model', payload: Buffer.from('not a model at all'), headers: { 'content-type': 'model/gltf-binary' } });
-    expect(r.statusCode).toBe(400);
+    expect((await upload(app, 'x', Buffer.from('not a model at all'))).statusCode).toBe(400);
   });
 
-  it('stores the alignment of the model with the lights, validated', async () => {
+  it('aligns the whole house and each part separately, validated and saved', async () => {
     const { app, statePath } = await makeApp();
-    const r = await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { position: [1, 0, -2], rotation: 90, scale: 1.02, opacity: 0.6 } });
-    expect(r.statusCode).toBe(200);
-    expect(r.json()).toMatchObject({ position: [1, 0, -2], rotation: 90, scale: 1.02, opacity: 0.6 });
-    expect(JSON.parse(await readFile(statePath, 'utf8')).house.rotation).toBe(90);
+    const id = (await upload(app, 'Scan', glb())).json().id;
+    const h = await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { position: [1, 0, -2], rotation: 90, scale: 1.02, opacity: 0.6 } });
+    expect(h.json()).toMatchObject({ position: [1, 0, -2], rotation: 90, scale: 1.02, opacity: 0.6 });
+    const p = await app.server.inject({ method: 'PATCH', url: `/api/house/parts/${id}`, payload: { name: 'Front', position: [0.5, 0, 0], rotation: -3, scale: 0.99, visible: false } });
+    expect(p.json()).toMatchObject({ name: 'Front', position: [0.5, 0, 0], rotation: 357, scale: 0.99, visible: false });
+    const saved = JSON.parse(await readFile(statePath, 'utf8')).house;
+    expect(saved.rotation).toBe(90);
+    expect(saved.parts[0].name).toBe('Front');
     expect((await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { scale: 0 } })).statusCode).toBe(400);
-    expect((await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { position: [1, 2] } })).statusCode).toBe(400);
-    expect((await app.server.inject('/api/house')).json()).toMatchObject({ rotation: 90 });
+    expect((await app.server.inject({ method: 'PATCH', url: `/api/house/parts/${id}`, payload: { position: [1, 2] } })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'PATCH', url: '/api/house/parts/nope', payload: { scale: 1 } })).statusCode).toBe(404);
+  });
+
+  it('turns a single model from before parts existed into the first part', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'xmas-house-'));
+    await writeFile(join(dir, 'house.glb'), glb(8));
+    const statePath = join(dir, 'state.json');
+    const state = { layout: { controllers: [{ id: 'a', name: 'A', host: '127.0.0.1', port: 9, pixelCount: 1 }], runs: [] }, scenes: {}, activeScene: null,
+      output: { brightness: 1, gamma: 1, fps: 40, enabled: false }, house: { position: [0, 0, 0], rotation: 5, scale: 1, opacity: 0.8, model: { bytes: 20, uploadedAt: 'x' } } } as unknown as ShowState;
+    const app = await createApp({ state, statePath });
+    cleanups.push(() => app.server.close());
+    const house = (await app.server.inject('/api/house')).json();
+    expect(house.rotation).toBe(5);
+    expect(house.parts).toHaveLength(1);
+    expect((await app.server.inject(`/api/house/parts/${house.parts[0].id}/model`)).rawPayload.length).toBe(20);
   });
 });
 

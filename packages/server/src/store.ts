@@ -6,15 +6,32 @@ import type { LayerConfig, LayoutConfig, OutputSettings, SceneConfig } from '@xm
 /** A saved layer look: an effect with all its settings, reusable in any scene. */
 export type PresetConfig = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
 
+/** One uploaded scan (a .glb), placed relative to the house. */
+export interface HousePart {
+  id: string;
+  name: string;
+  /** File name next to the state file. */
+  file: string;
+  bytes: number;
+  uploadedAt: string;
+  /** Metres, degrees around the vertical axis, and scale: this part relative to the house. */
+  position: [number, number, number];
+  rotation: number;
+  scale: number;
+  visible: boolean;
+}
+
 export interface HouseConfig {
-  /** Metres, added to the model's own coordinates. */
+  /** Metres, added to every part: lines the whole house up with the lights. */
   position: [number, number, number];
   /** Degrees around the vertical axis. */
   rotation: number;
   scale: number;
   /** 0..1 in the preview. */
   opacity: number;
-  /** Set when a model file (house.glb next to the state file) has been uploaded. */
+  /** Scans, e.g. two halves of the house captured separately. */
+  parts?: HousePart[];
+  /** Before parts existed: a single model in house.glb. Migrated into parts on startup. */
   model?: { bytes: number; uploadedAt: string };
 }
 

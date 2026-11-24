@@ -376,7 +376,7 @@ export function UndoIcon({ flip }: { flip?: boolean }) {
   );
 }
 
-function EyeIcon({ off }: { off?: boolean }) {
+export function EyeIcon({ off }: { off?: boolean }) {
   return (
     <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden>
       <path d="M1.5 10S4.5 4.5 10 4.5 18.5 10 18.5 10 15.5 15.5 10 15.5 1.5 10 1.5 10Z" fill="none" stroke="currentColor" strokeWidth="1.6" />

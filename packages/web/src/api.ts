@@ -3,13 +3,25 @@ import type { LayerConfig, LayoutConfig, ParamSpec, SceneConfig } from '@xmas/en
 /** A saved layer look. */
 export type Preset = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
 
+/** One uploaded scan, placed relative to the house. */
+export interface HousePart {
+  id: string;
+  name: string;
+  bytes: number;
+  uploadedAt: string;
+  position: [number, number, number];
+  rotation: number;
+  scale: number;
+  visible: boolean;
+}
+
 export interface House {
   position: [number, number, number];
   /** Degrees around the vertical axis. */
   rotation: number;
   scale: number;
   opacity: number;
-  model?: { bytes: number; uploadedAt: string };
+  parts: HousePart[];
 }
 
 export interface EffectInfo { id: string; name: string; description: string; params: ParamSpec[] }
@@ -73,13 +85,14 @@ export const api = {
   identify: (run: string | null, seconds = 5) => call<{ run: string | null; streaming?: boolean }>('POST', '/api/identify', { run, seconds }),
   saveLayout: (l: LayoutConfig) => call<{ pixels: number; groups: string[] }>('PUT', '/api/layout', l),
   house: () => call<House>('GET', '/api/house'),
-  setHouse: (h: Partial<Omit<House, 'model'>>) => call<House>('PATCH', '/api/house', h),
-  uploadHouseModel: async (file: Blob) => {
-    const res = await fetch('/api/house/model', { method: 'PUT', body: file, headers: { 'content-type': 'model/gltf-binary' }, credentials: 'same-origin' });
+  setHouse: (h: Partial<Omit<House, 'parts'>>) => call<House>('PATCH', '/api/house', h),
+  uploadHousePart: async (file: Blob, name: string) => {
+    const res = await fetch(`/api/house/parts?name=${encodeURIComponent(name)}`, { method: 'POST', body: file, headers: { 'content-type': 'model/gltf-binary' }, credentials: 'same-origin' });
     if (!res.ok) throw new ApiError(res.status, ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `upload failed (${res.status})`);
-    return (await res.json() as { house: House }).house;
+    return (await res.json()) as HousePart;
   },
-  deleteHouseModel: () => call<{ deleted: true }>('DELETE', '/api/house/model'),
+  setHousePart: (id: string, p: Partial<Omit<HousePart, 'id' | 'bytes' | 'uploadedAt'>>) => call<HousePart>('PATCH', `/api/house/parts/${enc(id)}`, p),
+  deleteHousePart: (id: string) => call<{ deleted: string }>('DELETE', `/api/house/parts/${enc(id)}`),
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),

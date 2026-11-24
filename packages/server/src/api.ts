@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayerConfig, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { OutputLoop } from './output.js';
-import { DEFAULT_HOUSE, saveState, type HouseConfig, type PresetConfig, type ShowState } from './store.js';
+import { DEFAULT_HOUSE, saveState, type HouseConfig, type HousePart, type PresetConfig, type ShowState } from './store.js';
 import { discover, getInfo, getPresets, releaseToPreset } from './wled.js';
 
 export interface AppOptions {
@@ -187,31 +187,40 @@ export async function createApp(opts: AppOptions): Promise<App> {
     return { run, seconds, streaming: output.running };
   });
 
-  // ---- house model (3D scan) ------------------------------------------------
-  const housePath = join(dirname(opts.statePath), 'house.glb');
+  // ---- house model: scan parts (.glb) and their alignment --------------------
+  const dataDir = dirname(opts.statePath);
   const MAX_MODEL_BYTES = 150 * 1024 * 1024;
-  const house = () => ({ ...DEFAULT_HOUSE, ...(state.house ?? {}) });
+  // A single model from before parts existed becomes the first part.
+  if (state.house?.model && !state.house.parts) {
+    const { model, ...rest } = state.house;
+    state.house = { ...rest, parts: [{ id: 'main', name: 'Scan', file: 'house.glb', bytes: model.bytes, uploadedAt: model.uploadedAt, position: [0, 0, 0], rotation: 0, scale: 1, visible: true }] };
+  }
+  const house = (): HouseConfig => ({ ...DEFAULT_HOUSE, parts: [], ...(state.house ?? {}) });
+  const part = (id: string) => {
+    const p = house().parts!.find((x) => x.id === id);
+    if (!p) throw new HttpError(404, 'no such scan part');
+    return p;
+  };
+
+  const vec3 = (v: unknown, what: string): [number, number, number] => {
+    if (!Array.isArray(v) || v.length !== 3 || !v.every((x) => Number.isFinite(x) && Math.abs(x) < 1000)) throw new HttpError(400, `${what} must be [x, y, z] in metres`);
+    return [v[0], v[1], v[2]];
+  };
+  const degrees = (v: unknown) => { if (!Number.isFinite(v)) throw new HttpError(400, 'rotation must be degrees'); return (((v as number) % 360) + 360) % 360; };
+  const scaleOf = (v: unknown) => { if (!Number.isFinite(v) || (v as number) <= 0 || (v as number) > 100) throw new HttpError(400, 'scale must be > 0'); return v as number; };
 
   server.addContentTypeParser(['model/gltf-binary', 'application/octet-stream'], { parseAs: 'buffer', bodyLimit: MAX_MODEL_BYTES },
     (_req, body, done) => done(null, body));
 
   server.get('/api/house', async () => house());
 
+  /** Align the whole house with the lights. */
   server.patch<{ Body: Partial<HouseConfig> }>('/api/house', async (req) => {
     const b = req.body ?? {};
     const next = house();
-    if (b.position !== undefined) {
-      if (!Array.isArray(b.position) || b.position.length !== 3 || !b.position.every((v) => Number.isFinite(v) && Math.abs(v) < 1000)) throw new HttpError(400, 'position must be [x, y, z] in metres');
-      next.position = [b.position[0]!, b.position[1]!, b.position[2]!];
-    }
-    if (b.rotation !== undefined) {
-      if (!Number.isFinite(b.rotation)) throw new HttpError(400, 'rotation must be degrees');
-      next.rotation = ((b.rotation % 360) + 360) % 360;
-    }
-    if (b.scale !== undefined) {
-      if (!Number.isFinite(b.scale) || b.scale <= 0 || b.scale > 100) throw new HttpError(400, 'scale must be > 0');
-      next.scale = b.scale;
-    }
+    if (b.position !== undefined) next.position = vec3(b.position, 'position');
+    if (b.rotation !== undefined) next.rotation = degrees(b.rotation);
+    if (b.scale !== undefined) next.scale = scaleOf(b.scale);
     if (b.opacity !== undefined) {
       if (!Number.isFinite(b.opacity) || b.opacity < 0 || b.opacity > 1) throw new HttpError(400, 'opacity must be 0..1');
       next.opacity = b.opacity;
@@ -221,35 +230,57 @@ export async function createApp(opts: AppOptions): Promise<App> {
     return next;
   });
 
-  server.get('/api/house/model', async (_req, reply) => {
-    if (!state.house?.model) throw new HttpError(404, 'no house model uploaded');
-    let data: Buffer;
-    try { data = await readFile(housePath); } catch { throw new HttpError(404, 'house model file is missing'); }
-    reply.header('content-type', 'model/gltf-binary').header('cache-control', 'no-cache');
-    return data;
-  });
-
-  /** Upload a binary glTF (.glb), e.g. exported from Scaniverse or Polycam. */
-  server.put<{ Body: Buffer }>('/api/house/model', async (req) => {
+  /** Upload a scan (binary glTF, e.g. from Polycam or Scaniverse) as a new part. */
+  server.post<{ Body: Buffer; Querystring: { name?: string } }>('/api/house/parts', async (req) => {
     const body = req.body;
     if (!Buffer.isBuffer(body) || body.length < 12 || body.toString('ascii', 0, 4) !== 'glTF' || body.readUInt32LE(4) !== 2) {
       throw new HttpError(400, 'expected a binary glTF 2.0 file (.glb)');
     }
-    await mkdir(dirname(housePath), { recursive: true });
-    await writeFile(`${housePath}.tmp`, body);
-    await rename(`${housePath}.tmp`, housePath);
-    state.house = { ...house(), model: { bytes: body.length, uploadedAt: new Date().toISOString() } };
+    const h = house();
+    let n = h.parts!.length + 1;
+    while (h.parts!.some((p) => p.id === `part${n}`)) n++;
+    const id = `part${n}`;
+    const file = `house-${id}.glb`;
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(join(dataDir, `${file}.tmp`), body);
+    await rename(join(dataDir, `${file}.tmp`), join(dataDir, file));
+    const name = (req.query.name ?? '').trim().slice(0, 60) || `Scan ${n}`;
+    const p: HousePart = { id, name, file, bytes: body.length, uploadedAt: new Date().toISOString(), position: [0, 0, 0], rotation: 0, scale: 1, visible: true };
+    state.house = { ...h, parts: [...h.parts!, p] };
     await persist();
-    return { house: state.house };
+    return p;
   });
 
-  server.delete('/api/house/model', async () => {
-    if (!state.house?.model) throw new HttpError(404, 'no house model uploaded');
-    await rm(housePath, { force: true });
-    const { model: _model, ...rest } = house();
-    state.house = rest;
+  server.get<{ Params: { id: string } }>('/api/house/parts/:id/model', async (req, reply) => {
+    const p = part(req.params.id);
+    let data: Buffer;
+    try { data = await readFile(join(dataDir, p.file)); } catch { throw new HttpError(404, 'scan file is missing'); }
+    reply.header('content-type', 'model/gltf-binary').header('cache-control', 'no-cache');
+    return data;
+  });
+
+  /** Place one part relative to the others (name, position, turn, scale, visibility). */
+  server.patch<{ Params: { id: string }; Body: Partial<HousePart> }>('/api/house/parts/:id', async (req) => {
+    const p = { ...part(req.params.id) };
+    const b = req.body ?? {};
+    if (b.name !== undefined) { if (typeof b.name !== 'string' || !b.name.trim()) throw new HttpError(400, 'name must be text'); p.name = b.name.trim().slice(0, 60); }
+    if (b.position !== undefined) p.position = vec3(b.position, 'position');
+    if (b.rotation !== undefined) p.rotation = degrees(b.rotation);
+    if (b.scale !== undefined) p.scale = scaleOf(b.scale);
+    if (b.visible !== undefined) { if (typeof b.visible !== 'boolean') throw new HttpError(400, 'visible must be true or false'); p.visible = b.visible; }
+    const h = house();
+    state.house = { ...h, parts: h.parts!.map((x) => (x.id === p.id ? p : x)) };
     await persist();
-    return { deleted: true };
+    return p;
+  });
+
+  server.delete<{ Params: { id: string } }>('/api/house/parts/:id', async (req) => {
+    const p = part(req.params.id);
+    await rm(join(dataDir, p.file), { force: true });
+    const h = house();
+    state.house = { ...h, parts: h.parts!.filter((x) => x.id !== p.id) };
+    await persist();
+    return { deleted: p.id };
   });
 
   // ---- layer presets -------------------------------------------------------
