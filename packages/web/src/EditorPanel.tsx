@@ -3,6 +3,7 @@ import { BLEND_MODES, EFFECTS, buildLayout, resolveParams, type BlendMode, type 
 import { addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, updateLayer, type SceneEditor } from './editor';
 import { api, type Preset } from './api';
 import { LayerPicker } from './LayerPicker';
+import { paintedCount } from './paint';
 import { PalettePicker } from './PalettePicker';
 import type { EditMode } from './useSceneEditor';
 import type { Show } from './useShow';
@@ -85,7 +86,7 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
               </button>
               <button className="layer-main" onClick={() => setSelectedId(l.id)} aria-current={l.id === selectedId}>
                 <span className="layer-name">{EFFECTS[l.effect]?.name ?? l.effect}</span>
-                <span className="layer-sub">{groupLabel(groups, l.group ?? 'all')}{l.blend && l.blend !== 'normal' ? ` · ${BLEND_SHORT[l.blend] ?? BLEND_LABELS[l.blend]}${l.maskScope === 'layer' ? ' (layer below)' : ''}` : ''}{(l.opacity ?? 1) < 1 ? ` · ${Math.round((l.opacity ?? 1) * 100)}%` : ''}</span>
+                <span className="layer-sub">{l.paint !== undefined ? `Painted${(l.group ?? 'all') === 'all' ? '' : ` in ${groupLabel(groups, l.group!)}`}` : groupLabel(groups, l.group ?? 'all')}{l.blend && l.blend !== 'normal' ? ` · ${BLEND_SHORT[l.blend] ?? BLEND_LABELS[l.blend]}${l.maskScope === 'layer' ? ' (layer below)' : ''}` : ''}{(l.opacity ?? 1) < 1 ? ` · ${Math.round((l.opacity ?? 1) * 100)}%` : ''}</span>
               </button>
               <div className="reorder">
                 <button className="icon-btn small" disabled={i === 0} onClick={() => editor.edit(moveLayer(scene, l.id, +1))} aria-label={`Move ${l.id} up`}><Chevron up /></button>
@@ -141,6 +142,13 @@ function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: S
           {groups.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
         </select>
       </Field>
+      {layer.paint !== undefined && (
+        <div className="field painted-note">
+          <span className="field-label">Painted on {paintedCount(layer)} lights</span>
+          <button className="btn small ghost" title="Drop the painting and show this layer on all its lights"
+            onClick={() => { const { paint: _paint, ...rest } = layer; editor.edit({ ...scene(), layers: scene().layers.map((l) => (l.id === id ? rest : l)) }); }}>Fill all lights</button>
+        </div>
+      )}
       <Field label="Blend">
         <select value={layer.blend ?? 'normal'} onChange={(e) => editor.edit(updateLayer(scene(), id, { blend: e.target.value as BlendMode }))}>
           {BLEND_MODES.map((b) => <option key={b} value={b}>{BLEND_LABELS[b]}</option>)}
@@ -171,7 +179,7 @@ function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: S
   );
 }
 
-function ParamControl({ spec, value, params, onChange, onEnd }: { spec: ParamSpec; value: unknown; params?: Record<string, unknown>; onChange: (v: unknown, merge: boolean) => void; onEnd: () => void }) {
+export function ParamControl({ spec, value, params, onChange, onEnd }: { spec: ParamSpec; value: unknown; params?: Record<string, unknown>; onChange: (v: unknown, merge: boolean) => void; onEnd: () => void }) {
   switch (spec.type) {
     case 'number':
       return <Slider label={spec.label} min={spec.min} max={spec.max} step={spec.step ?? 0.01} value={value as number}
@@ -326,7 +334,7 @@ function Field({ label, children }: { label: string; children: React.ReactElemen
   );
 }
 
-function Slider({ label, min, max, step, value, format, onChange, onEnd, compact }: {
+export function Slider({ label, min, max, step, value, format, onChange, onEnd, compact }: {
   label: string; min: number; max: number; step: number; value: number; format: (v: number) => string;
   onChange: (v: number) => void; onEnd: () => void; compact?: boolean;
 }) {

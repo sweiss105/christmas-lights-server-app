@@ -1,7 +1,7 @@
 import { EFFECTS, type LayerConfig, type SceneConfig } from '@xmas/engine';
 
 /** A layer's look without its identity: what a preset stores. */
-export type Look = Omit<LayerConfig, 'id' | 'enabled'>;
+export type Look = Omit<LayerConfig, 'id' | 'enabled' | 'paint'>;
 
 /**
  * A working copy of any JSON value with undo and redo. Values are treated as immutable: every edit
@@ -91,7 +91,7 @@ const mapLayer = (scene: SceneConfig, id: string, fn: (l: LayerConfig) => LayerC
   layers: scene.layers.map((l) => (l.id === id ? fn(l) : l)),
 });
 
-function uniqueId(base: string, taken: string[]): string {
+export function uniqueId(base: string, taken: string[]): string {
   if (!taken.includes(base)) return base;
   let n = 2;
   while (taken.includes(`${base}-${n}`)) n++;
@@ -154,7 +154,7 @@ export function setParam(scene: SceneConfig, id: string, key: string, value: unk
 
 /** The parts of a layer a preset saves. */
 export function lookOf(layer: LayerConfig): Look {
-  const { id: _id, enabled: _enabled, ...look } = layer;
+  const { id: _id, enabled: _enabled, paint: _paint, ...look } = layer;
   return structuredClone(look);
 }
 
@@ -165,8 +165,8 @@ export function addLayerFromLook(scene: SceneConfig, look: Look & { name?: strin
   return { ...scene, layers: [...scene.layers, { ...structuredClone(rest), id }] };
 }
 
-/** Replace a layer's look with a saved one, keeping its id and visibility. */
+/** Replace a layer's look with a saved one, keeping its id, visibility and paint. */
 export function applyLook(scene: SceneConfig, id: string, look: Look & { name?: string }): SceneConfig {
   const { name: _name, ...rest } = look;
-  return mapLayer(scene, id, (l) => ({ ...structuredClone(rest), id: l.id, ...(l.enabled === false ? { enabled: false } : {}) }));
+  return mapLayer(scene, id, (l) => ({ ...structuredClone(rest), id: l.id, ...(l.paint !== undefined ? { paint: l.paint } : {}), ...(l.enabled === false ? { enabled: false } : {}) }));
 }

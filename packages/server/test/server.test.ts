@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { encodePaint } from '@xmas/engine';
 import { createApp, type App } from '../src/api.js';
 import type { ShowState } from '../src/store.js';
 import { getInfo, getPresets, releaseToPreset } from '../src/wled.js';
@@ -567,5 +568,26 @@ describe('REST API', () => {
     expect((await app.server.inject({ method: 'POST', url: '/api/controllers/zzz/preset', payload: { preset: 1 } })).statusCode).toBe(404);
     expect((await app.server.inject({ method: 'POST', url: '/api/controllers/a/preset', payload: { preset: 0 } })).statusCode).toBe(400);
     expect((await app.server.inject({ method: 'POST', url: '/api/controllers/probe', payload: { host: 'http://evil/' } })).statusCode).toBe(400);
+  });
+});
+
+describe('painted layers', () => {
+  const painted = (paint: string) => ({ layers: [{ id: 'paint', effect: 'solid', params: { color: '#00ff00' }, paint }] });
+
+  it('are saved with the scene, show on stage after a Live save, and stay out of presets', async () => {
+    const { app } = await makeApp();
+    const onlyFirst = encodePaint(Uint8Array.from([255]));
+    const saved = await app.server.inject({ method: 'PUT', url: '/api/scenes/Red', payload: painted(onlyFirst) });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().layers[0].paint).toBe(onlyFirst);
+    await app.server.inject({ method: 'POST', url: '/api/scenes/Red/activate' });
+    await app.server.inject({ method: 'PUT', url: '/api/scenes/Red', payload: painted(encodePaint(Uint8Array.from([0, 255]))) }); // a Live stroke
+    const frame = (await app.server.inject('/api/frame')).rawPayload;
+    expect(frame[1]).toBe(0);
+    expect(frame[4]).toBeGreaterThan(0);
+    expect(frame[7]).toBe(0);
+    expect((await app.server.inject({ method: 'PUT', url: '/api/scenes/Red', payload: painted('not paint') })).statusCode).toBe(400);
+    const preset = await app.server.inject({ method: 'PUT', url: '/api/presets/Green', payload: { effect: 'solid', paint: onlyFirst } });
+    expect('paint' in preset.json()).toBe(false);
   });
 });
