@@ -37,6 +37,9 @@ export class OutputLoop {
   /** Optional post-processing of each frame before it is sent (e.g. flashing one run to identify it). */
   overlay: ((frame: Uint8Array, t: number) => void) | null = null;
 
+  /** Told about problems worth logging (e.g. a controller that could not be handed back to WLED). */
+  onWarn: ((message: string) => void) | null = null;
+
   constructor(private getEngine: () => Engine, public fps = 40) {}
 
   get running() { return this.timer !== null; }
@@ -71,7 +74,22 @@ export class OutputLoop {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (!release) return;
-    await Promise.allSettled(this.controllers().map((c) => releaseToPreset(c.host, c.fallbackPreset)));
+    await Promise.all(this.controllers().map(async (c) => {
+      // Wi-Fi drops the odd request, so try twice. If both fail, WLED still leaves realtime mode by
+      // itself after its timeout, but it may not load the fallback preset.
+      for (let attempt = 1; ; attempt++) {
+        try { await releaseToPreset(c.host, c.fallbackPreset); return; } catch (e) {
+          if (this.timer) return; // streaming was turned back on meanwhile
+          if (attempt >= 2) {
+            const h = this.healthFor(c.id, c.host);
+            h.lastError = `hand-back failed: ${(e as Error).message}`;
+            this.onWarn?.(`could not hand controller "${c.id}" (${c.host}) back to WLED: ${(e as Error).message}`);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
+    }));
   }
 
   private frame() {

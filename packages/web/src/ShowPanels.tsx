@@ -125,7 +125,13 @@ export function ScheduleView({ show }: { show: Show }) {
       () => { show.reportError(new Error('Location unavailable: type your latitude and longitude instead (two decimals is plenty).')); setLocating(false); },
     );
   };
-  const fmt = (ms: number) => new Intl.DateTimeFormat(undefined, { timeZone: s.timezone, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
+  // The saved schedule's times, in its own zone. (Not the zone in the text box, which is only
+  // half-typed while it's being edited, and an unknown zone makes Intl throw.)
+  const fmt = (ms: number) => {
+    const opts = { weekday: 'short', hour: 'numeric', minute: '2-digit' } as const;
+    try { return new Intl.DateTimeFormat(undefined, { ...opts, timeZone: status?.timezone ?? s.timezone }).format(new Date(ms)); }
+    catch { return new Intl.DateTimeFormat(undefined, opts).format(new Date(ms)); }
+  };
   const needsSun = s.on.kind === 'sunset' || s.off.kind === 'sunrise';
 
   return (

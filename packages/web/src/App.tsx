@@ -68,6 +68,7 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectMode, layoutMode, drawing, backToEditing]);
   const layoutDraft = useLayoutDraft(layout);
+  const shownLayout = useLastValidLayout(layoutMode ? layoutDraft.value : layout);
   const editor = useSceneEditor(show, selected, mode);
   const sideRight = useInset('.editor', 'right', !!layout && !!status && !phone);
   const sheetInset = useSheetInset(phone, !!layout && !!status);
@@ -97,7 +98,8 @@ export function App() {
   const reviewing = mapMode === 'review';
   const openReview = useCallback(() => { setMapMode('review'); setSelectMode(false); setLayoutMode(false); setDrawing(false); setPhoneTab('edit'); }, [setMapMode]);
 
-  if (!layout || !status) return <Loading show={show} />;
+  if (show.needsToken) return <TokenGate />;
+  if (!layout || !status || !shownLayout) return <Loading show={show} />;
   // Filming: only the camera screen (no 3D view rendering behind it, which would cost battery and frames).
   if (mapMode === 'capture') {
     return (
@@ -107,7 +109,7 @@ export function App() {
       </div>
     );
   }
-  const previewLayout = reviewing && mapReview.showMapped && mapReview.candidate ? mapReview.candidate : layoutMode ? layoutDraft.value : layout;
+  const previewLayout = reviewing && mapReview.showMapped && mapReview.candidate ? mapReview.candidate : shownLayout;
 
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : ''}`}>
@@ -263,6 +265,20 @@ function useLayoutDraft(saved: LayoutConfig | null): History<LayoutConfig> {
   return draft;
 }
 
+/**
+ * The layout for the 3D view. While numbers are being typed in Layout mode the draft is often
+ * invalid for a moment (a count past the end of the controller, two runs overlapping); the view then
+ * keeps the last layout that worked instead of failing. The Layout panel shows what's wrong.
+ */
+function useLastValidLayout(layout: LayoutConfig | null): LayoutConfig | null {
+  const last = useRef<LayoutConfig | null>(null);
+  return useMemo(() => {
+    if (!layout) return last.current;
+    try { buildLayout(layout); last.current = layout; } catch { /* keep the last good one */ }
+    return last.current;
+  }, [layout]);
+}
+
 /** ⌘Z / Ctrl+Z undo, ⇧⌘Z / Ctrl+Y redo, unless typing in a text field. */
 function useHistoryKeys(editor: History<unknown> | SceneEditor) {
   useEffect(() => {
@@ -317,16 +333,38 @@ function useSceneActions(show: Show, editor: SceneEditor, select: (n: string | n
     rename: async (newName) => {
       const old = editor.scene;
       if (names().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
-      if (show.status?.stage.scene === old.name) { show.reportError(new Error('This scene is on stage. Go to another scene first, then rename it.')); return false; }
       try {
-        await api.saveScene({ ...old, name: newName }, false);
-        await api.deleteScene(old.name);
+        // One step on the server, which also updates playlists, the schedule and the stage.
+        await api.renameScene(old.name, newName);
         await show.refresh();
         select(newName);
         return true;
       } catch (e) { show.reportError(e); return false; }
     },
   };
+}
+
+/** Shown when the server wants its API token: ask once, then the browser remembers (a cookie). */
+function TokenGate() {
+  const [token, setToken] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try { await api.login(token.trim()); location.reload(); }
+    catch { setError('That token was not accepted.'); setBusy(false); }
+  };
+  return (
+    <form className="loading" onSubmit={submit}>
+      <p>This lights server asks for its access token (XMAS_API_TOKEN on the server).</p>
+      <div className="row">
+        <input className="text" type="password" autoFocus autoComplete="current-password" aria-label="Access token" value={token} onChange={(e) => setToken(e.target.value)} />
+        <button className="btn" disabled={busy || !token.trim()}>Sign in</button>
+      </div>
+      {error && <p className="hint" role="alert">{error}</p>}
+    </form>
+  );
 }
 
 function Loading({ show }: { show: Show }) {

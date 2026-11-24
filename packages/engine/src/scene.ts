@@ -128,8 +128,8 @@ export class Engine {
 
   setOutput(s: Partial<OutputSettings>): OutputSettings {
     const next = { ...this.settings, ...s };
-    if (!(next.brightness >= 0 && next.brightness <= 1)) throw new Error('brightness must be 0..1');
-    if (!(next.gamma >= 1 && next.gamma <= 3)) throw new Error('gamma must be 1..3');
+    if (typeof next.brightness !== 'number' || !(next.brightness >= 0 && next.brightness <= 1)) throw new Error('brightness must be a number 0..1');
+    if (typeof next.gamma !== 'number' || !(next.gamma >= 1 && next.gamma <= 3)) throw new Error('gamma must be a number 1..3');
     this.settings = next;
     for (let i = 0; i < 4096; i++) this.gammaLut[i] = Math.round(Math.pow((i / 4095) * next.brightness, next.gamma) * 255);
     return this.output;
