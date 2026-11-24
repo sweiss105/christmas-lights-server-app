@@ -169,6 +169,47 @@ describe('Blind / Live editing and the web UI', () => {
   });
 });
 
+describe('identify a run on the porch', () => {
+  const twoRuns = (port: number) => ({
+    layout: {
+      controllers: [{ id: 'a', name: 'A', host: '127.0.0.1', port, pixelCount: 20 }],
+      runs: [
+        { id: 'left', controller: 'a', start: 0, count: 10, points: [[0, 0, 0], [1, 0, 0]] as [number, number, number][] },
+        { id: 'right', controller: 'a', start: 10, count: 10, points: [[2, 0, 0], [3, 0, 0]] as [number, number, number][] },
+      ],
+    },
+  });
+
+  it('flashes only the chosen run while streaming, then returns to the scene', async () => {
+    const rx = await fakeDdpReceiver(20);
+    cleanups.push(rx.close);
+    const { app } = await makeApp(twoRuns(rx.port));
+    app.output.startStreaming();
+    const r = await app.server.inject({ method: 'POST', url: '/api/identify', payload: { run: 'right', seconds: 0.4 } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ run: 'right', streaming: true });
+    await new Promise((res) => setTimeout(res, 300));
+    const during = rx.frames.at(-1)!.data;
+    expect([...during.subarray(0, 3)]).toEqual([0, 0, 0]); // left run dark
+    expect(Math.max(...during.subarray(30, 60))).toBeGreaterThan(0); // right run lit (white pulse)
+    expect(during[30]).toBe(during[31]); // white: r == g == b
+    await new Promise((res) => setTimeout(res, 400));
+    await app.output.stopStreaming(false);
+    await new Promise((res) => setTimeout(res, 50));
+    const after = rx.frames.at(-1)!.data;
+    expect([...after.subarray(0, 3)]).toEqual([255, 0, 0]); // back to the red scene
+  });
+
+  it('can be cancelled, rejects unknown runs, and says when streaming is off', async () => {
+    const { app } = await makeApp(twoRuns(9));
+    expect((await app.server.inject({ method: 'POST', url: '/api/identify', payload: { run: 'nope' } })).statusCode).toBe(404);
+    const off = await app.server.inject({ method: 'POST', url: '/api/identify', payload: { run: 'left' } });
+    expect(off.json()).toMatchObject({ run: 'left', streaming: false });
+    expect((await app.server.inject({ method: 'POST', url: '/api/identify', payload: { run: null } })).json()).toMatchObject({ run: null });
+    expect((await app.server.inject({ method: 'POST', url: '/api/identify', payload: { run: 'left', seconds: 999 } })).statusCode).toBe(400);
+  });
+});
+
 describe('house model (3D scan)', () => {
   // The 12-byte glTF binary header: magic "glTF", version 2, total length.
   const glb = (extra = 0) => { const b = Buffer.alloc(12 + extra); b.write('glTF', 0); b.writeUInt32LE(2, 4); b.writeUInt32LE(12 + extra, 8); return b; };

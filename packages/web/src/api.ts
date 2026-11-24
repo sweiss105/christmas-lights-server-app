@@ -69,6 +69,8 @@ export const api = {
   presets: () => call<Preset[]>('GET', '/api/presets'),
   savePreset: (name: string, look: Omit<Preset, 'name'>) => call<Preset>('PUT', `/api/presets/${enc(name)}`, look),
   deletePreset: (name: string) => call<{ deleted: string }>('DELETE', `/api/presets/${enc(name)}`),
+  /** Flash one run on the porch (only visible while streaming); run null cancels. */
+  identify: (run: string | null, seconds = 5) => call<{ run: string | null; streaming?: boolean }>('POST', '/api/identify', { run, seconds }),
   saveLayout: (l: LayoutConfig) => call<{ pixels: number; groups: string[] }>('PUT', '/api/layout', l),
   house: () => call<House>('GET', '/api/house'),
   setHouse: (h: Partial<Omit<House, 'model'>>) => call<House>('PATCH', '/api/house', h),

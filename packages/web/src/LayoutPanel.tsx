@@ -84,13 +84,13 @@ export function LayoutPanel({ show, draft, selected, onSelect, drawing, onDrawin
         ))}
       </div>
 
-      {run && <RunInspector layout={l} run={run} draft={draft} drawing={drawing} onDrawingChange={onDrawingChange} onDeleted={() => onSelect(null)} />}
+      {run && <RunInspector show={show} layout={l} run={run} draft={draft} drawing={drawing} onDrawingChange={onDrawingChange} onDeleted={() => onSelect(null)} />}
     </aside>
   );
 }
 
-function RunInspector({ layout: l, run, draft, drawing, onDrawingChange, onDeleted }: {
-  layout: LayoutConfig; run: RunConfig; draft: History<LayoutConfig>; drawing: boolean; onDrawingChange: (d: boolean) => void; onDeleted: () => void;
+function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, onDeleted }: {
+  show: Show; layout: LayoutConfig; run: RunConfig; draft: History<LayoutConfig>; drawing: boolean; onDrawingChange: (d: boolean) => void; onDeleted: () => void;
 }) {
   const id = run.id;
   const len = runLength(run);
@@ -119,6 +119,7 @@ function RunInspector({ layout: l, run, draft, drawing, onDrawingChange, onDelet
       <div className="layer-actions">
         <button className={`btn small ${drawing ? 'drawing' : ''}`} aria-pressed={drawing} onClick={() => onDrawingChange(!drawing)}>{drawing ? 'Drawing: tap the house…' : 'Draw points'}</button>
         <button className="btn small ghost" onClick={() => draft.edit(reverseRun(l, id))} title="The first pixel is at the other end">Reverse</button>
+        <IdentifyButton show={show} run={run} saved={!!show.layout?.runs.some((r) => r.id === id)} />
         <button className="btn small ghost danger-quiet" onClick={() => { if (window.confirm(`Delete the run “${run.name ?? id}”?`)) { draft.edit(removeRun(l, id)); onDeleted(); } }}>Delete</button>
       </div>
 
@@ -151,5 +152,23 @@ function Coverage({ layout: l, controller, pixelCount, selected, onSelect }: { l
           onClick={() => onSelect(r.id)} />
       ))}
     </div>
+  );
+}
+
+/** Flash this run on the real porch for 5 seconds, to check which string is which. */
+function IdentifyButton({ show, run, saved }: { show: Show; run: RunConfig; saved: boolean }) {
+  const [flashing, setFlashing] = useState(false);
+  const streaming = !!show.status?.output.enabled;
+  const title = !saved ? 'Save the layout first: the porch only knows saved runs'
+    : !streaming ? 'Turn streaming on to see the flash on the porch' : 'Flash this run white on the porch for 5 seconds';
+  return (
+    <button className="btn small ghost" disabled={!saved || !streaming || flashing} title={title}
+      onClick={async () => {
+        setFlashing(true);
+        try { await api.identify(run.id, 5); await new Promise((r) => setTimeout(r, 5000)); } catch (e) { show.reportError(e); }
+        setFlashing(false);
+      }}>
+      {flashing ? 'Flashing…' : 'Identify'}
+    </button>
   );
 }

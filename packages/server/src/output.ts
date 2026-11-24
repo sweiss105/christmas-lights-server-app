@@ -34,6 +34,9 @@ export class OutputLoop {
   private lateFrames = 0;
   private health = new Map<string, ControllerHealth>();
 
+  /** Optional post-processing of each frame before it is sent (e.g. flashing one run to identify it). */
+  overlay: ((frame: Uint8Array, t: number) => void) | null = null;
+
   constructor(private getEngine: () => Engine, public fps = 40) {}
 
   get running() { return this.timer !== null; }
@@ -74,7 +77,9 @@ export class OutputLoop {
   private frame() {
     const engine = this.getEngine();
     const t0 = performance.now();
-    const frame = engine.render(this.now());
+    const t = this.now();
+    const frame = engine.render(t);
+    this.overlay?.(frame, t);
     this.renderMs = this.renderMs * 0.9 + (performance.now() - t0) * 0.1;
     this.frameTimes.push(t0);
     while (this.frameTimes.length && t0 - this.frameTimes[0]! > 1000) this.frameTimes.shift();

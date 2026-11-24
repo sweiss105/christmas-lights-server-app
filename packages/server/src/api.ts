@@ -148,6 +148,32 @@ export async function createApp(opts: AppOptions): Promise<App> {
     return { active: null };
   });
 
+  // ---- identify: flash one run on the porch -----------------------------------
+  let identify: { run: string; until: number } | null = null;
+  output.overlay = (frame, t) => {
+    if (!identify) return;
+    if (performance.now() > identify.until) { identify = null; return; }
+    const mask = engine.layout.groups.get(`run:${identify.run}`);
+    if (!mask) { identify = null; return; }
+    // The run pulses white twice a second; everything else goes dark so it's unmistakable.
+    const v = Math.round(40 + 215 * (0.5 + 0.5 * Math.cos(t * Math.PI * 4)));
+    for (let i = 0; i < mask.length; i++) {
+      const on = mask[i] ? v : 0;
+      frame[i * 3] = on; frame[i * 3 + 1] = on; frame[i * 3 + 2] = on;
+    }
+  };
+
+  /** Flash one run on the porch for a few seconds (only visible while streaming). `run: null` cancels. */
+  server.post<{ Body: { run?: string | null; seconds?: number } }>('/api/identify', async (req) => {
+    const run = req.body?.run ?? null;
+    if (run === null) { identify = null; return { run: null }; }
+    if (!state.layout.runs.some((r) => r.id === run)) throw new HttpError(404, 'no such run');
+    const seconds = req.body?.seconds ?? 5;
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 60) throw new HttpError(400, 'seconds must be 0..60');
+    identify = { run, until: performance.now() + seconds * 1000 };
+    return { run, seconds, streaming: output.running };
+  });
+
   // ---- house model (3D scan) ------------------------------------------------
   const housePath = join(dirname(opts.statePath), 'house.glb');
   const MAX_MODEL_BYTES = 150 * 1024 * 1024;
