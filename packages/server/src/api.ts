@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
@@ -14,7 +14,7 @@ import { discover, getInfo, getPresets, releaseToPreset } from './wled.js';
 export interface AppOptions {
   state: ShowState;
   statePath: string;
-  /** If set, every /api route except /api/health needs `Authorization: Bearer <token>`. */
+  /** If set, every /api route except /api/health and /api/login needs `Authorization: Bearer <token>` or the cookie that /api/login sets. */
   apiToken?: string;
   /** Directory with the built web UI (packages/web/dist), served at `/`. Skipped if unset or missing. */
   webRoot?: string;
@@ -29,6 +29,9 @@ export interface App { server: FastifyInstance; output: OutputLoop; engine: () =
 
 class HttpError extends Error { constructor(public statusCode: number, message: string) { super(message); } }
 const bad = (e: unknown) => new HttpError(400, (e as Error).message);
+/** Cookie the web UI signs in with (it can't add a header to downloads or to the 3D model loader). */
+const TOKEN_COOKIE = 'xmas_token';
+const MAX_NAME = 80;
 
 export async function createApp(opts: AppOptions): Promise<App> {
   const state = opts.state;
@@ -42,6 +45,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     }
   }
   const output = new OutputLoop(() => engine, state.output.fps);
+  output.onWarn = (m) => server.log.warn(m);
   /** Save, recording what's on stage so a restart can bring it back exactly. */
   const persist = () => {
     if (state.activeScene) state.stage = engine.scene; else delete state.stage;
@@ -58,16 +62,55 @@ export async function createApp(opts: AppOptions): Promise<App> {
     reply.code(code).send({ error: err.message });
   });
 
+  const tokenMatches = (got: string) => {
+    const a = Buffer.from(got), b = Buffer.from(opts.apiToken ?? '');
+    return a.length === b.length && timingSafeEqual(a, b);
+  };
   if (opts.apiToken) {
-    const expected = Buffer.from(`Bearer ${opts.apiToken}`);
+    const cookieToken = (header: string | undefined) => {
+      for (const part of (header ?? '').split(';')) {
+        const eq = part.indexOf('=');
+        if (eq < 0 || part.slice(0, eq).trim() !== TOKEN_COOKIE) continue;
+        try { return decodeURIComponent(part.slice(eq + 1).trim()); } catch { return ''; }
+      }
+      return '';
+    };
     server.addHook('onRequest', async (req) => {
-      if (!req.url.startsWith('/api/') || req.url === '/api/health') return;
-      const got = Buffer.from(req.headers.authorization ?? '');
-      if (got.length !== expected.length || !timingSafeEqual(got, expected)) throw new HttpError(401, 'unauthorized');
+      const path = req.url.split('?')[0]!;
+      if (!path.startsWith('/api/') || path === '/api/health' || path === '/api/login') return;
+      const auth = req.headers.authorization ?? '';
+      if (auth.startsWith('Bearer ') && tokenMatches(auth.slice(7))) return;
+      if (tokenMatches(cookieToken(req.headers.cookie))) return;
+      throw new HttpError(401, 'unauthorized');
     });
   }
 
   server.get('/api/health', async () => ({ ok: true }));
+
+  /**
+   * Sign the web UI in: checks the token and sets it as a cookie only this site's own pages send
+   * (HttpOnly, SameSite=Strict), so every request from the UI carries it, downloads included.
+   */
+  server.post<{ Body: { token?: string } }>('/api/login', async (req, reply) => {
+    if (!opts.apiToken) return { ok: true, required: false };
+    const token = req.body?.token;
+    if (typeof token !== 'string' || !tokenMatches(token)) throw new HttpError(401, 'wrong token');
+    const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+    reply.header('set-cookie', `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure}`);
+    return { ok: true, required: true };
+  });
+
+  /**
+   * Counts changes made through the API and remembers which browser made the last one (the UI sends
+   * an id with each request), so another open tab or device can tell that it needs to reload.
+   */
+  const rev = { boot: randomUUID(), n: 0, by: '' };
+  server.addHook('onResponse', async (req, reply) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || !req.url.startsWith('/api/') || reply.statusCode >= 400) return;
+    const by = req.headers['x-client-id'];
+    rev.n++;
+    rev.by = typeof by === 'string' ? by.slice(0, 64) : '';
+  });
 
   /** True when the saved copy of the stage scene has Blind edits that are not on the porch yet. */
   const stageDirty = () => {
@@ -85,6 +128,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     pixels: engine.layout.count,
     output: { ...engine.output, enabled: state.output.enabled, transition: fadeSeconds() },
     stream: output.stats(),
+    rev: { ...rev },
   }));
 
   /** The scene the porch is running now (may differ from the saved copy while Blind edits are pending). */
@@ -119,6 +163,14 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.get('/api/groups', async () => [...engine.layout.groups.entries()].map(([name, m]) => ({ name, pixels: m.reduce((a, b) => a + b, 0) })));
 
   // ---- scenes -------------------------------------------------------------
+  const sceneNameOk = (name: string) => name.length > 0 && name.length <= MAX_NAME && name === name.trim() && name !== '__proto__';
+  /** What still refers to a scene, in words for an error message. */
+  const sceneUses = (name: string): string[] => {
+    const uses = Object.values(state.playlists ?? {}).filter((pl) => pl.entries.some((e) => e.scene === name)).map((pl) => `the playlist "${pl.name}"`);
+    if (state.schedule?.run.kind === 'scene' && state.schedule.run.name === name) uses.push('the nightly schedule');
+    return uses;
+  };
+
   server.get('/api/scenes', async () => ({ active: state.activeScene, scenes: Object.values(state.scenes) }));
 
   server.get<{ Params: { name: string } }>('/api/scenes/:name', async (req) => {
@@ -135,6 +187,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.put<{ Params: { name: string }; Querystring: { apply?: string }; Body: SceneConfig }>('/api/scenes/:name', async (req) => {
     const apply = req.query.apply ?? 'true';
     if (apply !== 'true' && apply !== 'false') throw new HttpError(400, 'apply must be true or false');
+    if (!sceneNameOk(req.params.name)) throw new HttpError(400, `a scene name must be 1..${MAX_NAME} characters`);
     let valid: SceneConfig;
     const probe = new Engine(engine.layout);
     try { valid = probe.setScene({ ...req.body, name: req.params.name }); } catch (e) { throw bad(e); }
@@ -147,9 +200,33 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.delete<{ Params: { name: string } }>('/api/scenes/:name', async (req) => {
     if (!state.scenes[req.params.name]) throw new HttpError(404, 'no such scene');
     if (state.activeScene === req.params.name) throw new HttpError(409, 'cannot delete the active scene');
+    const uses = sceneUses(req.params.name);
+    if (uses.length) throw new HttpError(409, `"${req.params.name}" is used by ${uses.join(' and ')}. Take it out of there first.`);
     delete state.scenes[req.params.name];
     await persist();
     return { deleted: req.params.name };
+  });
+
+  /**
+   * Rename a scene in one step, keeping everything that refers to it: playlists, the schedule and the
+   * stage. The porch doesn't change, so a scene can be renamed while it's on stage.
+   */
+  server.post<{ Params: { name: string }; Body: { to?: string } }>('/api/scenes/:name/rename', async (req) => {
+    const from = req.params.name;
+    const scene = Object.hasOwn(state.scenes, from) ? state.scenes[from] : undefined;
+    if (!scene) throw new HttpError(404, 'no such scene');
+    const to = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
+    if (!sceneNameOk(to)) throw new HttpError(400, `a scene name must be 1..${MAX_NAME} characters`);
+    if (to === from) return scene;
+    if (Object.hasOwn(state.scenes, to)) throw new HttpError(409, `there is already a scene called "${to}"`);
+    const renamed = { ...scene, name: to };
+    // Rebuild rather than add, so the scene keeps its place in the list.
+    state.scenes = Object.fromEntries(Object.entries(state.scenes).map(([k, v]) => (k === from ? [to, renamed] : [k, v])));
+    for (const pl of Object.values(state.playlists ?? {})) for (const e of pl.entries) if (e.scene === from) e.scene = to;
+    if (state.schedule?.run.kind === 'scene' && state.schedule.run.name === from) state.schedule.run.name = to;
+    if (state.activeScene === from) { state.activeScene = to; engine.scene = { ...engine.scene, name: to }; }
+    await persist();
+    return renamed;
   });
 
   server.post<{ Params: { name: string } }>('/api/scenes/:name/activate', async (req) => {
@@ -198,6 +275,9 @@ export async function createApp(opts: AppOptions): Promise<App> {
 
   server.delete<{ Params: { name: string } }>('/api/playlists/:name', async (req) => {
     if (!state.playlists?.[req.params.name]) throw new HttpError(404, 'no such playlist');
+    if (state.schedule?.run.kind === 'playlist' && state.schedule.run.name === req.params.name) {
+      throw new HttpError(409, `"${req.params.name}" is what the nightly schedule plays. Pick something else there first.`);
+    }
     delete state.playlists[req.params.name];
     if (state.playing?.playlist === req.params.name) delete state.playing;
     await persist();
@@ -226,7 +306,14 @@ export async function createApp(opts: AppOptions): Promise<App> {
   };
 
   // ---- nightly schedule ----------------------------------------------------------
-  let lastInWindow: boolean | undefined; // undefined until the first tick: a restart mid-evening changes nothing
+  // Whether the on window was open at the last tick. It's saved, so after a restart the first tick
+  // can tell that the on or off time passed while the server was down, and catch up. With nothing
+  // saved (a new schedule, or just after a restore) the first tick only takes note.
+  let lastInWindow: boolean | undefined = state.scheduleInWindow;
+  const setInWindow = (v: boolean | undefined) => {
+    lastInWindow = v;
+    if (v === undefined) delete state.scheduleInWindow; else state.scheduleInWindow = v;
+  };
   const scheduleStatus = () => {
     const s = state.schedule;
     if (!s) return null;
@@ -256,7 +343,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
       ...(Number.isFinite(b.latitude) && { latitude: b.latitude }), ...(Number.isFinite(b.longitude) && { longitude: b.longitude }),
     };
     // Saving during the on window starts the show at the next tick; otherwise wait for the on time.
-    lastInWindow = false;
+    setInWindow(false);
     await persist();
     return scheduleStatus();
   });
@@ -266,18 +353,25 @@ export async function createApp(opts: AppOptions): Promise<App> {
     await dailyBackup().catch((e) => server.log.error(e));
     await advancePlaylist();
     const s = state.schedule;
-    if (!s?.enabled) { lastInWindow = undefined; return; }
+    if (!s?.enabled) {
+      if (lastInWindow !== undefined) { setInWindow(undefined); await persist(); }
+      return;
+    }
     const inside = inWindow(s, now());
-    if (lastInWindow === undefined) { lastInWindow = inside; return; }
+    if (lastInWindow === undefined) { setInWindow(inside); await persist(); return; }
     if (inside === lastInWindow) return;
-    lastInWindow = inside;
+    setInWindow(inside);
     if (inside) {
-      if (s.run.kind === 'playlist' && state.playlists?.[s.run.name]) await startPlaylist(s.run.name);
-      else if (state.scenes[s.run.name]) {
-        engine.setScene(state.scenes[s.run.name]!, { fade: fadeSeconds() });
-        state.activeScene = s.run.name;
-        delete state.playing;
-      }
+      // The lights come on even if what the schedule names has gone or no longer fits the layout:
+      // whatever was on stage last is better than a dark house.
+      try {
+        if (s.run.kind === 'playlist' && state.playlists?.[s.run.name]) await startPlaylist(s.run.name);
+        else if (s.run.kind === 'scene' && state.scenes[s.run.name]) {
+          engine.setScene(state.scenes[s.run.name]!, { fade: fadeSeconds() });
+          state.activeScene = s.run.name;
+          delete state.playing;
+        } else server.log.warn(`schedule: ${s.run.kind} "${s.run.name}" no longer exists; keeping what was on stage`);
+      } catch (e) { server.log.error(e); }
       output.startStreaming();
       state.output = { ...state.output, enabled: true };
     } else {
@@ -331,7 +425,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     if (staged) { try { next.setScene(staged); } catch { state.activeScene = null; } }
     engine = next;
     mapping.stop();
-    lastInWindow = undefined;
+    setInWindow(undefined);
     await persist();
     return savedFirst;
   };
@@ -473,12 +567,16 @@ export async function createApp(opts: AppOptions): Promise<App> {
     return p;
   });
 
-  server.get<{ Params: { id: string } }>('/api/house/parts/:id/model', async (req, reply) => {
+  server.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/house/parts/:id/model', async (req, reply) => {
     const p = part(req.params.id);
-    let data: Buffer;
-    try { data = await readFile(join(dataDir, p.file)); } catch { throw new HttpError(404, 'scan file is missing'); }
-    reply.header('content-type', 'model/gltf-binary').header('cache-control', 'no-cache');
-    return data;
+    const path = join(dataDir, p.file);
+    let bytes: number;
+    try { bytes = (await stat(path)).size; } catch { throw new HttpError(404, 'scan file is missing'); }
+    // The UI asks with ?v=<upload time>, and a part's file never changes after upload, so the browser
+    // can keep that copy instead of downloading a large scan on every visit.
+    reply.header('content-type', 'model/gltf-binary').header('content-length', bytes)
+      .header('cache-control', req.query.v ? 'private, max-age=31536000, immutable' : 'no-cache');
+    return reply.send(createReadStream(path));
   });
 
   /** Place one part relative to the others (name, position, turn, scale, visibility). */
@@ -544,16 +642,13 @@ export async function createApp(opts: AppOptions): Promise<App> {
 
   server.patch<{ Body: Partial<ShowState['output']> }>('/api/output', async (req) => {
     const b = req.body ?? {};
+    // Check everything first, so a request with one bad value changes nothing.
+    if (b.fps !== undefined && (!Number.isInteger(b.fps) || b.fps < 1 || b.fps > 60)) throw new HttpError(400, 'fps must be an integer 1..60');
+    if (b.transition !== undefined && (typeof b.transition !== 'number' || !Number.isFinite(b.transition) || b.transition < 0 || b.transition > 10)) throw new HttpError(400, 'transition must be 0..10 seconds');
+    if (b.enabled !== undefined && typeof b.enabled !== 'boolean') throw new HttpError(400, 'enabled must be boolean');
     try { engine.setOutput({ ...(b.brightness !== undefined && { brightness: b.brightness }), ...(b.gamma !== undefined && { gamma: b.gamma }) }); } catch (e) { throw bad(e); }
-    if (b.fps !== undefined) {
-      if (!Number.isInteger(b.fps) || b.fps < 1 || b.fps > 60) throw new HttpError(400, 'fps must be an integer 1..60');
-      output.fps = b.fps;
-    }
-    if (b.transition !== undefined) {
-      if (!Number.isFinite(b.transition) || b.transition < 0 || b.transition > 10) throw new HttpError(400, 'transition must be 0..10 seconds');
-    }
+    if (b.fps !== undefined) output.fps = b.fps;
     if (b.enabled !== undefined) {
-      if (typeof b.enabled !== 'boolean') throw new HttpError(400, 'enabled must be boolean');
       if (b.enabled) output.startStreaming(); else await output.stopStreaming();
     }
     state.output = { ...engine.output, fps: output.fps, enabled: b.enabled ?? state.output.enabled, transition: b.transition ?? state.output.transition ?? 1 };

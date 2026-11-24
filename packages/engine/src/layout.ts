@@ -155,8 +155,11 @@ export function buildLayout(config: LayoutConfig): Layout {
   const runPixels = new Map<string, number[]>();
 
   for (const run of config.runs) {
+    if (typeof run.id !== 'string' || !run.id) throw new LayoutError('every run needs an id');
+    if (runPixels.has(run.id)) throw new LayoutError(`duplicate run id "${run.id}"`);
     const ctrl = config.controllers.find((c) => c.id === run.controller);
     if (!ctrl) throw new LayoutError(`run "${run.id}" references unknown controller "${run.controller}"`);
+    if (!Number.isInteger(run.start) || !Number.isInteger(run.count) || run.count < 0) throw new LayoutError(`run "${run.id}" needs whole numbers for its start and count`);
     if (run.start < 0 || run.start + run.count > ctrl.pixelCount) {
       throw new LayoutError(`run "${run.id}" (${run.start}..${run.start + run.count - 1}) exceeds controller "${ctrl.id}" (${ctrl.pixelCount} pixels)`);
     }
@@ -203,6 +206,8 @@ export function buildLayout(config: LayoutConfig): Layout {
   const all = new Uint8Array(count).fill(1);
   groups.set('all', all);
   for (const [name, g] of Object.entries(config.groups ?? {})) {
+    // "all" and "run:<id>" are made here; a saved group with one of those names would silently replace it.
+    if (name === 'all' || name.startsWith('run:')) throw new LayoutError(`"${name}" can't be used as a group name`);
     const m = new Uint8Array(count);
     for (const r of g.runs ?? []) {
       const ids = runPixels.get(r);

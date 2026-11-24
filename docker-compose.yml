@@ -7,6 +7,8 @@ services:
     environment:
       # Set XMAS_PORT in .env if 8080 is taken on the host (host networking shares its ports).
       PORT: ${XMAS_PORT:-8080}
+      # Address to listen on. Set XMAS_HOST=127.0.0.1 in .env if only cloudflared on this machine should reach it.
+      HOST: ${XMAS_HOST:-0.0.0.0}
       XMAS_API_TOKEN: ${XMAS_API_TOKEN:-}
       # Time zone for Scrolling Text's #TIME/#DATE tokens, e.g. America/Chicago.
       TZ: ${XMAS_TZ:-UTC}

@@ -19,7 +19,8 @@ export function BackupPanel({ show, onClose }: { show: Show; onClose: () => void
   const load = () => api.backups().then(setBackups).catch(show.reportError);
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const afterRestore = async () => { await show.refresh(); await show.refreshPresets(); await load(); };
+  // Everything was replaced: reload it all, and have the scene editor drop its working copy.
+  const afterRestore = async () => { await show.reloadAll(); await load(); };
   const restoreFile = async (f: File) => {
     if (!window.confirm(`Replace all scenes, presets, playlists, layout and settings with “${f.name}”? Your current setup is saved as a backup first.`)) return;
     setBusy(true);
