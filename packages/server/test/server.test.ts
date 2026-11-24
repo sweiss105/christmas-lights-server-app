@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, type App } from '../src/api.js';
 import type { ShowState } from '../src/store.js';
@@ -166,6 +166,43 @@ describe('Blind / Live editing and the web UI', () => {
     expect(page.body).toContain('<title>Lights</title>');
     expect((await app.server.inject('/api/status')).statusCode).toBe(401);
     expect((await app.server.inject('/api/nope')).statusCode).toBe(401);
+  });
+});
+
+describe('house model (3D scan)', () => {
+  // The 12-byte glTF binary header: magic "glTF", version 2, total length.
+  const glb = (extra = 0) => { const b = Buffer.alloc(12 + extra); b.write('glTF', 0); b.writeUInt32LE(2, 4); b.writeUInt32LE(12 + extra, 8); return b; };
+
+  it('uploads, serves and deletes the house model next to the state file', async () => {
+    const { app, statePath } = await makeApp();
+    expect((await app.server.inject('/api/house/model')).statusCode).toBe(404);
+    const up = await app.server.inject({ method: 'PUT', url: '/api/house/model', payload: glb(100), headers: { 'content-type': 'model/gltf-binary' } });
+    expect(up.statusCode).toBe(200);
+    expect(up.json().house.model).toMatchObject({ bytes: 112 });
+    const got = await app.server.inject('/api/house/model');
+    expect(got.statusCode).toBe(200);
+    expect(got.headers['content-type']).toBe('model/gltf-binary');
+    expect(got.rawPayload.length).toBe(112);
+    expect(await readFile(join(dirname(statePath), 'house.glb'))).toHaveLength(112);
+    expect((await app.server.inject({ method: 'DELETE', url: '/api/house/model' })).statusCode).toBe(200);
+    expect((await app.server.inject('/api/house/model')).statusCode).toBe(404);
+  });
+
+  it('rejects files that are not binary glTF', async () => {
+    const { app } = await makeApp();
+    const r = await app.server.inject({ method: 'PUT', url: '/api/house/model', payload: Buffer.from('not a model at all'), headers: { 'content-type': 'model/gltf-binary' } });
+    expect(r.statusCode).toBe(400);
+  });
+
+  it('stores the alignment of the model with the lights, validated', async () => {
+    const { app, statePath } = await makeApp();
+    const r = await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { position: [1, 0, -2], rotation: 90, scale: 1.02, opacity: 0.6 } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ position: [1, 0, -2], rotation: 90, scale: 1.02, opacity: 0.6 });
+    expect(JSON.parse(await readFile(statePath, 'utf8')).house.rotation).toBe(90);
+    expect((await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { scale: 0 } })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'PATCH', url: '/api/house', payload: { position: [1, 2] } })).statusCode).toBe(400);
+    expect((await app.server.inject('/api/house')).json()).toMatchObject({ rotation: 90 });
   });
 });
 

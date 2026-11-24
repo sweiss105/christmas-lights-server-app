@@ -3,6 +3,15 @@ import type { LayerConfig, LayoutConfig, ParamSpec, SceneConfig } from '@xmas/en
 /** A saved layer look. */
 export type Preset = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
 
+export interface House {
+  position: [number, number, number];
+  /** Degrees around the vertical axis. */
+  rotation: number;
+  scale: number;
+  opacity: number;
+  model?: { bytes: number; uploadedAt: string };
+}
+
 export interface EffectInfo { id: string; name: string; description: string; params: ParamSpec[] }
 
 export interface ControllerHealth {
@@ -60,6 +69,14 @@ export const api = {
   presets: () => call<Preset[]>('GET', '/api/presets'),
   savePreset: (name: string, look: Omit<Preset, 'name'>) => call<Preset>('PUT', `/api/presets/${enc(name)}`, look),
   deletePreset: (name: string) => call<{ deleted: string }>('DELETE', `/api/presets/${enc(name)}`),
+  house: () => call<House>('GET', '/api/house'),
+  setHouse: (h: Partial<Omit<House, 'model'>>) => call<House>('PATCH', '/api/house', h),
+  uploadHouseModel: async (file: Blob) => {
+    const res = await fetch('/api/house/model', { method: 'PUT', body: file, headers: { 'content-type': 'model/gltf-binary' }, credentials: 'same-origin' });
+    if (!res.ok) throw new ApiError(res.status, ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `upload failed (${res.status})`);
+    return (await res.json() as { house: House }).house;
+  },
+  deleteHouseModel: () => call<{ deleted: true }>('DELETE', '/api/house/model'),
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),

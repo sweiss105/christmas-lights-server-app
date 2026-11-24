@@ -4,6 +4,8 @@ import { CameraControls, Grid, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { buildLayout, Engine, type Layout, type LayoutConfig, type SceneConfig, type Vec3 } from '@xmas/engine';
 import type { ServerClock } from './clock';
+import type { House } from './api';
+import { HouseModel } from './HouseModel';
 
 export type CameraPreset = 'front' | 'close' | 'angle' | 'top';
 
@@ -15,13 +17,14 @@ interface PreviewProps {
   /** Pixels covered by side panels; the view is centred in the space between them. */
   leftInset?: number;
   rightInset?: number;
+  house?: House | null;
 }
 
 const BACKGROUND = '#06080d';
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** The 3D preview: the porch's pixels, rendered in the browser by the same engine as the porch. */
-export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0 }: PreviewProps) {
+export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, house }: PreviewProps) {
   const built = useMemo(() => buildLayout(layout), [layout]);
   return (
     <Canvas
@@ -33,6 +36,7 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInse
     >
       <fog attach="fog" args={[BACKGROUND, 18, 60]} />
       <Ground layout={built} />
+      {house && <HouseModel house={house} />}
       <Wires layout={layout} />
       <Pixels layout={built} scene={scene} clock={clock} />
       <Camera layout={built} preset={preset} hidden={leftInset + rightInset} />

@@ -1,10 +1,12 @@
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayerConfig, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { OutputLoop } from './output.js';
-import { saveState, type PresetConfig, type ShowState } from './store.js';
+import { DEFAULT_HOUSE, saveState, type HouseConfig, type PresetConfig, type ShowState } from './store.js';
 import { discover, getInfo, getPresets, releaseToPreset } from './wled.js';
 
 export interface AppOptions {
@@ -144,6 +146,71 @@ export async function createApp(opts: AppOptions): Promise<App> {
     state.activeScene = null;
     await persist();
     return { active: null };
+  });
+
+  // ---- house model (3D scan) ------------------------------------------------
+  const housePath = join(dirname(opts.statePath), 'house.glb');
+  const MAX_MODEL_BYTES = 150 * 1024 * 1024;
+  const house = () => ({ ...DEFAULT_HOUSE, ...(state.house ?? {}) });
+
+  server.addContentTypeParser(['model/gltf-binary', 'application/octet-stream'], { parseAs: 'buffer', bodyLimit: MAX_MODEL_BYTES },
+    (_req, body, done) => done(null, body));
+
+  server.get('/api/house', async () => house());
+
+  server.patch<{ Body: Partial<HouseConfig> }>('/api/house', async (req) => {
+    const b = req.body ?? {};
+    const next = house();
+    if (b.position !== undefined) {
+      if (!Array.isArray(b.position) || b.position.length !== 3 || !b.position.every((v) => Number.isFinite(v) && Math.abs(v) < 1000)) throw new HttpError(400, 'position must be [x, y, z] in metres');
+      next.position = [b.position[0]!, b.position[1]!, b.position[2]!];
+    }
+    if (b.rotation !== undefined) {
+      if (!Number.isFinite(b.rotation)) throw new HttpError(400, 'rotation must be degrees');
+      next.rotation = ((b.rotation % 360) + 360) % 360;
+    }
+    if (b.scale !== undefined) {
+      if (!Number.isFinite(b.scale) || b.scale <= 0 || b.scale > 100) throw new HttpError(400, 'scale must be > 0');
+      next.scale = b.scale;
+    }
+    if (b.opacity !== undefined) {
+      if (!Number.isFinite(b.opacity) || b.opacity < 0 || b.opacity > 1) throw new HttpError(400, 'opacity must be 0..1');
+      next.opacity = b.opacity;
+    }
+    state.house = next;
+    await persist();
+    return next;
+  });
+
+  server.get('/api/house/model', async (_req, reply) => {
+    if (!state.house?.model) throw new HttpError(404, 'no house model uploaded');
+    let data: Buffer;
+    try { data = await readFile(housePath); } catch { throw new HttpError(404, 'house model file is missing'); }
+    reply.header('content-type', 'model/gltf-binary').header('cache-control', 'no-cache');
+    return data;
+  });
+
+  /** Upload a binary glTF (.glb), e.g. exported from Scaniverse or Polycam. */
+  server.put<{ Body: Buffer }>('/api/house/model', async (req) => {
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length < 12 || body.toString('ascii', 0, 4) !== 'glTF' || body.readUInt32LE(4) !== 2) {
+      throw new HttpError(400, 'expected a binary glTF 2.0 file (.glb)');
+    }
+    await mkdir(dirname(housePath), { recursive: true });
+    await writeFile(`${housePath}.tmp`, body);
+    await rename(`${housePath}.tmp`, housePath);
+    state.house = { ...house(), model: { bytes: body.length, uploadedAt: new Date().toISOString() } };
+    await persist();
+    return { house: state.house };
+  });
+
+  server.delete('/api/house/model', async () => {
+    if (!state.house?.model) throw new HttpError(404, 'no house model uploaded');
+    await rm(housePath, { force: true });
+    const { model: _model, ...rest } = house();
+    state.house = rest;
+    await persist();
+    return { deleted: true };
   });
 
   // ---- layer presets -------------------------------------------------------

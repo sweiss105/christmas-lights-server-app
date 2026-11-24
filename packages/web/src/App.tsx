@@ -3,12 +3,16 @@ import { EFFECTS, resolveParams, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
 import { uniqueName, type SceneEditor } from './editor';
 import { EditorPanel } from './EditorPanel';
+import { HousePanel } from './HousePanel';
 import { latestWins } from './latest';
 import { Preview, type CameraPreset } from './Preview';
 import { useSceneEditor, type EditMode } from './useSceneEditor';
 import { useShow, type Show } from './useShow';
 
 type View = 'preview' | 'stage';
+
+/** Width of the house panel (matches .house-panel in styles.css); the 3D view shifts aside while it's open. */
+const HOUSE_PANEL_W = 280;
 
 export function App() {
   const show = useShow();
@@ -24,6 +28,7 @@ export function App() {
   useEffect(() => { if (selected === null && status) setSelected(stageName ?? scenes[0]?.name ?? null); }, [selected, status, stageName, scenes]);
 
   const [mode, setMode] = useState<EditMode>('blind');
+  const [houseOpen, setHouseOpen] = useState(false);
   const editor = useSceneEditor(show, selected, mode);
   const rightInset = useInset('.editor', 'right', !!layout && !!status);
   useHistoryKeys(editor);
@@ -39,7 +44,7 @@ export function App() {
 
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''}`}>
-      <Preview layout={layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset} />
+      <Preview layout={layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + (houseOpen ? HOUSE_PANEL_W + 12 : 0)} house={show.house} />
 
       <TopBar show={show} mode={mode} />
 
@@ -62,7 +67,10 @@ export function App() {
           onChange={(v) => setPreset((p) => ({ name: v as CameraPreset, nonce: p.nonce + 1 }))}
           reselect
         />
+        <span className="divider" aria-hidden />
+        <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => setHouseOpen((o) => !o)}>House</button>
       </div>
+      {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
 
       <ViewCaption view={view} show={show} selected={selected} />
       <Health show={show} />
