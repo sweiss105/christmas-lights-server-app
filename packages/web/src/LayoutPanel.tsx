@@ -123,6 +123,24 @@ function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, o
         <button className="btn small ghost danger-quiet" onClick={() => { if (window.confirm(`Delete the run “${run.name ?? id}”?`)) { draft.edit(removeRun(l, id)); onDeleted(); } }}>Delete</button>
       </div>
 
+      <div className="section-head"><h3>Coil</h3><span className="hint-inline">lights wound round a rail</span></div>
+      <label className="check coil-check">
+        <input type="checkbox" checked={!!run.coil} onChange={(e) => draft.edit(updateRun(l, id, { coil: e.target.checked ? { radius: 0.04, pitch: 0.27 } : undefined }))} />
+        The string spirals around the path
+      </label>
+      {run.coil && (
+        <div className="field-row">
+          <label className="field"><span className="field-label">One turn every (cm)</span>
+            <input className="num wide" type="number" min={1} step={1} value={Math.round(run.coil.pitch * 100)} aria-label="Turn spacing in centimetres"
+              onChange={(e) => { const v = num(e.target.value, run.coil!.pitch * 100); if (v > 0) draft.edit(updateRun(l, id, { coil: { ...run.coil!, pitch: v / 100 } }), { merge: `${id}.pitch` }); }} onBlur={() => draft.endGesture()} />
+          </label>
+          <label className="field"><span className="field-label">Rail thickness (cm)</span>
+            <input className="num wide" type="number" min={1} max={100} step={1} value={Math.round(run.coil.radius * 200)} aria-label="Rail thickness in centimetres"
+              onChange={(e) => { const v = num(e.target.value, run.coil!.radius * 200); if (v > 0 && v <= 100) draft.edit(updateRun(l, id, { coil: { ...run.coil!, radius: v / 200 } }), { merge: `${id}.radius` }); }} onBlur={() => draft.endGesture()} />
+          </label>
+        </div>
+      )}
+
       <div className="section-head"><h3>Path points</h3><span className="hint-inline">metres: across · up · towards street</span></div>
       <ol className="points">
         {points.map((p, i) => (
@@ -133,6 +151,13 @@ function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, o
                 onChange={(e) => { const q = [...p] as Vec3; q[a] = num(e.target.value, p[a]!); draft.edit(setPoint(l, id, i, q), { merge: `${id}.p${i}` }); }}
                 onBlur={() => draft.endGesture()} />
             ))}
+            {run.coil && i < points.length - 1 && (() => {
+              const straight = run.coil.skip?.includes(i) ?? false;
+              const skip = straight ? run.coil.skip!.filter((n) => n !== i) : [...(run.coil.skip ?? []), i].sort((a, b) => a - b);
+              return <button className="icon-btn small" aria-pressed={!straight} aria-label={`Path to point ${i + 2}: ${straight ? 'straight' : 'coiled'}`}
+                title={straight ? 'Straight to the next point (e.g. down a post). Click to coil.' : 'Coiled to the next point. Click to run straight.'}
+                onClick={() => draft.edit(updateRun(l, id, { coil: { ...run.coil!, skip: skip.length ? skip : undefined } }))}>{straight ? '│' : '∿'}</button>;
+            })()}
             <button className="icon-btn small" aria-label={`Add a point after point ${i + 1}`} onClick={() => draft.edit(insertPoint(l, id, i))}>+</button>
             <button className="icon-btn small" aria-label={`Remove point ${i + 1}`} disabled={points.length < 2} onClick={() => draft.edit(removePoint(l, id, i))}>−</button>
           </li>

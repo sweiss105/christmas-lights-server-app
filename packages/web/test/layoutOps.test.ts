@@ -71,3 +71,21 @@ describe('History (shared undo for scenes and layouts)', () => {
     expect(h.value.runs[0]!.count).toBe(10);
   });
 });
+
+describe('coiled runs keep their straight segments when points change', () => {
+  const base = (): LayoutConfig => ({
+    controllers: [{ id: 'c', name: 'C', host: 'x', pixelCount: 10 }],
+    // Segments: 0 along the top, 1 down a post (straight), 2 back along the bottom.
+    runs: [{ id: 'r', controller: 'c', start: 0, count: 10, points: [[0, 1, 0], [1, 1, 0], [1, 0, 0], [0, 0, 0]], coil: { radius: 0.05, pitch: 0.25, skip: [1] } }],
+  });
+  const skip = (l: LayoutConfig) => l.runs[0]!.coil!.skip;
+
+  it('reverse, insert and remove', () => {
+    expect(skip(reverseRun(base(), 'r'))).toEqual([1]); // the post is still the middle segment
+    expect(skip(insertPoint(base(), 'r', 0))).toEqual([2]); // a point added before it shifts it on
+    expect(skip(insertPoint(base(), 'r', 1))).toEqual([1, 2]); // splitting the post: both halves straight
+    expect(skip(removePoint(base(), 'r', 0))).toEqual([0]);
+    expect(skip(removePoint(base(), 'r', 3))).toEqual([1]);
+    expect(skip(removePoint(base(), 'r', 1))).toEqual([]); // the top and the post join: coiled
+  });
+});

@@ -31,7 +31,20 @@ export interface RunConfig {
   points?: Vec3[];
   /** Measured position for each pixel (from camera mapping). */
   positions?: Vec3[];
+  /** The string is wound round the path (e.g. coiled around a rail) rather than laid along it. */
+  coil?: CoilConfig;
 }
+
+export interface CoilConfig {
+  /** Metres from the path's centre line to the lights (half the rail's thickness, roughly). */
+  radius: number;
+  /** Metres along the path per full turn. Each segment gets a whole number of turns, as near this as it can. */
+  pitch: number;
+  /** Segments (0 = first point to second) the string runs straight along instead, e.g. down a post. */
+  skip?: number[];
+}
+
+export const MAX_COIL_RADIUS = 0.5;
 
 export interface GroupConfig {
   runs?: string[];
@@ -91,6 +104,43 @@ function samplePolyline(points: Vec3[], count: number): Vec3[] {
   return out;
 }
 
+/** Steps per turn when tracing a coil; the lights are then spaced evenly along the traced wire. */
+const COIL_STEPS = 24;
+
+/**
+ * The path a coiled string's wire takes: a helix around each segment, starting and ending each turn
+ * on top of the path (or, on a vertical segment, on the side facing +z), so segments join up.
+ */
+function coilPath(points: Vec3[], coil: CoilConfig, runId: string): Vec3[] {
+  const { radius, pitch } = coil;
+  if (!(radius > 0 && radius <= MAX_COIL_RADIUS)) throw new LayoutError(`run "${runId}" coil radius must be between 0 and ${MAX_COIL_RADIUS} m`);
+  if (!(pitch > 0)) throw new LayoutError(`run "${runId}" coil pitch must be more than 0`);
+  const skip = new Set(coil.skip ?? []);
+  const out: Vec3[] = [];
+  for (let s = 0; s + 1 < points.length; s++) {
+    const a = points[s]!, b = points[s + 1]!;
+    const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const len = Math.hypot(...d);
+    if (len === 0 || skip.has(s)) { if (s === 0) out.push([...a] as Vec3); out.push([...b] as Vec3); continue; }
+    const t: Vec3 = [d[0] / len, d[1] / len, d[2] / len];
+    // Frame: v points "up" across the segment (world up minus its along-path part), u = t × v.
+    let ref: Vec3 = Math.abs(t[1]) > 0.99 ? [0, 0, 1] : [0, 1, 0];
+    const k = ref[0] * t[0] + ref[1] * t[1] + ref[2] * t[2];
+    let v: Vec3 = [ref[0] - k * t[0], ref[1] - k * t[1], ref[2] - k * t[2]];
+    const vl = Math.hypot(...v); v = [v[0] / vl, v[1] / vl, v[2] / vl];
+    const u: Vec3 = [t[1] * v[2] - t[2] * v[1], t[2] * v[0] - t[0] * v[2], t[0] * v[1] - t[1] * v[0]];
+    const turns = Math.max(1, Math.round(len / pitch));
+    const steps = turns * COIL_STEPS;
+    for (let i = s === 0 ? 0 : 1; i <= steps; i++) {
+      const f = i / steps, ang = 2 * Math.PI * turns * f;
+      const c = Math.cos(ang) * radius, sn = Math.sin(ang) * radius;
+      out.push([a[0] + d[0] * f + v[0] * c + u[0] * sn, a[1] + d[1] * f + v[1] * c + u[1] * sn, a[2] + d[2] * f + v[2] * c + u[2] * sn]);
+    }
+  }
+  // A skipped segment joins the coil's start/end on top of the path; that small step is part of the wire.
+  return out;
+}
+
 export function buildLayout(config: LayoutConfig): Layout {
   const controllerOffset = new Map<string, number>();
   let count = 0;
@@ -115,7 +165,8 @@ export function buildLayout(config: LayoutConfig): Layout {
       if (run.positions.length !== run.count) throw new LayoutError(`run "${run.id}" has ${run.positions.length} positions for ${run.count} pixels`);
       pts = run.positions;
     } else {
-      pts = samplePolyline(run.points ?? [], run.count);
+      const pathPts = run.points ?? [];
+      pts = samplePolyline(run.coil && pathPts.length > 1 ? coilPath(pathPts, run.coil, run.id) : pathPts, run.count);
     }
     const base = controllerOffset.get(ctrl.id)! + run.start;
     const ids: number[] = [];

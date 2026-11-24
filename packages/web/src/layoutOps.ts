@@ -43,8 +43,13 @@ export function removeRun(l: LayoutConfig, id: string): LayoutConfig {
 
 /** Flip which end of the path the first pixel is at (when a string is wired from the other end). */
 export function reverseRun(l: LayoutConfig, id: string): LayoutConfig {
-  return mapRun(l, id, (r) => ({ ...r, ...(r.points && { points: [...r.points].reverse() }), ...(r.positions && { positions: [...r.positions].reverse() }) }));
+  return mapRun(l, id, (r) => remapSkip({ ...r, ...(r.points && { points: [...r.points].reverse() }), ...(r.positions && { positions: [...r.positions].reverse() }) },
+    (seg) => [(r.points?.length ?? 1) - 2 - seg]));
 }
+
+/** Keep a coil's straight (skipped) segments on the same stretch of rail when points change. */
+const remapSkip = (r: RunConfig, f: (seg: number) => number[]): RunConfig =>
+  r.coil?.skip?.length ? { ...r, coil: { ...r.coil, skip: [...new Set(r.coil.skip.flatMap(f))].filter((n) => n >= 0).sort((a, b) => a - b) } } : r;
 
 const pts = (r: RunConfig): Vec3[] => (r.points ?? []).map((p) => [...p] as Vec3);
 const round = (v: number) => Math.round(v * 1000) / 1000;
@@ -61,7 +66,8 @@ export function insertPoint(l: LayoutConfig, id: string, i: number): LayoutConfi
     const a = ps[i]!, b = ps[i + 1];
     const p: Vec3 = b ? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2] : [a[0] + 1, a[1], a[2]];
     ps.splice(i + 1, 0, roundP(p));
-    return { ...r, points: ps };
+    // Splitting a straight segment leaves both halves straight.
+    return remapSkip({ ...r, points: ps }, (seg) => (seg < i ? [seg] : seg === i ? [i, i + 1] : [seg + 1]));
   });
 }
 
@@ -71,7 +77,22 @@ export function appendPoint(l: LayoutConfig, id: string, p: Vec3): LayoutConfig 
 
 /** Remove a point; a run always keeps at least one. */
 export function removePoint(l: LayoutConfig, id: string, i: number): LayoutConfig {
-  return mapRun(l, id, (r) => { const ps = pts(r); if (ps.length > 1) ps.splice(i, 1); return { ...r, points: ps }; });
+  return mapRun(l, id, (r) => {
+    const ps = pts(r);
+    const n = ps.length;
+    if (n < 2) return r;
+    ps.splice(i, 1);
+    const skip = new Set(r.coil?.skip ?? []);
+    // Segment s joins points s and s+1. Dropping an end point drops its segment; dropping a middle
+    // point joins segments i-1 and i, which stays straight only if both were.
+    return remapSkip({ ...r, points: ps }, (seg) => {
+      if (i === 0) return seg === 0 ? [] : [seg - 1];
+      if (i === n - 1) return seg === n - 2 ? [] : [seg];
+      if (seg < i - 1) return [seg];
+      if (seg === i - 1 || seg === i) return skip.has(i - 1) && skip.has(i) ? [i - 1] : [];
+      return [seg - 1];
+    });
+  });
 }
 
 /** Length of a run's path in metres. */
