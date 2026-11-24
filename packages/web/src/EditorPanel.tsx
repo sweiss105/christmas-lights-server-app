@@ -15,7 +15,9 @@ interface Props {
   onRename: (newName: string) => Promise<boolean>;
 }
 
-const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', add: 'Add', multiply: 'Multiply', screen: 'Screen', max: 'Brightest' };
+/** Short names for the layer list. */
+const BLEND_SHORT: Partial<Record<BlendMode, string>> = { mask: 'Mask', 'mask-invert': 'Inverted mask' };
+const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', add: 'Add', multiply: 'Multiply', screen: 'Screen', max: 'Brightest', mask: 'Mask: show below where bright', 'mask-invert': 'Mask: hide below where bright' };
 
 /** Right-hand panel: the selected scene's layers and the selected layer's settings. */
 export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Props) {
@@ -83,7 +85,7 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
               </button>
               <button className="layer-main" onClick={() => setSelectedId(l.id)} aria-current={l.id === selectedId}>
                 <span className="layer-name">{EFFECTS[l.effect]?.name ?? l.effect}</span>
-                <span className="layer-sub">{groupLabel(groups, l.group ?? 'all')}{l.blend && l.blend !== 'normal' ? ` · ${BLEND_LABELS[l.blend]}` : ''}{(l.opacity ?? 1) < 1 ? ` · ${Math.round((l.opacity ?? 1) * 100)}%` : ''}</span>
+                <span className="layer-sub">{groupLabel(groups, l.group ?? 'all')}{l.blend && l.blend !== 'normal' ? ` · ${BLEND_SHORT[l.blend] ?? BLEND_LABELS[l.blend]}` : ''}{(l.opacity ?? 1) < 1 ? ` · ${Math.round((l.opacity ?? 1) * 100)}%` : ''}</span>
               </button>
               <div className="reorder">
                 <button className="icon-btn small" disabled={i === 0} onClick={() => editor.edit(moveLayer(scene, l.id, +1))} aria-label={`Move ${l.id} up`}><Chevron up /></button>

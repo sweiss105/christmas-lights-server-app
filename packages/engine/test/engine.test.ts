@@ -173,3 +173,34 @@ describe('crossfade between scenes', () => {
     expect([...e.render(3.5)]).toEqual([128, 0, 128]);
   });
 });
+
+describe('mask blend modes (an effect masking the layers below it)', () => {
+  const two = () => {
+    const e = new Engine(buildLayout({ controllers: [{ id: 'c', name: 'C', host: 'x', pixelCount: 2 }], runs: [{ id: 'r', controller: 'c', start: 0, count: 2, points: [[0, 0, 0], [1, 0, 0]] }], groups: { first: { pixels: [0] } } }));
+    e.setOutput({ brightness: 1, gamma: 1 });
+    return e;
+  };
+  const below = { id: 'below', effect: 'solid', params: { color: '#ff8000' } };
+
+  it('mask shows the layers below where the mask layer is bright, by brightness not colour', () => {
+    const e = two();
+    // The mask is a solid colour on pixel 0 only (group "first"); pixel 1 sees no mask layer.
+    e.setScene({ name: 'm', layers: [below, { id: 'm', effect: 'solid', params: { color: '#0000ff' }, blend: 'mask', group: 'first' }] });
+    const f = [...e.render(0)];
+    // Pure blue has brightness ~0.07 (Rec. 709 luma), so pixel 0 is mostly hidden, without a blue tint.
+    expect(f[0]).toBeLessThan(30); expect(f[2]).toBe(0);
+    expect(f.slice(3)).toEqual([255, 128, 0]); // outside the mask layer's group: untouched
+    e.setScene({ name: 'w', layers: [below, { id: 'm', effect: 'solid', params: { color: '#ffffff' }, blend: 'mask' }] });
+    expect([...e.render(0)].slice(0, 3)).toEqual([255, 128, 0]);
+    e.setScene({ name: 'k', layers: [below, { id: 'm', effect: 'solid', params: { color: '#000000' }, blend: 'mask' }] });
+    expect([...e.render(0)].slice(0, 3)).toEqual([0, 0, 0]);
+  });
+
+  it('inverted mask hides the layers below where the mask layer is bright; opacity weakens either mask', () => {
+    const e = two();
+    e.setScene({ name: 'i', layers: [below, { id: 'm', effect: 'solid', params: { color: '#ffffff' }, blend: 'mask-invert' }] });
+    expect([...e.render(0)].slice(0, 3)).toEqual([0, 0, 0]);
+    e.setScene({ name: 'h', layers: [below, { id: 'm', effect: 'solid', params: { color: '#000000' }, blend: 'mask', opacity: 0.5 }] });
+    expect([...e.render(0)].slice(0, 3)).toEqual([128, 64, 0]);
+  });
+});

@@ -1,8 +1,13 @@
 import { EFFECTS, resolveParams, type Params, type RenderFn } from './effects.js';
 import type { Layout } from './layout.js';
 
-export type BlendMode = 'normal' | 'add' | 'multiply' | 'screen' | 'max';
-export const BLEND_MODES: BlendMode[] = ['normal', 'add', 'multiply', 'screen', 'max'];
+/**
+ * How a layer combines with the layers below it. The two mask modes don't add colour: they use the
+ * layer's brightness to show ("mask") or hide ("mask-invert") what's below, so any effect can act as
+ * a stencil, e.g. a white-on-black Ripple revealing a rainbow only inside its rings.
+ */
+export type BlendMode = 'normal' | 'add' | 'multiply' | 'screen' | 'max' | 'mask' | 'mask-invert';
+export const BLEND_MODES: BlendMode[] = ['normal', 'add', 'multiply', 'screen', 'max', 'mask', 'mask-invert'];
 
 export interface LayerConfig {
   id: string;
@@ -64,6 +69,7 @@ function blend(mode: BlendMode, a: number, b: number): number {
     case 'multiply': return a * b;
     case 'screen': return 1 - (1 - a) * (1 - b);
     case 'max': return Math.max(a, b);
+    default: return b; // mask modes are handled per pixel in composite()
   }
 }
 
@@ -121,6 +127,17 @@ export class Engine {
     for (const layer of layers) {
       layer.render(t, tmp);
       const { mask, opacity: o, blend: mode } = layer;
+      if (mode === 'mask' || mode === 'mask-invert') {
+        const invert = mode === 'mask-invert';
+        for (let i = 0; i < n; i++) {
+          if (!mask[i]) continue;
+          const j = i * 3;
+          const luma = 0.2126 * tmp[j]! + 0.7152 * tmp[j + 1]! + 0.0722 * tmp[j + 2]!; // Rec. 709 brightness
+          const keep = 1 + ((invert ? 1 - luma : luma) - 1) * o; // opacity weakens the mask
+          acc[j] = acc[j]! * keep; acc[j + 1] = acc[j + 1]! * keep; acc[j + 2] = acc[j + 2]! * keep;
+        }
+        continue;
+      }
       for (let i = 0; i < n; i++) {
         if (!mask[i]) continue;
         for (let c = i * 3; c < i * 3 + 3; c++) {
