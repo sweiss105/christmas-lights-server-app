@@ -183,6 +183,89 @@ describe('Blind / Live editing and the web UI', () => {
   });
 });
 
+describe('playlists and the nightly schedule', () => {
+  const scenes = {
+    Red: { name: 'Red', layers: [{ id: 'l', effect: 'solid', params: { color: '#ff0000' } }] },
+    Blue: { name: 'Blue', layers: [{ id: 'l', effect: 'solid', params: { color: '#0000ff' } }] },
+  };
+  async function clockApp(over: Partial<ShowState> = {}) {
+    const dir = await mkdtemp(join(tmpdir(), 'xmas-show-'));
+    let now = Date.parse('2026-12-21T20:00:00Z');
+    const state: ShowState = {
+      layout: { controllers: [{ id: 'a', name: 'A', host: '127.0.0.1', port: 9, pixelCount: 10 }], runs: [{ id: 'r', controller: 'a', start: 0, count: 10, points: [[0, 0, 0], [1, 0, 0]] }] },
+      scenes, activeScene: 'Red', output: { brightness: 1, gamma: 1, fps: 40, enabled: false, transition: 0 }, ...over,
+    };
+    const app = await createApp({ state, statePath: join(dir, 'state.json'), now: () => now });
+    cleanups.push(() => app.server.close());
+    return { app, state, advance: async (ms: number) => { now += ms; await app.tick(); } };
+  }
+  const pixel = async (app: App) => [...(await app.server.inject('/api/frame')).rawPayload.subarray(0, 3)];
+
+  it('plays a playlist, moving through scenes on time and looping; Go stops it', async () => {
+    const { app, advance } = await clockApp();
+    const put = await app.server.inject({ method: 'PUT', url: '/api/playlists/Evening', payload: { entries: [{ scene: 'Blue', seconds: 60 }, { scene: 'Red', seconds: 30 }], loop: true } });
+    expect(put.statusCode).toBe(200);
+    expect((await app.server.inject({ method: 'POST', url: '/api/playlists/Evening/play' })).statusCode).toBe(200);
+    await advance(0);
+    expect(await pixel(app)).toEqual([0, 0, 255]);
+    await advance(61_000);
+    expect(await pixel(app)).toEqual([255, 0, 0]);
+    expect((await app.server.inject('/api/status')).json().playlist).toMatchObject({ name: 'Evening', index: 1, scene: 'Red' });
+    await advance(30_000);
+    expect(await pixel(app)).toEqual([0, 0, 255]); // looped
+    await app.server.inject({ method: 'POST', url: '/api/scenes/Red/activate' }); // manual Go
+    await advance(120_000);
+    expect(await pixel(app)).toEqual([255, 0, 0]);
+    expect((await app.server.inject('/api/status')).json().playlist).toBe(null);
+  });
+
+  it('validates playlists', async () => {
+    const { app } = await clockApp();
+    const bad = (payload: unknown) => app.server.inject({ method: 'PUT', url: '/api/playlists/X', payload });
+    expect((await bad({ entries: [] })).statusCode).toBe(400);
+    expect((await bad({ entries: [{ scene: 'Nope', seconds: 10 }] })).statusCode).toBe(400);
+    expect((await bad({ entries: [{ scene: 'Red', seconds: 0 }] })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'POST', url: '/api/playlists/Nope/play' })).statusCode).toBe(404);
+  });
+
+  it('turns the lights on at the on time and hands the porch back at the off time, every night', async () => {
+    const { app, state, advance } = await clockApp();
+    // 21:00 to 23:00 UTC, running the Blue scene. It's 20:00 now, so nothing happens yet.
+    const r = await app.server.inject({ method: 'PUT', url: '/api/schedule', payload: { enabled: true, timezone: 'UTC', on: { kind: 'time', time: '21:00' }, off: { kind: 'time', time: '23:00' }, run: { kind: 'scene', name: 'Blue' } } });
+    expect(r.statusCode).toBe(200);
+    await advance(30 * 60_000);
+    expect(state.output.enabled).toBe(false);
+    expect((await app.server.inject('/api/status')).json().schedule).toMatchObject({ enabled: true, active: false });
+    await advance(31 * 60_000); // 21:01
+    expect(state.output.enabled).toBe(true);
+    expect(app.output.running).toBe(true);
+    expect(await pixel(app)).toEqual([0, 0, 255]);
+    // A manual change during the evening isn't undone by the schedule.
+    await app.server.inject({ method: 'POST', url: '/api/scenes/Red/activate' });
+    await advance(60 * 60_000); // 22:01
+    expect(await pixel(app)).toEqual([255, 0, 0]);
+    await advance(60 * 60_000); // 23:01: off
+    expect(state.output.enabled).toBe(false);
+    expect(app.output.running).toBe(false);
+    await advance(22 * 3600_000); // 21:01 next day: on again
+    expect(state.output.enabled).toBe(true);
+    await app.output.stopStreaming(false);
+  });
+
+  it('enabling the schedule during the on window starts the show straight away; validates its settings', async () => {
+    const { app, state, advance } = await clockApp();
+    await app.server.inject({ method: 'PUT', url: '/api/schedule', payload: { enabled: true, timezone: 'UTC', on: { kind: 'time', time: '19:00' }, off: { kind: 'time', time: '23:00' }, run: { kind: 'scene', name: 'Blue' } } });
+    await advance(0);
+    expect(state.output.enabled).toBe(true);
+    await app.output.stopStreaming(false);
+    const bad = (payload: unknown) => app.server.inject({ method: 'PUT', url: '/api/schedule', payload });
+    expect((await bad({ enabled: true, timezone: 'Mars/Olympus', on: { kind: 'time', time: '19:00' }, off: { kind: 'time', time: '23:00' }, run: { kind: 'scene', name: 'Blue' } })).statusCode).toBe(400);
+    expect((await bad({ enabled: true, timezone: 'UTC', on: { kind: 'sunset' }, off: { kind: 'time', time: '23:00' }, run: { kind: 'scene', name: 'Blue' } })).statusCode).toBe(400); // sunset needs a location
+    expect((await bad({ enabled: true, timezone: 'UTC', on: { kind: 'time', time: '25:00' }, off: { kind: 'time', time: '23:00' }, run: { kind: 'scene', name: 'Blue' } })).statusCode).toBe(400);
+    expect((await bad({ enabled: true, timezone: 'UTC', on: { kind: 'time', time: '19:00' }, off: { kind: 'time', time: '23:00' }, run: { kind: 'playlist', name: 'Nope' } })).statusCode).toBe(400);
+  });
+});
+
 describe('crossfade on Go', () => {
   it('Go fades over output.transition seconds; 0 cuts; the setting is validated and saved', async () => {
     const { app } = await makeApp({

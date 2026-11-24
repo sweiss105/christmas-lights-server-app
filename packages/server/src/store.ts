@@ -2,6 +2,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LayerConfig, LayoutConfig, OutputSettings, SceneConfig } from '@xmas/engine';
+import type { PlaylistConfig, ScheduleConfig } from './show.js';
 
 /** A saved layer look: an effect with all its settings, reusable in any scene. */
 export type PresetConfig = Omit<LayerConfig, 'id' | 'enabled'> & { name: string };
@@ -47,6 +48,12 @@ export interface ShowState {
   house?: HouseConfig;
   /** The scene the porch was running (may differ from the saved copy while Blind edits are pending), so a restart restores it. */
   stage?: SceneConfig;
+  /** Playlists by name: scenes played in turn. */
+  playlists?: Record<string, PlaylistConfig>;
+  /** The playlist running now, if any (its position follows from when it started). */
+  playing?: { playlist: string; startedAt: number };
+  /** Nightly on/off. */
+  schedule?: ScheduleConfig;
   /** Layer presets by name. Missing in state files from before presets existed. */
   presets?: Record<string, PresetConfig>;
 }

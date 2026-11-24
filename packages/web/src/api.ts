@@ -37,9 +37,26 @@ export interface ControllerHealth {
   warning?: string;
 }
 
+export interface PlaylistEntry { scene: string; seconds: number }
+export interface Playlist { name: string; entries: PlaylistEntry[]; loop: boolean }
+export type OnAt = { kind: 'sunset'; offsetMinutes?: number } | { kind: 'time'; time: string };
+export type OffAt = { kind: 'time'; time: string } | { kind: 'sunrise'; offsetMinutes?: number };
+export interface Schedule {
+  enabled: boolean;
+  timezone: string;
+  latitude?: number;
+  longitude?: number;
+  on: OnAt;
+  off: OffAt;
+  run: { kind: 'scene' | 'playlist'; name: string };
+}
+export interface ScheduleStatus extends Schedule { active: boolean; nextOn: number; nextOff: number }
+
 export interface Status {
   scene: string | null;
   stage: { scene: string | null; dirty: boolean };
+  playlist: { name: string; index: number; scene: string | null; nextAt: number | null } | null;
+  schedule: ScheduleStatus | null;
   pixels: number;
   output: { brightness: number; gamma: number; enabled: boolean; transition: number };
   stream: { running: boolean; targetFps: number; fps: number; renderMs: number; lateFrames: number; controllers: ControllerHealth[] };
@@ -93,6 +110,13 @@ export const api = {
   },
   setHousePart: (id: string, p: Partial<Omit<HousePart, 'id' | 'bytes' | 'uploadedAt'>>) => call<HousePart>('PATCH', `/api/house/parts/${enc(id)}`, p),
   deleteHousePart: (id: string) => call<{ deleted: string }>('DELETE', `/api/house/parts/${enc(id)}`),
+  playlists: () => call<Playlist[]>('GET', '/api/playlists'),
+  savePlaylist: (p: Playlist) => call<Playlist>('PUT', `/api/playlists/${enc(p.name)}`, { entries: p.entries, loop: p.loop }),
+  deletePlaylist: (name: string) => call<{ deleted: string }>('DELETE', `/api/playlists/${enc(name)}`),
+  playPlaylist: (name: string) => call<{ playing: string }>('POST', `/api/playlists/${enc(name)}/play`),
+  stopPlaylist: () => call<{ playing: null }>('POST', '/api/playlists/stop'),
+  schedule: () => call<ScheduleStatus | { enabled: false }>('GET', '/api/schedule'),
+  saveSchedule: (s: Schedule) => call<ScheduleStatus>('PUT', '/api/schedule', s),
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),

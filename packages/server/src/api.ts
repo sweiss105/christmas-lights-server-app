@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayerConfig, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { OutputLoop } from './output.js';
+import { inWindow, isTimeZone, nextWindow, playlistPosition, type PlaylistConfig, type ScheduleConfig } from './show.js';
 import { DEFAULT_HOUSE, saveState, type HouseConfig, type HousePart, type PresetConfig, type ShowState } from './store.js';
 import { discover, getInfo, getPresets, releaseToPreset } from './wled.js';
 
@@ -18,10 +19,12 @@ export interface AppOptions {
   webRoot?: string;
   /** Injected for tests. */
   discoverFn?: typeof discover;
+  /** Wall clock (ms) for playlists and the schedule; injected for tests, which then drive tick() themselves. */
+  now?: () => number;
   logger?: boolean;
 }
 
-export interface App { server: FastifyInstance; output: OutputLoop; engine: () => Engine }
+export interface App { server: FastifyInstance; output: OutputLoop; engine: () => Engine; /** Advance playlists and the schedule (runs every second in production). */ tick: () => Promise<void> }
 
 class HttpError extends Error { constructor(public statusCode: number, message: string) { super(message); } }
 const bad = (e: unknown) => new HttpError(400, (e as Error).message);
@@ -76,6 +79,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.get('/api/status', async () => ({
     scene: state.activeScene,
     stage: { scene: state.activeScene, dirty: stageDirty() },
+    playlist: playlistStatus(),
+    schedule: scheduleStatus(),
     pixels: engine.layout.count,
     output: { ...engine.output, enabled: state.output.enabled, transition: fadeSeconds() },
     stream: output.stats(),
@@ -150,6 +155,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     if (!s) throw new HttpError(404, 'no such scene');
     try { engine.setScene(s, { fade: fadeSeconds() }); } catch (e) { throw bad(e); }
     state.activeScene = s.name;
+    delete state.playing; // a manual Go takes over from a playlist
     await persist();
     return { active: s.name };
   });
@@ -157,9 +163,129 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.post('/api/blackout', async () => {
     engine.setScene({ name: 'Blackout', layers: [] }, { fade: fadeSeconds() });
     state.activeScene = null;
+    delete state.playing;
     await persist();
     return { active: null };
   });
+
+  // ---- playlists ---------------------------------------------------------------
+  const now = opts.now ?? Date.now;
+  const playlistStatus = () => {
+    const pl = state.playing && state.playlists?.[state.playing.playlist];
+    if (!pl || !state.playing) return null;
+    const pos = playlistPosition(pl.entries, state.playing.startedAt, now(), pl.loop);
+    return { name: pl.name, index: pos.index, scene: pl.entries[pos.index]?.scene ?? null, nextAt: pos.nextAt };
+  };
+
+  server.get('/api/playlists', async () => Object.values(state.playlists ?? {}).sort((a, b) => a.name.localeCompare(b.name)));
+
+  server.put<{ Params: { name: string }; Body: Partial<PlaylistConfig> }>('/api/playlists/:name', async (req) => {
+    const name = req.params.name.trim();
+    if (!name || name.length > 60) throw new HttpError(400, 'playlist name must be 1..60 characters');
+    const entries = req.body?.entries;
+    if (!Array.isArray(entries) || entries.length === 0) throw new HttpError(400, 'a playlist needs at least one scene');
+    for (const e of entries) {
+      if (!e || typeof e.scene !== 'string' || !state.scenes[e.scene]) throw new HttpError(400, `unknown scene "${e?.scene}"`);
+      if (!Number.isFinite(e.seconds) || e.seconds < 1 || e.seconds > 86_400) throw new HttpError(400, 'each scene plays for 1 second to 24 hours');
+    }
+    const pl: PlaylistConfig = { name, entries: entries.map((e) => ({ scene: e.scene, seconds: e.seconds })), loop: req.body?.loop !== false };
+    state.playlists = { ...(state.playlists ?? {}), [name]: pl };
+    await persist();
+    return pl;
+  });
+
+  server.delete<{ Params: { name: string } }>('/api/playlists/:name', async (req) => {
+    if (!state.playlists?.[req.params.name]) throw new HttpError(404, 'no such playlist');
+    delete state.playlists[req.params.name];
+    if (state.playing?.playlist === req.params.name) delete state.playing;
+    await persist();
+    return { deleted: req.params.name };
+  });
+
+  const startPlaylist = async (name: string) => {
+    if (!state.playlists?.[name]) throw new HttpError(404, 'no such playlist');
+    state.playing = { playlist: name, startedAt: now() };
+    await advancePlaylist();
+    await persist();
+  };
+
+  server.post<{ Params: { name: string } }>('/api/playlists/:name/play', async (req) => { await startPlaylist(req.params.name); return { playing: req.params.name }; });
+  server.post('/api/playlists/stop', async () => { delete state.playing; await persist(); return { playing: null }; });
+
+  /** Put the playlist's current scene on stage when it's time. */
+  const advancePlaylist = async () => {
+    const st = playlistStatus();
+    if (!st?.scene || st.scene === state.activeScene) return;
+    const scene = state.scenes[st.scene];
+    if (!scene) return; // deleted since; skip
+    try { engine.setScene(scene, { fade: fadeSeconds() }); } catch { return; }
+    state.activeScene = scene.name;
+    await persist();
+  };
+
+  // ---- nightly schedule ----------------------------------------------------------
+  let lastInWindow: boolean | undefined; // undefined until the first tick: a restart mid-evening changes nothing
+  const scheduleStatus = () => {
+    const s = state.schedule;
+    if (!s) return null;
+    const w = nextWindow(s, now());
+    return { ...s, active: s.enabled && now() >= w.on && now() < w.off, nextOn: w.on, nextOff: w.off };
+  };
+
+  server.get('/api/schedule', async () => scheduleStatus() ?? { enabled: false });
+
+  server.put<{ Body: ScheduleConfig }>('/api/schedule', async (req) => {
+    const b = req.body;
+    const clock = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (!b || typeof b.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false');
+    if (!isTimeZone(b.timezone)) throw new HttpError(400, 'timezone must be an IANA time zone such as America/Chicago');
+    const needsSun = b.on?.kind === 'sunset' || b.off?.kind === 'sunrise';
+    if (needsSun && !(Number.isFinite(b.latitude) && Math.abs(b.latitude!) <= 90 && Number.isFinite(b.longitude) && Math.abs(b.longitude!) <= 180)) {
+      throw new HttpError(400, 'sunset and sunrise need a latitude and longitude');
+    }
+    const okOffset = (m: unknown) => m === undefined || (Number.isFinite(m) && Math.abs(m as number) <= 240);
+    if (!(b.on?.kind === 'sunset' ? okOffset(b.on.offsetMinutes) : b.on?.kind === 'time' && clock.test(b.on.time))) throw new HttpError(400, 'on must be sunset (± minutes) or a time like 16:30');
+    if (!(b.off?.kind === 'sunrise' ? okOffset(b.off.offsetMinutes) : b.off?.kind === 'time' && clock.test(b.off.time))) throw new HttpError(400, 'off must be a time like 23:00 or sunrise');
+    if (!b.run || !['scene', 'playlist'].includes(b.run.kind) || !(b.run.kind === 'scene' ? state.scenes[b.run.name] : state.playlists?.[b.run.name])) {
+      throw new HttpError(400, 'run must name an existing scene or playlist');
+    }
+    state.schedule = {
+      enabled: b.enabled, timezone: b.timezone, on: b.on, off: b.off, run: { kind: b.run.kind, name: b.run.name },
+      ...(Number.isFinite(b.latitude) && { latitude: b.latitude }), ...(Number.isFinite(b.longitude) && { longitude: b.longitude }),
+    };
+    // Saving during the on window starts the show at the next tick; otherwise wait for the on time.
+    lastInWindow = false;
+    await persist();
+    return scheduleStatus();
+  });
+
+  /** Called every second: advance a playlist, and switch the show on/off when the schedule says so. */
+  const tick = async () => {
+    await advancePlaylist();
+    const s = state.schedule;
+    if (!s?.enabled) { lastInWindow = undefined; return; }
+    const inside = inWindow(s, now());
+    if (lastInWindow === undefined) { lastInWindow = inside; return; }
+    if (inside === lastInWindow) return;
+    lastInWindow = inside;
+    if (inside) {
+      if (s.run.kind === 'playlist' && state.playlists?.[s.run.name]) await startPlaylist(s.run.name);
+      else if (state.scenes[s.run.name]) {
+        engine.setScene(state.scenes[s.run.name]!, { fade: fadeSeconds() });
+        state.activeScene = s.run.name;
+        delete state.playing;
+      }
+      output.startStreaming();
+      state.output = { ...state.output, enabled: true };
+    } else {
+      delete state.playing;
+      await output.stopStreaming(); // hand the porch back to its WLED playlist
+      state.output = { ...state.output, enabled: false };
+    }
+    await persist();
+  };
+  const ticker = opts.now ? null : setInterval(() => { tick().catch((e) => server.log.error(e)); }, 1000);
+  ticker?.unref();
 
   // ---- identify: flash one run on the porch -----------------------------------
   let identify: { run: string; until: number } | null = null;
@@ -387,7 +513,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
   // Unknown /api routes are 404 JSON, never the UI. The token hook above runs first for /api.
   server.setNotFoundHandler((req, reply) => { reply.code(404).send({ error: `no route ${req.method} ${req.url.split('?')[0]}` }); });
 
-  server.addHook('onClose', async () => { await output.close(); });
+  server.addHook('onClose', async () => { if (ticker) clearInterval(ticker); await output.close(); });
 
-  return { server, output, engine: () => engine };
+  return { server, output, engine: () => engine, tick };
 }

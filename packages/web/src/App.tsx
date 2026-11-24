@@ -6,6 +6,7 @@ import { appendPoint, setPoint } from './layoutOps';
 import { LayoutPanel } from './LayoutPanel';
 import { EditorPanel } from './EditorPanel';
 import { HousePanel } from './HousePanel';
+import { PlaylistsView, ScheduleView } from './ShowPanels';
 import { latestWins } from './latest';
 import { Preview, type CameraPreset } from './Preview';
 import { useSceneEditor, type EditMode } from './useSceneEditor';
@@ -291,6 +292,7 @@ function StagePill({ show }: { show: Show }) {
   if (!output.enabled) { tone = 'muted'; text = 'Streaming off · WLED playlist'; }
   else if (stage.scene === null) { tone = 'muted'; text = 'On stage: Blackout'; }
   else if (stage.dirty) { tone = 'warn'; text = `On stage: ${stage.scene} · edited, not sent`; }
+  else if (show.status!.playlist) text = `Playlist ${show.status!.playlist.name}: ${stage.scene}`;
   return <div className={`pill ${tone}`} role="status"><span className="dot" aria-hidden />{text}</div>;
 }
 
@@ -347,6 +349,7 @@ function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; m
   const status = show.status!;
   const stageName = status.stage.scene;
   const [going, setGoing] = useState(false);
+  const [tab, setTab] = useState<'scenes' | 'playlists' | 'schedule'>('scenes');
   const isOnStage = selected !== null && selected === stageName && !status.stage.dirty;
 
   const go = async () => {
@@ -357,13 +360,17 @@ function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; m
   };
 
   return (
-    <aside className="scenes glass" aria-label="Scenes">
+    <aside className="scenes glass" aria-label="Scenes, playlists and schedule">
       <div className="panel-head">
-        <h2>Scenes</h2>
-        {mode === 'live'
-          ? <span className="mode-tag live" title="Live: edits to the scene on stage go to the porch immediately.">Live</span>
-          : <span className="mode-tag" title="Blind: edits are saved but the porch only changes when you press Go.">Blind</span>}
+        <div className="segmented panel-tabs" role="tablist" aria-label="Panel">
+          {([['scenes', 'Scenes'], ['playlists', 'Playlists'], ['schedule', 'Schedule']] as const).map(([v, label]) => (
+            <button key={v} role="tab" aria-selected={tab === v} className={tab === v ? 'active' : ''} onClick={() => setTab(v)}>{label}</button>
+          ))}
+        </div>
       </div>
+      {tab === 'playlists' && <PlaylistsView show={show} />}
+      {tab === 'schedule' && <ScheduleView show={show} />}
+      {tab === 'scenes' && (<>
       <div className="scene-tools">
         <button className="btn small" onClick={() => void actions.create()}>+ New</button>
         <button className="btn small ghost" disabled={!selected} onClick={() => void actions.duplicate()}>Duplicate</button>
@@ -400,6 +407,7 @@ function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; m
           {going ? 'Sending…' : isOnStage ? 'On stage' : <>Go <span className="go-target">{selected}</span></>}
         </button>
       </div>
+      </>)}
     </aside>
   );
 }
