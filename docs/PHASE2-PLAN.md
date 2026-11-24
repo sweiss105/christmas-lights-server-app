@@ -59,6 +59,38 @@ Each milestone is usable on its own, merged by PR, and deployed to the container
 - Interaction polish following the Apple design guidance: instant press feedback, spring motion that can be interrupted, translucent panels over the 3D view, respect for reduced-motion and reduced-transparency settings, and a dark theme suited to working at night.
 - Tests: server API tests for the new routes, unit tests for editor state (undo, Blind/Live), and a browser smoke test.
 
+## WLED effects workstream (added 2026-11-24)
+
+**Owner's decision:** rebuild every WLED effect except the microphone ones (about 190 of WLED 0.15.3's 216) in our engine, so each one can be layered, previewed in 3D and spread across the house. The owner's WLED presets are *not* recreated as scenes.
+
+**Licence:** WLED is EUPL-1.2, which is copyleft. We do **not** copy or translate its source. Each effect is written fresh from how it looks and behaves (watching it on the porch controller and reading WLED's user-facing effect descriptions), using our own engine and conventions. Palettes are our own definitions too.
+
+### Foundation, built before the effects
+
+1. **Palettes.** A `palette` param type, a built-in set of our own palettes (rainbow, party, ocean, forest, lava, heat, ice, Christmas, candy cane, warm white, and others), plus palettes built from the layer's own colours, as WLED's "Color 1/2/3" palettes do.
+2. **1D mapping.** Most WLED effects are written for a single strip. Each 1D effect gets a **Lights run** setting:
+   - *Along each string*: every run plays the pattern over its own length.
+   - *One long strip*: runs are joined in wiring order.
+   - *Across the house*: left to right.
+   - *Up the house*: bottom to top.
+   - *Out from the centre*.
+
+   The effect renders a virtual strip, and each pixel samples it at its position.
+3. **2D mapping.** 2D effects render a virtual grid laid over the front of the house (x across, y up), and each pixel samples the grid at its position. They work on any layout, not only rectangular matrices.
+4. **Deterministic simulations.** Effects with state (particles, fire, Game of Life, bouncing balls) step at a fixed rate with a seeded random generator. The seed is fixed per time window, and both the server and the browser compute it from the shared effect clock, so the preview still matches the porch exactly. On joining, an effect simulates forward from the window's start. Windows are long, so the reseeding isn't noticeable.
+5. **Effect catalogue.** Each effect has a category (Basic, Chase & Running, Twinkle & Sparkle, Fire & Fireworks, Noise & Flow, Waves & Patterns, 2D, Particles) and a note of the WLED effect it recreates. The **Add layer** menu gets categories and search, since 190 effects don't fit in a plain list.
+6. **Tests for every effect.** Output stays within range with no NaN, the same `t` gives the same frame (including simulations started at different times), and each render fits a per-frame time budget.
+
+### Order
+
+The foundation comes first, then effects in families, most useful first:
+- Effects the owner's presets used.
+- Chase & Running, Twinkle & Sparkle, Fire & Fireworks.
+- Noise & Flow, Waves & Patterns.
+- 2D, then Particles.
+
+M3 (house model and layout tools) slots in when the house scan arrives.
+
 ## Open questions
 
 - **House dimensions for the model (needed by M1, rough is fine):** house front width, height to the eaves, roof shape (gable facing the street, gable to the side, or hip) and peak height, and where the porch sits along the front.

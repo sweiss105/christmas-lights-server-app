@@ -6,7 +6,13 @@ export type ParamSpec =
   | { key: string; label: string; type: 'number'; min: number; max: number; step?: number; default: number }
   | { key: string; label: string; type: 'color'; default: string }
   | { key: string; label: string; type: 'vec3'; default: [number, number, number] }
-  | { key: string; label: string; type: 'select'; options: string[]; default: string };
+  | { key: string; label: string; type: 'select'; options: string[]; default: string; labels?: Record<string, string> }
+  | { key: string; label: string; type: 'palette'; default: string }
+  | { key: string; label: string; type: 'boolean'; default: boolean };
+
+/** Groups for the effect picker. */
+export type EffectCategory = 'Basic' | 'Chase & Running' | 'Twinkle & Sparkle' | 'Fire & Fireworks' | 'Noise & Flow' | 'Waves & Patterns' | '2D' | 'Particles';
+export const EFFECT_CATEGORIES: EffectCategory[] = ['Basic', 'Chase & Running', 'Twinkle & Sparkle', 'Fire & Fireworks', 'Noise & Flow', 'Waves & Patterns', '2D', 'Particles'];
 
 export type Params = Record<string, unknown>;
 
@@ -17,6 +23,9 @@ export interface EffectDef {
   id: string;
   name: string;
   description: string;
+  category: EffectCategory;
+  /** Name of the WLED effect this one recreates (written fresh, not ported), if any. */
+  wled?: string;
   params: ParamSpec[];
   create(params: Params, layout: Layout): RenderFn;
 }
@@ -45,6 +54,15 @@ export function resolveParams(def: EffectDef, input: Params = {}): Params {
         if (typeof v !== 'string' || !p.options.includes(v)) throw new Error(`${def.id}.${p.key} must be one of ${p.options.join(', ')}`);
         out[p.key] = v;
         break;
+      case 'palette':
+        // Any name is accepted: palettes imported from WLED live in the show state; unknown ones fall back to Rainbow.
+        if (typeof v !== 'string' || !v) throw new Error(`${def.id}.${p.key} must be a palette name`);
+        out[p.key] = v;
+        break;
+      case 'boolean':
+        if (typeof v !== 'boolean') throw new Error(`${def.id}.${p.key} must be true or false`);
+        out[p.key] = v;
+        break;
     }
   }
   return out;
@@ -66,7 +84,7 @@ function hash(i: number, seed = 0): number {
 }
 
 const solid: EffectDef = {
-  id: 'solid', name: 'Solid', description: 'One colour everywhere.',
+  id: 'solid', category: 'Basic', name: 'Solid', description: 'One colour everywhere.',
   params: [{ key: 'color', label: 'Colour', type: 'color', default: '#ff2a00' }],
   create(p, layout) {
     const [r, g, b] = col(p, 'color');
@@ -75,7 +93,7 @@ const solid: EffectDef = {
 };
 
 const rainbow: EffectDef = {
-  id: 'rainbow', name: 'Rainbow', description: 'Hue cycles through space along a direction.',
+  id: 'rainbow', category: 'Waves & Patterns', name: 'Rainbow', description: 'Hue cycles through space along a direction.',
   params: [
     { key: 'direction', label: 'Direction', type: 'vec3', default: [1, 0, 0] },
     { key: 'scale', label: 'Bands across house', type: 'number', min: 0.1, max: 10, step: 0.1, default: 1 },
@@ -97,7 +115,7 @@ const rainbow: EffectDef = {
 };
 
 const sweep: EffectDef = {
-  id: 'sweep', name: 'Sweep', description: 'A band of colour travels across the house.',
+  id: 'sweep', category: 'Chase & Running', name: 'Sweep', description: 'A band of colour travels across the house.',
   params: [
     { key: 'color', label: 'Colour', type: 'color', default: '#ffffff' },
     { key: 'background', label: 'Background', type: 'color', default: '#000000' },
@@ -134,7 +152,7 @@ const sweep: EffectDef = {
 };
 
 const twinkle: EffectDef = {
-  id: 'twinkle', name: 'Twinkle', description: 'Random pixels sparkle and fade.',
+  id: 'twinkle', category: 'Twinkle & Sparkle', name: 'Twinkle', description: 'Random pixels sparkle and fade.',
   params: [
     { key: 'color', label: 'Colour', type: 'color', default: '#fff4d6' },
     { key: 'background', label: 'Background', type: 'color', default: '#000000' },
@@ -160,7 +178,7 @@ const twinkle: EffectDef = {
 };
 
 const noise: EffectDef = {
-  id: 'noise', name: 'Aurora', description: 'Smooth drifting 3D noise blended between two colours.',
+  id: 'noise', category: 'Noise & Flow', name: 'Aurora', description: 'Smooth drifting 3D noise blended between two colours.',
   params: [
     { key: 'colorA', label: 'Colour A', type: 'color', default: '#00ff66' },
     { key: 'colorB', label: 'Colour B', type: 'color', default: '#0033ff' },
@@ -187,7 +205,7 @@ const noise: EffectDef = {
 };
 
 const stripes: EffectDef = {
-  id: 'stripes', name: 'Candy cane', description: 'Moving diagonal stripes of two colours.',
+  id: 'stripes', category: 'Waves & Patterns', name: 'Candy cane', description: 'Moving diagonal stripes of two colours.',
   params: [
     { key: 'colorA', label: 'Colour A', type: 'color', default: '#ff0000' },
     { key: 'colorB', label: 'Colour B', type: 'color', default: '#ffffff' },
@@ -214,7 +232,7 @@ const stripes: EffectDef = {
 };
 
 const ripple: EffectDef = {
-  id: 'ripple', name: 'Ripple', description: 'Rings expand outward from a point.',
+  id: 'ripple', category: 'Waves & Patterns', name: 'Ripple', description: 'Rings expand outward from a point.',
   params: [
     { key: 'color', label: 'Colour', type: 'color', default: '#3fa9ff' },
     { key: 'background', label: 'Background', type: 'color', default: '#000000' },
