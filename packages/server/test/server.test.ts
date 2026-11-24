@@ -116,6 +116,24 @@ describe('Blind / Live editing and the web UI', () => {
     expect((await app.server.inject('/api/status')).json().stage).toEqual({ scene: 'Red', dirty: false });
   });
 
+  it('GET /api/stage returns the scene the porch is running, even when Blind edits are pending', async () => {
+    const { app } = await makeApp();
+    await app.server.inject({ method: 'PUT', url: '/api/scenes/Red?apply=false', payload: blue });
+    const stage = (await app.server.inject('/api/stage')).json();
+    expect(stage.name).toBe('Red');
+    expect(stage.layers[0].params.color).toBe('#ff0000');
+    await app.server.inject({ method: 'POST', url: '/api/blackout' });
+    expect((await app.server.inject('/api/stage')).json()).toEqual({ name: 'Blackout', layers: [] });
+  });
+
+  it('a scene saved without defaults filled in is not reported as edited once it is on stage', async () => {
+    // Scenes from older configs omit opacity, blend, etc.; the running copy has them filled in.
+    const { app } = await makeApp({ scenes: { Bare: { name: 'Bare', layers: [{ id: 'l', effect: 'solid' }] } }, activeScene: 'Bare' });
+    expect((await app.server.inject('/api/status')).json().stage).toEqual({ scene: 'Bare', dirty: false });
+    await app.server.inject({ method: 'POST', url: '/api/scenes/Bare/activate' });
+    expect((await app.server.inject('/api/status')).json().stage).toEqual({ scene: 'Bare', dirty: false });
+  });
+
   it('a Live save (the default) updates the stage at once', async () => {
     const { app } = await makeApp();
     await app.server.inject({ method: 'PUT', url: '/api/scenes/Red', payload: blue });

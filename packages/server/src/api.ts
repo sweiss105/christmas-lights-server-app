@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { buildLayout, Engine, EFFECTS, LayoutError, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { OutputLoop } from './output.js';
 import { saveState, type ShowState } from './store.js';
 import { discover, getInfo, getPresets, releaseToPreset } from './wled.js';
@@ -56,7 +56,9 @@ export async function createApp(opts: AppOptions): Promise<App> {
   /** True when the saved copy of the stage scene has Blind edits that are not on the porch yet. */
   const stageDirty = () => {
     const saved = state.activeScene ? state.scenes[state.activeScene] : undefined;
-    return !!saved && JSON.stringify(saved) !== JSON.stringify(engine.scene);
+    if (!saved) return false;
+    // Compare normalised forms: older saved scenes omit defaults that the running copy has filled in.
+    try { return JSON.stringify(validateScene(saved, engine.layout)) !== JSON.stringify(engine.scene); } catch { return true; }
   };
 
   server.get('/api/status', async () => ({
@@ -66,6 +68,9 @@ export async function createApp(opts: AppOptions): Promise<App> {
     output: { ...engine.output, enabled: state.output.enabled },
     stream: output.stats(),
   }));
+
+  /** The scene the porch is running now (may differ from the saved copy while Blind edits are pending). */
+  server.get('/api/stage', async () => engine.scene);
 
   /** Effect time in seconds, so a browser preview can render the same frame the porch shows. */
   server.get('/api/clock', async () => ({ t: output.now() }));
@@ -202,7 +207,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
 
   // ---- web UI -------------------------------------------------------------
   if (opts.webRoot && existsSync(opts.webRoot)) {
-    await server.register(fastifyStatic, { root: opts.webRoot, wildcard: false });
+    // Files are looked up per request, so a rebuilt UI is served without restarting.
+    await server.register(fastifyStatic, { root: opts.webRoot });
   }
   // Unknown /api routes are 404 JSON, never the UI. The token hook above runs first for /api.
   server.setNotFoundHandler((req, reply) => { reply.code(404).send({ error: `no route ${req.method} ${req.url.split('?')[0]}` }); });
