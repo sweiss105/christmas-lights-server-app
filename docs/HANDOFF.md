@@ -82,14 +82,20 @@ Steps 1–6 pass on the real porch controller.
 - **Crossfade on Go and Blackout** (`output.transition`, default 1 s).
 - **Palette picker** with gradients.
 
-**WLED effects:** being ported from WLED v16.0.1, the controller's firmware. The project is EUPL-1.2 as a result (`LICENSE`, `NOTICE`).
+**WLED effects: done.** 175 effects ported from WLED v16.0.1, the controller's firmware: 126 1D, 53 2D (drawn over the house front) and 23 particle effects, plus Scrolling Text with WLED's fonts.
+- The project is EUPL-1.2 as a result (`LICENSE`, `NOTICE`).
 - The compatibility layer is in `packages/engine/src/wled/`; read `PORTING.md` there.
-- The five family files `effects/fx1d-a|b|c.ts`, `fx2d.ts` and `particles.ts` were ported by parallel agents. Batch A (38) is committed.
-- Microphone effects are excluded, as are Copy Segment and Image. Scrolling Text is deferred because it needs WLED's font data.
+- Excluded: the 37 microphone effects (owner's choice), Copy Segment (no segments here) and Image (needs an upload feature).
+- New WLED layers start on the Party palette when the effect names none (owner's choice).
+
+**Also done:**
+- Mask and inverted-mask blend modes, plus clipping masks (`maskScope: 'layer'`).
+- The staged scene survives restarts (`state.stage`).
+- A phone layout with a bottom sheet.
+- `XMAS_TZ` sets the time zone for `#TIME`; it's UTC until the owner gives a zone.
 
 **Still open:**
 - The PR for Phase 2: the owner wants it once the house scan is in.
-- The phone layout (Phase 5).
 - Engine tests fail to load while effect files are half-written. Verify agent work in a clean worktree (`git worktree add` + `npm ci`) before committing.
 
 ## Known gaps and things to watch
