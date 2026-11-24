@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EFFECTS, resolveParams, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
+import { uniqueName, type SceneEditor } from './editor';
+import { EditorPanel } from './EditorPanel';
 import { latestWins } from './latest';
 import { Preview, type CameraPreset } from './Preview';
+import { useSceneEditor, type EditMode } from './useSceneEditor';
 import { useShow, type Show } from './useShow';
 
 type View = 'preview' | 'stage';
@@ -15,23 +18,34 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<View>('preview');
   const [preset, setPreset] = useState<{ name: CameraPreset; nonce: number }>({ name: 'angle', nonce: 0 });
-  const leftInset = useLeftInset(!!layout && !!status);
+  const leftInset = useInset('.scenes', 'left', !!layout && !!status);
 
   const stageName = status?.stage.scene ?? null;
   useEffect(() => { if (selected === null && status) setSelected(stageName ?? scenes[0]?.name ?? null); }, [selected, status, stageName, scenes]);
 
+  const [mode, setMode] = useState<EditMode>('blind');
+  const editor = useSceneEditor(show, selected, mode);
+  const rightInset = useInset('.editor', 'right', !!layout && !!status);
+  useHistoryKeys(editor);
+
   const selectedScene = scenes.find((s) => s.name === selected) ?? null;
-  const shownScene = view === 'stage' ? stage : selectedScene;
+  // The preview shows the working copy, so edits appear instantly, before the save round trip.
+  const working = editor.scene.name === selected ? editor.scene : selectedScene;
+  const shownScene = view === 'stage' ? stage : working;
+
+  const sceneActions = useSceneActions(show, editor, setSelected);
 
   if (!layout || !status) return <Loading show={show} />;
 
   return (
-    <div className="app">
-      <Preview layout={layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} />
+    <div className={`app ${mode === 'live' ? 'live-armed' : ''}`}>
+      <Preview layout={layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset} />
 
-      <TopBar show={show} />
+      <TopBar show={show} mode={mode} />
 
-      <ScenePanel show={show} selected={selected} onSelect={(n) => { setSelected(n); setView('preview'); }} />
+      <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); }} />
+
+      <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />
 
       <div className="viewbar glass" role="toolbar" aria-label="Preview">
         <Segmented
@@ -63,23 +77,89 @@ export function App() {
   );
 }
 
-/** Width of the scene panel plus its margins, tracked through resizes. */
-function useLeftInset(ready: boolean) {
+/** How much of the window's width a side panel covers (plus margin), tracked through resizes. */
+function useInset(selector: string, side: 'left' | 'right', ready: boolean) {
   const [inset, setInset] = useState(0);
   useEffect(() => {
     if (!ready) return;
     const measure = () => {
-      const panel = document.querySelector('.scenes');
-      setInset(panel ? panel.getBoundingClientRect().right + 12 : 0);
+      const r = document.querySelector(selector)?.getBoundingClientRect();
+      setInset(!r || r.width === 0 ? 0 : side === 'left' ? r.right + 12 : window.innerWidth - r.left + 12);
     };
     measure();
     const ro = new ResizeObserver(measure);
-    const panel = document.querySelector('.scenes');
+    const panel = document.querySelector(selector);
     if (panel) ro.observe(panel);
     window.addEventListener('resize', measure);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [ready]);
+  }, [selector, side, ready]);
   return inset;
+}
+
+/** ⌘Z / Ctrl+Z undo, ⇧⌘Z / Ctrl+Y redo, unless typing in a text field. */
+function useHistoryKeys(editor: SceneEditor) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); editor.undo(); }
+      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); editor.redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editor]);
+}
+
+export interface SceneActions {
+  create: () => Promise<void>;
+  duplicate: () => Promise<void>;
+  remove: (name: string) => Promise<void>;
+  rename: (newName: string) => Promise<boolean>;
+}
+
+/** New, duplicate, rename and delete. All are Blind saves: none of them changes the porch. */
+function useSceneActions(show: Show, editor: SceneEditor, select: (n: string | null) => void): SceneActions {
+  const names = () => show.scenes.map((s) => s.name);
+  const saveNew = async (scene: SceneConfig) => {
+    const saved = await api.saveScene(scene, false);
+    show.markSceneSaved(saved);
+    select(saved.name);
+  };
+  return {
+    create: () => saveNew({
+      name: uniqueName('New scene', names()),
+      layers: [{ id: 'solid', effect: 'solid', params: { color: '#ffb46b' } }],
+    }).catch(show.reportError),
+    duplicate: async () => {
+      const src = editor.scene;
+      if (!src.name) return;
+      await saveNew({ ...structuredClone(src), name: uniqueName(src.name, names()) }).catch(show.reportError);
+    },
+    remove: async (name) => {
+      if (show.status?.stage.scene === name) { show.reportError(new Error(`“${name}” is on stage. Go to another scene first, then delete it.`)); return; }
+      if (!window.confirm(`Delete the scene “${name}”? This can’t be undone.`)) return;
+      try {
+        await api.deleteScene(name);
+        await show.refresh();
+        select(null);
+      } catch (e) { show.reportError(e); }
+    },
+    rename: async (newName) => {
+      const old = editor.scene;
+      if (names().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
+      if (show.status?.stage.scene === old.name) { show.reportError(new Error('This scene is on stage. Go to another scene first, then rename it.')); return false; }
+      try {
+        await api.saveScene({ ...old, name: newName }, false);
+        await api.deleteScene(old.name);
+        await show.refresh();
+        select(newName);
+        return true;
+      } catch (e) { show.reportError(e); return false; }
+    },
+  };
 }
 
 function Loading({ show }: { show: Show }) {
@@ -93,7 +173,7 @@ function Loading({ show }: { show: Show }) {
 
 // ---------------------------------------------------------------------------------------------
 
-function TopBar({ show }: { show: Show }) {
+function TopBar({ show, mode }: { show: Show; mode: EditMode }) {
   const status = show.status!;
   const streaming = status.output.enabled;
   return (
@@ -102,6 +182,7 @@ function TopBar({ show }: { show: Show }) {
         <span className="brand-mark" aria-hidden />
         <h1>Porch Lights</h1>
       </div>
+      {mode === 'live' && <span className="live-badge" role="status" title="Live is armed: edits to the scene on stage go to the porch immediately">LIVE</span>}
       <StagePill show={show} />
       <div className="spacer" />
       <Brightness show={show} />
@@ -176,7 +257,7 @@ function StreamingSwitch({ show }: { show: Show }) {
 
 // ---------------------------------------------------------------------------------------------
 
-function ScenePanel({ show, selected, onSelect }: { show: Show; selected: string | null; onSelect: (name: string) => void }) {
+function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; mode: EditMode; selected: string | null; actions: SceneActions; onSelect: (name: string) => void }) {
   const status = show.status!;
   const stageName = status.stage.scene;
   const [going, setGoing] = useState(false);
@@ -193,7 +274,15 @@ function ScenePanel({ show, selected, onSelect }: { show: Show; selected: string
     <aside className="scenes glass" aria-label="Scenes">
       <div className="panel-head">
         <h2>Scenes</h2>
-        <span className="mode-tag" title="Picking a scene previews it here first. Go sends it to the porch.">Blind</span>
+        {mode === 'live'
+          ? <span className="mode-tag live" title="Live: edits to the scene on stage go to the porch immediately.">Live</span>
+          : <span className="mode-tag" title="Blind: edits are saved but the porch only changes when you press Go.">Blind</span>}
+      </div>
+      <div className="scene-tools">
+        <button className="btn small" onClick={() => void actions.create()}>+ New</button>
+        <button className="btn small ghost" disabled={!selected} onClick={() => void actions.duplicate()}>Duplicate</button>
+        <button className="btn small ghost danger-quiet" disabled={!selected || selected === stageName} title={selected === stageName ? 'The scene on stage can’t be deleted' : undefined}
+          onClick={() => selected && void actions.remove(selected)}>Delete</button>
       </div>
       <ul className="scene-list" role="listbox" aria-label="Scenes" aria-activedescendant={selected ? `scene-${selected}` : undefined}>
         {show.scenes.map((s) => (

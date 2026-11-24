@@ -1,4 +1,6 @@
-import type { LayoutConfig, SceneConfig } from '@xmas/engine';
+import type { LayoutConfig, ParamSpec, SceneConfig } from '@xmas/engine';
+
+export interface EffectInfo { id: string; name: string; description: string; params: ParamSpec[] }
 
 export interface ControllerHealth {
   id: string;
@@ -47,6 +49,11 @@ export const api = {
   layout: () => call<LayoutConfig>('GET', '/api/layout'),
   scenes: () => call<{ active: string | null; scenes: SceneConfig[] }>('GET', '/api/scenes'),
   stage: () => call<SceneConfig>('GET', '/api/stage'),
+  groups: () => call<{ name: string; pixels: number }[]>('GET', '/api/groups'),
+  effects: () => call<EffectInfo[]>('GET', '/api/effects'),
+  /** Save a scene. Blind (apply=false) leaves the porch alone; Live (apply=true) updates it if the scene is on stage. */
+  saveScene: (scene: SceneConfig, apply: boolean) => call<SceneConfig>('PUT', `/api/scenes/${enc(scene.name)}?apply=${apply}`, { layers: scene.layers }),
+  deleteScene: (name: string) => call<{ deleted: string }>('DELETE', `/api/scenes/${enc(name)}`),
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),

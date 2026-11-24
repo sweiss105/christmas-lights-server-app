@@ -12,15 +12,16 @@ interface PreviewProps {
   scene: SceneConfig | null;
   clock: ServerClock;
   preset: { name: CameraPreset; nonce: number };
-  /** Pixels covered by the side panel on the left; the view is centred in the space beside it. */
+  /** Pixels covered by side panels; the view is centred in the space between them. */
   leftInset?: number;
+  rightInset?: number;
 }
 
 const BACKGROUND = '#06080d';
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** The 3D preview: the porch's pixels, rendered in the browser by the same engine as the porch. */
-export function Preview({ layout, scene, clock, preset, leftInset = 0 }: PreviewProps) {
+export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0 }: PreviewProps) {
   const built = useMemo(() => buildLayout(layout), [layout]);
   return (
     <Canvas
@@ -34,21 +35,22 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0 }: Preview
       <Ground layout={built} />
       <Wires layout={layout} />
       <Pixels layout={built} scene={scene} clock={clock} />
-      <Camera layout={built} preset={preset} leftInset={leftInset} />
-      <ViewOffset left={leftInset} />
+      <Camera layout={built} preset={preset} hidden={leftInset + rightInset} />
+      <ViewOffset left={leftInset} right={rightInset} />
     </Canvas>
   );
 }
 
-/** Shifts the projection so the scene centres in the area not covered by the side panel. */
-function ViewOffset({ left }: { left: number }) {
+/** Shifts the projection so the scene centres in the area between the side panels. */
+function ViewOffset({ left, right }: { left: number; right: number }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
   useEffect(() => {
-    if (left > 0 && left < size.width / 2) camera.setViewOffset(size.width, size.height, -left / 2, 0, size.width, size.height);
+    const shift = (left - right) / 2;
+    if (shift !== 0 && left + right < size.width * 0.8) camera.setViewOffset(size.width, size.height, -shift, 0, size.width, size.height);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
-  }, [camera, size, left]);
+  }, [camera, size, left, right]);
   return null;
 }
 
@@ -181,7 +183,7 @@ function layoutBox(layout: Layout): THREE.Box3 {
   return box;
 }
 
-function Camera({ layout, preset, leftInset }: { layout: Layout; preset: { name: CameraPreset; nonce: number }; leftInset: number }) {
+function Camera({ layout, preset, hidden: hiddenPx }: { layout: Layout; preset: { name: CameraPreset; nonce: number }; hidden: number }) {
   const ref = useRef<CameraControls>(null);
   const first = useRef(true);
   const width = useThree((s) => s.size.width);
@@ -192,8 +194,8 @@ function Camera({ layout, preset, leftInset }: { layout: Layout; preset: { name:
     const box = layoutBox(layout);
     const size = box.getSize(new THREE.Vector3());
     const pad = Math.max(size.x, size.y, 1) * p.padding;
-    // The side panel hides part of the width, so fit as if the view were that much narrower.
-    const hidden = width > 0 ? Math.min(0.45, leftInset / width) : 0;
+    // Side panels hide part of the width, so fit as if the view were that much narrower.
+    const hidden = width > 0 ? Math.min(0.7, hiddenPx / width) : 0;
     const side = pad + (size.x * hidden) / (2 * (1 - hidden));
     // Glide between presets. Interruptible: grabbing the view mid-move takes over at once.
     const animate = !first.current && !reducedMotion();
@@ -202,7 +204,7 @@ function Camera({ layout, preset, leftInset }: { layout: Layout; preset: { name:
     void controls.fitToBox(box, animate, { paddingLeft: side, paddingRight: side, paddingTop: pad, paddingBottom: pad });
     void controls.rotateTo(p.azimuth, p.polar, animate);
     first.current = false;
-  }, [layout, preset, leftInset, width]);
+  }, [layout, preset, hiddenPx, width]);
   return (
     <CameraControls
       ref={ref}

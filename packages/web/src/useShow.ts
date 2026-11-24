@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutConfig, SceneConfig } from '@xmas/engine';
 import { api, type Status } from './api';
 import { ServerClock } from './clock';
@@ -15,6 +15,8 @@ export interface Show {
   reportError: (e: unknown) => void;
   clearError: () => void;
   refresh: () => Promise<void>;
+  /** Record a scene the editor just saved, without reloading everything. */
+  markSceneSaved: (scene: SceneConfig) => void;
 }
 
 const POLL_MS = 1000;
@@ -68,8 +70,21 @@ export function useShow(): Show {
     return () => { stop = true; clearInterval(poll); clearInterval(resync); document.removeEventListener('visibilitychange', onVisible); };
   }, [refresh, pollStatus, reportError]);
 
-  return {
+  const markSceneSaved = useCallback((scene: SceneConfig) => {
+    setScenes((prev) => {
+      const i = prev.findIndex((s) => s.name === scene.name);
+      if (i < 0) return [...prev, scene];
+      const next = [...prev];
+      next[i] = scene;
+      return next;
+    });
+    void pollStatus();
+  }, [pollStatus]);
+
+  const clearError = useCallback(() => setError(null), []);
+
+  return useMemo(() => ({
     layout, scenes, status, stage, clock: clockRef.current, connected, error,
-    reportError, clearError: () => setError(null), refresh,
-  };
+    reportError, clearError, refresh, markSceneSaved,
+  }), [layout, scenes, status, stage, connected, error, reportError, clearError, refresh, markSceneSaved]);
 }
