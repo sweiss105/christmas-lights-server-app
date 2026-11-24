@@ -14,6 +14,10 @@ export function HouseModel({ house, onPick }: { house: House; onPick?: (p: [numb
   return (
     <group position={house.position} rotation-y={(house.rotation * Math.PI) / 180} scale={house.scale}
       onClick={onPick ? (e) => { if (e.delta > 6) return; e.stopPropagation(); onPick([e.point.x, Math.max(0, e.point.y), e.point.z]); } : undefined}>
+      {/* Light for clay-look models (scans use unlit materials and ignore it): soft sky light plus a low moon from front left. */}
+      <hemisphereLight args={[0xb8c4e0, 0x1a1712, 0.45]} />
+      <directionalLight position={[-6, 9, 8]} intensity={0.65} color={0xe8ecf8} />
+      <directionalLight position={[7, 4, 5]} intensity={0.18} color={0xffe2c0} />
       {parts.map((p) => (
         <group key={p.id} position={p.position} rotation-y={(p.rotation * Math.PI) / 180} scale={p.scale}>
           <Suspense fallback={null}>
@@ -26,38 +30,71 @@ export function HouseModel({ house, onPick }: { house: House; onPick?: (p: [numb
 }
 
 const NIGHT = 0.32; // how much of the daylight colour survives
+const CLAY = new THREE.Color(0.5, 0.48, 0.45); // warm grey
+const CLAY_TINT = 0.3; // how much of a part's own colour shows through the clay
+const EDGE_MAX_TRIS = 3000; // outline only simple, built shapes; leave bushes and ground smooth
 
-/** One scan. Scans carry baked daylight textures, so materials become unlit ones that keep the texture but darken it. */
+/**
+ * One model. Photo scans carry baked daylight textures, so their materials become unlit ones that
+ * keep the texture but darken it. Models without textures (built from parts) get a matte, lit clay
+ * look, slightly tinted by each part's colour, with faint outlines on hard edges, so walls, roof,
+ * railings and steps read as separate shapes.
+ */
 function Model({ url, opacity }: { url: string; opacity: number }) {
   // No Draco (its decoder would load from a CDN); meshopt compression is supported without one.
   const gltf = useGLTF(url, false, true);
   const scene = useMemo(() => {
     const root = gltf.scene.clone(true);
+    const edges: [THREE.Mesh, THREE.LineSegments][] = []; // added after the walk, which mustn't visit them
     root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       const old = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial | undefined;
-      mesh.material = new THREE.MeshBasicMaterial({
-        map: old?.map ?? null,
-        color: old?.map ? new THREE.Color(NIGHT, NIGHT, NIGHT * 1.15) : new THREE.Color(0.09, 0.1, 0.13),
-        vertexColors: !old?.map && !!mesh.geometry.getAttribute('color'),
-        transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: true,
+      if (old?.map) {
+        mesh.material = new THREE.MeshBasicMaterial({
+          map: old.map, color: new THREE.Color(NIGHT, NIGHT, NIGHT * 1.15), transparent: true, side: THREE.DoubleSide, depthWrite: true,
+        });
+        return;
+      }
+      const tint = old?.color ? old.color.clone() : CLAY.clone();
+      mesh.material = new THREE.MeshStandardMaterial({
+        color: CLAY.clone().lerp(tint, CLAY_TINT),
+        vertexColors: !!mesh.geometry.getAttribute('color'),
+        roughness: 1, metalness: 0,
+        flatShading: !mesh.geometry.getAttribute('normal'), // built models often ship without normals
+        transparent: true, side: THREE.DoubleSide,
       });
+      const tris = (mesh.geometry.index?.count ?? mesh.geometry.getAttribute('position').count) / 3;
+      if (tris <= EDGE_MAX_TRIS) {
+        const line = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 30),
+          new THREE.LineBasicMaterial({ color: 0x0b0c10, transparent: true, opacity: 0.45 }));
+        line.userData.baseOpacity = 0.45;
+        line.raycast = () => {}; // clicks (placing points) land on the surfaces, not the outlines
+        edges.push([mesh, line]);
+      }
     });
+    for (const [mesh, line] of edges) mesh.add(line);
     return root;
   }, [gltf]);
 
   useEffect(() => {
     scene.traverse((o) => {
-      const m = (o as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
-      if (m && 'opacity' in m) { m.opacity = opacity; m.depthWrite = opacity > 0.95; m.needsUpdate = true; }
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (!m) return;
+      const base = (o.userData.baseOpacity as number | undefined) ?? 1;
+      m.opacity = opacity * base;
+      // Lit (clay) surfaces keep writing depth so overlapping parts don't show through each other.
+      if (!(o as THREE.LineSegments).isLineSegments) m.depthWrite = opacity > 0.95 || m instanceof THREE.MeshStandardMaterial;
+      m.needsUpdate = true;
     });
   }, [scene, opacity]);
 
   useEffect(() => () => {
-    scene.traverse((o) => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; m?.dispose(); });
+    scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      m?.dispose();
+      if ((o as THREE.LineSegments).isLineSegments) (o as THREE.LineSegments).geometry.dispose();
+    });
   }, [scene]);
 
   return <primitive object={scene} />;
