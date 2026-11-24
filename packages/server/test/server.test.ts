@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -10,7 +10,7 @@ import { fakeDdpReceiver, fakeWledHttp } from './helpers.js';
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()!(); });
 
-async function makeApp(over: Partial<ShowState> = {}, apiToken?: string) {
+async function makeApp(over: Partial<ShowState> = {}, apiToken?: string, webRoot?: string) {
   const dir = await mkdtemp(join(tmpdir(), 'xmas-'));
   const state: ShowState = {
     layout: {
@@ -23,7 +23,7 @@ async function makeApp(over: Partial<ShowState> = {}, apiToken?: string) {
     ...over,
   };
   const statePath = join(dir, 'state.json');
-  const app: App = await createApp({ state, statePath, apiToken });
+  const app: App = await createApp({ state, statePath, apiToken, webRoot });
   cleanups.push(() => app.server.close());
   return { app, statePath, state };
 }
@@ -96,6 +96,58 @@ describe('WLED client', () => {
     });
     await app.output.stopStreaming(true);
     expect(w.posts).toEqual([{ live: false, on: true, ps: 4 }]);
+  });
+});
+
+describe('Blind / Live editing and the web UI', () => {
+  const blue = { layers: [{ id: 'l', effect: 'solid', params: { color: '#0000ff' } }] };
+  const firstPixel = async (app: App) => [...(await app.server.inject('/api/frame')).rawPayload.subarray(0, 3)];
+
+  it('a Blind save (apply=false) updates the saved scene but not the stage, and Go puts it on stage', async () => {
+    const { app, statePath } = await makeApp();
+    const put = await app.server.inject({ method: 'PUT', url: '/api/scenes/Red?apply=false', payload: blue });
+    expect(put.statusCode).toBe(200);
+    expect(await firstPixel(app)).toEqual([255, 0, 0]); // porch unchanged
+    expect(JSON.parse(await readFile(statePath, 'utf8')).scenes.Red.layers[0].params.color).toBe('#0000ff'); // but saved
+    expect((await app.server.inject('/api/status')).json().stage).toEqual({ scene: 'Red', dirty: true });
+
+    expect((await app.server.inject({ method: 'POST', url: '/api/scenes/Red/activate' })).statusCode).toBe(200); // Go
+    expect(await firstPixel(app)).toEqual([0, 0, 255]);
+    expect((await app.server.inject('/api/status')).json().stage).toEqual({ scene: 'Red', dirty: false });
+  });
+
+  it('a Live save (the default) updates the stage at once', async () => {
+    const { app } = await makeApp();
+    await app.server.inject({ method: 'PUT', url: '/api/scenes/Red', payload: blue });
+    expect(await firstPixel(app)).toEqual([0, 0, 255]);
+    expect((await app.server.inject('/api/status')).json().stage).toEqual({ scene: 'Red', dirty: false });
+  });
+
+  it('rejects an apply value other than true or false', async () => {
+    const { app } = await makeApp();
+    expect((await app.server.inject({ method: 'PUT', url: '/api/scenes/Red?apply=maybe', payload: blue })).statusCode).toBe(400);
+  });
+
+  it('exposes the effect clock so the browser preview can stay in step with the porch', async () => {
+    const { app } = await makeApp();
+    const a = (await app.server.inject('/api/clock')).json().t;
+    await new Promise((r) => setTimeout(r, 30));
+    const b = (await app.server.inject('/api/clock')).json().t;
+    expect(typeof a).toBe('number');
+    expect(b - a).toBeGreaterThan(0.02);
+    expect(b - a).toBeLessThan(1);
+  });
+
+  it('serves the built web UI at / without requiring the API token, and still protects /api', async () => {
+    const webRoot = await mkdtemp(join(tmpdir(), 'xmas-web-'));
+    await writeFile(join(webRoot, 'index.html'), '<!doctype html><title>Lights</title>');
+    const { app } = await makeApp({}, 's3cret', webRoot);
+    const page = await app.server.inject('/');
+    expect(page.statusCode).toBe(200);
+    expect(page.headers['content-type']).toMatch(/text\/html/);
+    expect(page.body).toContain('<title>Lights</title>');
+    expect((await app.server.inject('/api/status')).statusCode).toBe(401);
+    expect((await app.server.inject('/api/nope')).statusCode).toBe(401);
   });
 });
 
