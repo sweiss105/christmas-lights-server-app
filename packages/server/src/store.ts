@@ -24,7 +24,8 @@ export interface ShowState {
   layout: LayoutConfig;
   scenes: Record<string, SceneConfig>;
   activeScene: string | null;
-  output: OutputSettings & { fps: number; enabled: boolean };
+  /** `transition`: seconds Go and Blackout crossfade over (0 = cut); missing in older state files. */
+  output: OutputSettings & { fps: number; enabled: boolean; transition?: number };
   /** 3D house model (a phone scan) and how it lines up with the lights. */
   house?: HouseConfig;
   /** Layer presets by name. Missing in state files from before presets existed. */

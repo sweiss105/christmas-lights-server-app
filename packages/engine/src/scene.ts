@@ -72,6 +72,8 @@ export class Engine {
   private layers: CompiledLayer[] = [];
   private acc: Float32Array;
   private tmp: Float32Array;
+  /** Crossfade in progress: the layers being faded out. `start` is set on the first frame after the change. */
+  private fade: { from: CompiledLayer[]; duration: number; start: number | null; acc: Float32Array } | null = null;
   readonly frame: Uint8Array;
   private gammaLut = new Uint8Array(4096);
   private settings: OutputSettings = { brightness: 1, gamma: 2.2 };
@@ -84,8 +86,12 @@ export class Engine {
     this.setOutput({});
   }
 
-  setScene(scene: SceneConfig): SceneConfig {
+  /** Switch scene. With `fade` (seconds) the old scene crossfades into the new one. */
+  setScene(scene: SceneConfig, opts: { fade?: number } = {}): SceneConfig {
     const valid = validateScene(scene, this.layout);
+    const fade = opts.fade ?? 0;
+    // Fade from what's on screen now; if a fade is already running, from the scene it was heading to.
+    this.fade = fade > 0 ? { from: this.layers, duration: fade, start: null, acc: this.fade?.acc ?? new Float32Array(this.layout.count * 3) } : null;
     this.layers = valid.layers.filter((l) => l.enabled).map((l) => ({
       render: EFFECTS[l.effect]!.create(l.params!, this.layout),
       mask: this.layout.groups.get(l.group!)!,
@@ -108,10 +114,11 @@ export class Engine {
   }
 
   /** Render the frame for time t (seconds). Returns the shared frame buffer. */
-  render(t: number): Uint8Array {
-    const acc = this.acc, tmp = this.tmp, n = this.layout.count, mapped = this.layout.mapped;
+  /** Composite a layer stack into `acc` (linear 0..1). */
+  private composite(layers: CompiledLayer[], t: number, acc: Float32Array): void {
+    const tmp = this.tmp, n = this.layout.count;
     acc.fill(0);
-    for (const layer of this.layers) {
+    for (const layer of layers) {
       layer.render(t, tmp);
       const { mask, opacity: o, blend: mode } = layer;
       for (let i = 0; i < n; i++) {
@@ -120,6 +127,22 @@ export class Engine {
           const a = acc[c]!;
           acc[c] = a + (blend(mode, a, tmp[c]!) - a) * o;
         }
+      }
+    }
+  }
+
+  render(t: number): Uint8Array {
+    const acc = this.acc, n = this.layout.count, mapped = this.layout.mapped;
+    this.composite(this.layers, t, acc);
+    const fade = this.fade;
+    if (fade) {
+      if (fade.start === null) fade.start = t;
+      const f = (t - fade.start) / fade.duration;
+      if (f >= 1 || f < 0) this.fade = null;
+      else {
+        this.composite(fade.from, t, fade.acc);
+        const from = fade.acc;
+        for (let c = 0; c < n * 3; c++) acc[c] = from[c]! + (acc[c]! - from[c]!) * f;
       }
     }
     const lut = this.gammaLut, frame = this.frame;

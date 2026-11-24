@@ -35,6 +35,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
   }
   const output = new OutputLoop(() => engine, state.output.fps);
   const persist = () => saveState(opts.statePath, state);
+  /** Crossfade time for Go and Blackout. Live edits never fade. */
+  const fadeSeconds = () => state.output.transition ?? 1;
 
   const server = Fastify({ logger: opts.logger ?? false });
 
@@ -67,7 +69,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     scene: state.activeScene,
     stage: { scene: state.activeScene, dirty: stageDirty() },
     pixels: engine.layout.count,
-    output: { ...engine.output, enabled: state.output.enabled },
+    output: { ...engine.output, enabled: state.output.enabled, transition: fadeSeconds() },
     stream: output.stats(),
   }));
 
@@ -135,14 +137,14 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.post<{ Params: { name: string } }>('/api/scenes/:name/activate', async (req) => {
     const s = state.scenes[req.params.name];
     if (!s) throw new HttpError(404, 'no such scene');
-    try { engine.setScene(s); } catch (e) { throw bad(e); }
+    try { engine.setScene(s, { fade: fadeSeconds() }); } catch (e) { throw bad(e); }
     state.activeScene = s.name;
     await persist();
     return { active: s.name };
   });
 
   server.post('/api/blackout', async () => {
-    engine.setScene({ name: 'Blackout', layers: [] });
+    engine.setScene({ name: 'Blackout', layers: [] }, { fade: fadeSeconds() });
     state.activeScene = null;
     await persist();
     return { active: null };
@@ -274,7 +276,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
   });
 
   // ---- output -------------------------------------------------------------
-  server.get('/api/output', async () => ({ ...engine.output, fps: output.fps, enabled: state.output.enabled }));
+  server.get('/api/output', async () => ({ ...engine.output, fps: output.fps, enabled: state.output.enabled, transition: fadeSeconds() }));
 
   server.patch<{ Body: Partial<ShowState['output']> }>('/api/output', async (req) => {
     const b = req.body ?? {};
@@ -283,11 +285,14 @@ export async function createApp(opts: AppOptions): Promise<App> {
       if (!Number.isInteger(b.fps) || b.fps < 1 || b.fps > 60) throw new HttpError(400, 'fps must be an integer 1..60');
       output.fps = b.fps;
     }
+    if (b.transition !== undefined) {
+      if (!Number.isFinite(b.transition) || b.transition < 0 || b.transition > 10) throw new HttpError(400, 'transition must be 0..10 seconds');
+    }
     if (b.enabled !== undefined) {
       if (typeof b.enabled !== 'boolean') throw new HttpError(400, 'enabled must be boolean');
       if (b.enabled) output.startStreaming(); else await output.stopStreaming();
     }
-    state.output = { ...engine.output, fps: output.fps, enabled: b.enabled ?? state.output.enabled };
+    state.output = { ...engine.output, fps: output.fps, enabled: b.enabled ?? state.output.enabled, transition: b.transition ?? state.output.transition ?? 1 };
     await persist();
     return state.output;
   });

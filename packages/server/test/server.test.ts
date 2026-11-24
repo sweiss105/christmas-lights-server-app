@@ -19,7 +19,7 @@ async function makeApp(over: Partial<ShowState> = {}, apiToken?: string, webRoot
     },
     scenes: { Red: { name: 'Red', layers: [{ id: 'l', effect: 'solid', params: { color: '#ff0000' } }] } },
     activeScene: 'Red',
-    output: { brightness: 1, gamma: 1, fps: 40, enabled: false },
+    output: { brightness: 1, gamma: 1, fps: 40, enabled: false, transition: 0 }, // cut, unless a test is about fades
     ...over,
   };
   const statePath = join(dir, 'state.json');
@@ -166,6 +166,26 @@ describe('Blind / Live editing and the web UI', () => {
     expect(page.body).toContain('<title>Lights</title>');
     expect((await app.server.inject('/api/status')).statusCode).toBe(401);
     expect((await app.server.inject('/api/nope')).statusCode).toBe(401);
+  });
+});
+
+describe('crossfade on Go', () => {
+  it('Go fades over output.transition seconds; 0 cuts; the setting is validated and saved', async () => {
+    const { app } = await makeApp({
+      scenes: { Red: { name: 'Red', layers: [{ id: 'l', effect: 'solid', params: { color: '#ff0000' } }] }, Blue: { name: 'Blue', layers: [{ id: 'l', effect: 'solid', params: { color: '#0000ff' } }] } },
+      output: { brightness: 1, gamma: 1, fps: 40, enabled: false }, // no transition saved: the default applies
+    });
+    const px = async () => [...(await app.server.inject('/api/frame')).rawPayload.subarray(0, 3)];
+    expect((await app.server.inject('/api/output')).json().transition).toBe(1); // default
+    await px();
+    await app.server.inject({ method: 'POST', url: '/api/scenes/Blue/activate' });
+    expect(await px()).toEqual([255, 0, 0]); // first frame of the fade is still the old scene
+    await new Promise((r) => setTimeout(r, 1100));
+    expect(await px()).toEqual([0, 0, 255]);
+    expect((await app.server.inject({ method: 'PATCH', url: '/api/output', payload: { transition: 0 } })).json().transition).toBe(0);
+    await app.server.inject({ method: 'POST', url: '/api/scenes/Red/activate' });
+    expect(await px()).toEqual([255, 0, 0]); // cut
+    expect((await app.server.inject({ method: 'PATCH', url: '/api/output', payload: { transition: 60 } })).statusCode).toBe(400);
   });
 });
 

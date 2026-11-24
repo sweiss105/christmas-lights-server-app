@@ -418,3 +418,6 @@ h1, h2 { margin: 0; }
   border-radius: 14px; background: #121620; border: 1px solid var(--edge-top); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6); animation: pop-in 160ms ease-out; transform-origin: top center;
 }
 .palette-list { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; }
+
+.fade-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 10px; font-size: 0.82rem; color: var(--text-2); }
+.fade-row select { min-height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 0.85rem; }

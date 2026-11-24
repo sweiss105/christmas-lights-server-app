@@ -348,6 +348,13 @@ function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; m
       </ul>
       <div className="go-area">
         {!status.output.enabled && <p className="hint">Streaming is off, so the porch keeps its WLED playlist until you turn streaming on.</p>}
+        <label className="fade-row">
+          <span>Fade</span>
+          <select value={String(status.output.transition ?? 1)} aria-label="Crossfade time for Go"
+            onChange={(e) => api.setOutput({ transition: Number(e.target.value) }).then(show.refresh).catch(show.reportError)}>
+            {[0, 0.5, 1, 2, 3, 5].map((v) => <option key={v} value={String(v)}>{v === 0 ? 'Cut' : `${v} s`}</option>)}
+          </select>
+        </label>
         <button className="btn go" disabled={!selected || going || isOnStage} onClick={go}>
           {going ? 'Sending…' : isOnStage ? 'On stage' : <>Go <span className="go-target">{selected}</span></>}
         </button>

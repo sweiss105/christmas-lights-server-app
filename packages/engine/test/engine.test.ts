@@ -123,3 +123,36 @@ describe('engine', () => {
     expect(ms).toBeLessThan(8);
   });
 });
+
+describe('crossfade between scenes', () => {
+  const red = { name: 'Red', layers: [{ id: 'a', effect: 'solid', params: { color: '#ff0000' } }] };
+  const blue = { name: 'Blue', layers: [{ id: 'b', effect: 'solid', params: { color: '#0000ff' } }] };
+  const one = () => {
+    const e = new Engine(buildLayout({ controllers: [{ id: 'c', name: 'C', host: 'x', pixelCount: 1 }], runs: [{ id: 'r', controller: 'c', start: 0, count: 1, points: [[0, 0, 0]] }] }));
+    e.setOutput({ brightness: 1, gamma: 1 });
+    return e;
+  };
+
+  it('fades from the old scene to the new one over the given time, starting at the next frame', () => {
+    const e = one();
+    e.setScene(red);
+    e.render(10);
+    e.setScene(blue, { fade: 2 });
+    expect([...e.render(20)]).toEqual([255, 0, 0]); // the fade starts at the first frame after the change
+    expect([...e.render(21)]).toEqual([128, 0, 128]); // halfway
+    expect([...e.render(22)]).toEqual([0, 0, 255]);
+    expect([...e.render(30)]).toEqual([0, 0, 255]);
+  });
+
+  it('cuts when no fade is given, and a new change mid-fade starts from the scene being faded to', () => {
+    const e = one();
+    e.setScene(red);
+    e.setScene(blue);
+    expect([...e.render(1)]).toEqual([0, 0, 255]);
+    e.setScene(red, { fade: 1 });
+    e.render(2);
+    e.setScene(blue, { fade: 1 }); // interrupt: fade from red (the target) to blue
+    expect([...e.render(3)]).toEqual([255, 0, 0]);
+    expect([...e.render(3.5)]).toEqual([128, 0, 128]);
+  });
+});

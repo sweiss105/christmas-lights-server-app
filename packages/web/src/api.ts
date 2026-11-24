@@ -29,7 +29,7 @@ export interface Status {
   scene: string | null;
   stage: { scene: string | null; dirty: boolean };
   pixels: number;
-  output: { brightness: number; gamma: number; enabled: boolean };
+  output: { brightness: number; gamma: number; enabled: boolean; transition: number };
   stream: { running: boolean; targetFps: number; fps: number; renderMs: number; lateFrames: number; controllers: ControllerHealth[] };
 }
 
@@ -83,5 +83,5 @@ export const api = {
   /** Go: put a saved scene on the porch. */
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),
-  setOutput: (o: Partial<{ brightness: number; enabled: boolean; fps: number }>) => call<Status['output']>('PATCH', '/api/output', o),
+  setOutput: (o: Partial<{ brightness: number; enabled: boolean; fps: number; transition: number }>) => call<Status['output']>('PATCH', '/api/output', o),
 };
