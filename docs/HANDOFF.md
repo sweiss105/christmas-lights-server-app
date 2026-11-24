@@ -69,6 +69,29 @@ Steps 1–6 pass on the real porch controller.
 - **Docker:** the image builds, and the stop signal reaches the server through `npm` → `tsx` → `node`, with a clean exit 0. On the home server, port 8080 is taken by another service, so `.env` sets `XMAS_PORT=8090`. The compose file now reads `XMAS_PORT`.
 - **Watch for:** `output.enabled` is saved, so a restart resumes streaming if it was on. The container runs as root, so `data/show.json` becomes root-owned once the container saves it. Node on the home server is a per-user install in `~/.local/node`.
 
+## Phase 2 progress (2026-11-24, branch `phase-2-web-ui`)
+
+**Live:** xmas.weiss-audio.com (Cloudflare Access, owner only) serves the web UI from the container on port 8090. It's deployed from clean checkouts of committed code, and only while the owner isn't using the site.
+
+**Done and deployed:**
+- **M1:** 3D preview running the shared engine, in step with the server clock. Scenes list with Blind preview and Go, brightness, streaming switch, blackout, health.
+- **M2:** scene editor. Layers, effect settings generated from param specs, Blind/Live with a LIVE indicator, undo/redo, and new/duplicate/rename/delete scenes.
+- **Presets:** saved layer looks, `/api/presets`. A categorised, searchable layer picker.
+- **House model:** upload a `.glb` scan and align it with the lights (`/api/house`). The owner scans the house with an iPhone 17 Pro Max (Scaniverse); a stand-in model was used for testing.
+- **Layout editor:** runs, points, drag handles, draw on the house, reverse, save, and **Identify** (`/api/identify`, flashes a run while streaming).
+- **Crossfade on Go and Blackout** (`output.transition`, default 1 s).
+- **Palette picker** with gradients.
+
+**WLED effects:** being ported from WLED v16.0.1, the controller's firmware. The project is EUPL-1.2 as a result (`LICENSE`, `NOTICE`).
+- The compatibility layer is in `packages/engine/src/wled/`; read `PORTING.md` there.
+- The five family files `effects/fx1d-a|b|c.ts`, `fx2d.ts` and `particles.ts` were ported by parallel agents. Batch A (38) is committed.
+- Microphone effects are excluded, as are Copy Segment and Image. Scrolling Text is deferred because it needs WLED's font data.
+
+**Still open:**
+- The PR for Phase 2: the owner wants it once the house scan is in.
+- The phone layout (Phase 5).
+- Engine tests fail to load while effect files are half-written. Verify agent work in a clean worktree (`git worktree add` + `npm ci`) before committing.
+
 ## Known gaps and things to watch
 
 - **Health-check timing:** they run every 10 s via HTTP to `/json/info`, so a controller that was offline at startup shows `online:false` until the next check.
