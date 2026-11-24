@@ -92,8 +92,12 @@ describe('engine', () => {
     expect(e.scene.name).toBe('ok');
   });
 
-  /** Effects that, faithfully to WLED, show a still pattern with their default settings. */
-  const STATIC_BY_DEFAULT = new Set(['solid']);
+  /**
+   * Effects that, faithfully to WLED, show a still pattern with their default settings. With the
+   * "Default" palette (no pal= in WLED's metadata), Segment::color_from_palette returns colour 1, so
+   * e.g. Fill Noise is solid until a palette is chosen.
+   */
+  const STATIC_BY_DEFAULT = new Set(['solid', 'wled-fill-noise', 'wled-solid-pattern', 'wled-solid-pattern-tri', 'wled-spots']); // the last three are fixed patterns by design
 
   it('runs every effect with defaults, producing finite values that change over time', () => {
     const e = new Engine(buildLayout(cfg()));
