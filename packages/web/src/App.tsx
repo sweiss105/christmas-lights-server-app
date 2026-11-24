@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { EFFECTS, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { EFFECTS, paletteColors, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
 import { History, uniqueName, type SceneEditor } from './editor';
 import { appendPoint, setPoint } from './layoutOps';
@@ -367,8 +367,11 @@ function Swatch({ scene }: { scene: SceneConfig }) {
       if (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) && v.toLowerCase() !== '#000000' && !colors.includes(v)) colors.push(v);
     }
     if (l.effect === 'rainbow') colors.push('#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#bf5af2');
+    // Palette-based effects (most WLED ones): show the palette's colours.
+    const pal = def?.params.find((p) => p.type === 'palette');
+    if (pal && typeof params[pal.key] === 'string') for (const c of paletteColors(params[pal.key] as string, params, 5)) if (!colors.includes(c)) colors.push(c);
   }
-  const stops = colors.length ? colors.slice(0, 5) : ['#2a3142'];
+  const stops = colors.length ? colors.slice(0, 6) : ['#2a3142'];
   const bg = stops.length === 1 ? stops[0] : `linear-gradient(90deg, ${stops.join(', ')})`;
   return <span className="swatch" style={{ background: bg }} aria-hidden />;
 }

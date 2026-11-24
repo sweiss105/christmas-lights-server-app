@@ -402,3 +402,19 @@ h1, h2 { margin: 0; }
 .point-idx { font-size: 0.72rem; font-weight: 700; color: var(--text-2); }
 .btn.drawing { background: rgba(122, 162, 255, 0.25); border-color: rgba(122, 162, 255, 0.6); color: #cfdcff; }
 .caption.layout { color: #cfdcff; }
+
+/* ---- palette picker ------------------------------------------------------------------------ */
+.palette-field { position: relative; }
+.palette-current, .palette-option {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--hit); padding: 0 10px; border-radius: 10px;
+  border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 0.9rem; cursor: pointer; text-align: left;
+}
+.palette-option { border-color: transparent; background: transparent; min-height: 40px; }
+.palette-option:hover, .palette-option.selected { background: var(--fill-2); }
+.palette-strip { flex: none; width: 96px; height: 18px; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
+.palette-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-pop {
+  margin-top: 4px; padding: 8px; display: flex; flex-direction: column; gap: 8px;
+  border-radius: 14px; background: #121620; border: 1px solid var(--edge-top); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6); animation: pop-in 160ms ease-out; transform-origin: top center;
+}
+.palette-list { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; }

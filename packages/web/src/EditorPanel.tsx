@@ -3,7 +3,7 @@ import { BLEND_MODES, EFFECTS, buildLayout, resolveParams, type BlendMode, type 
 import { addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, updateLayer, type SceneEditor } from './editor';
 import { api, type Preset } from './api';
 import { LayerPicker } from './LayerPicker';
-import { listPalettes } from './palettes';
+import { PalettePicker } from './PalettePicker';
 import type { EditMode } from './useSceneEditor';
 import type { Show } from './useShow';
 
@@ -151,14 +151,14 @@ function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: S
 
       {def && def.params.length > 0 && <div className="section-head"><h3>{def.name} settings</h3></div>}
       {def?.params.map((p) => (
-        <ParamControl key={p.key} spec={p} value={params[p.key]} onEnd={end}
+        <ParamControl key={p.key} spec={p} value={params[p.key]} params={params} onEnd={end}
           onChange={(v, merge) => editor.edit(setParam(scene(), id, p.key, v), merge ? { merge: `${id}.${p.key}` } : {})} />
       ))}
     </div>
   );
 }
 
-function ParamControl({ spec, value, onChange, onEnd }: { spec: ParamSpec; value: unknown; onChange: (v: unknown, merge: boolean) => void; onEnd: () => void }) {
+function ParamControl({ spec, value, params, onChange, onEnd }: { spec: ParamSpec; value: unknown; params?: Record<string, unknown>; onChange: (v: unknown, merge: boolean) => void; onEnd: () => void }) {
   switch (spec.type) {
     case 'number':
       return <Slider label={spec.label} min={spec.min} max={spec.max} step={spec.step ?? 0.01} value={value as number}
@@ -190,13 +190,7 @@ function ParamControl({ spec, value, onChange, onEnd }: { spec: ParamSpec; value
         </div>
       );
     case 'palette':
-      return (
-        <Field label={spec.label}>
-          <select value={value as string} onChange={(e) => onChange(e.target.value, false)}>
-            {paletteOptions(value as string).map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </Field>
-      );
+      return <PalettePicker label={spec.label} value={value as string} params={params ?? {}} onChange={(v) => onChange(v, false)} />;
     case 'vec3':
       return spec.key === 'center'
         ? <PositionControl label={spec.label} value={value as number[]} onChange={onChange} onEnd={onEnd} />
@@ -275,12 +269,6 @@ function PresetBar({ show, layer, onApply }: { show: Show; layer: LayerConfig; o
       )}
     </div>
   );
-}
-
-/** Palette names for the picker; keeps an unknown current value selectable. */
-function paletteOptions(current: string): string[] {
-  const names = listPalettes();
-  return names.includes(current) || !current ? names : [current, ...names];
 }
 
 /** The scene name; tap it to rename. Enter saves, Escape cancels. */
