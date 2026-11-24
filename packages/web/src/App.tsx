@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { EFFECTS, resolveParams, type SceneConfig } from '@xmas/engine';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { EFFECTS, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
-import { uniqueName, type SceneEditor } from './editor';
+import { History, uniqueName, type SceneEditor } from './editor';
+import { appendPoint, setPoint } from './layoutOps';
+import { LayoutPanel } from './LayoutPanel';
 import { EditorPanel } from './EditorPanel';
 import { HousePanel } from './HousePanel';
 import { latestWins } from './latest';
@@ -29,9 +31,13 @@ export function App() {
 
   const [mode, setMode] = useState<EditMode>('blind');
   const [houseOpen, setHouseOpen] = useState(false);
+  const [layoutMode, setLayoutMode] = useState(false);
+  const [selectedRun, setSelectedRun] = useState<string | null>(null);
+  const [drawing, setDrawing] = useState(false);
+  const layoutDraft = useLayoutDraft(layout);
   const editor = useSceneEditor(show, selected, mode);
   const rightInset = useInset('.editor', 'right', !!layout && !!status);
-  useHistoryKeys(editor);
+  useHistoryKeys(layoutMode ? layoutDraft : editor);
 
   const selectedScene = scenes.find((s) => s.name === selected) ?? null;
   // The preview shows the working copy, so edits appear instantly, before the save round trip.
@@ -44,13 +50,24 @@ export function App() {
 
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''}`}>
-      <Preview layout={layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + (houseOpen ? HOUSE_PANEL_W + 12 : 0)} house={show.house} />
+      <Preview layout={layoutMode ? layoutDraft.value : layout} scene={shownScene} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + (houseOpen ? HOUSE_PANEL_W + 12 : 0)} house={show.house}
+        layoutEdit={layoutMode ? {
+          selected: selectedRun, drawing,
+          onAddPoint: (p) => { if (selectedRun) layoutDraft.edit(appendPoint(layoutDraft.value, selectedRun, p)); },
+          onMovePoint: (i, p, done) => {
+            if (!selectedRun) return;
+            if (done) layoutDraft.endGesture();
+            else layoutDraft.edit(setPoint(layoutDraft.value, selectedRun, i, p), { merge: `${selectedRun}.drag${i}` });
+          },
+        } : null} />
 
       <TopBar show={show} mode={mode} />
 
       <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); }} />
 
-      <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />
+      {layoutMode
+        ? <LayoutPanel show={show} draft={layoutDraft} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
+        : <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />}
 
       <div className="viewbar glass" role="toolbar" aria-label="Preview">
         <Segmented
@@ -68,11 +85,15 @@ export function App() {
           reselect
         />
         <span className="divider" aria-hidden />
+        <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode}
+          onClick={() => { setLayoutMode((m) => !m); setDrawing(false); }}>Layout</button>
         <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => setHouseOpen((o) => !o)}>House</button>
       </div>
       {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
 
-      <ViewCaption view={view} show={show} selected={selected} />
+      {layoutMode
+        ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
+        : <ViewCaption view={view} show={show} selected={selected} />}
       <Health show={show} />
       {!show.connected && <div className="banner warn" role="status">Lost connection to the lights server. Retrying…</div>}
       {show.error && (
@@ -104,8 +125,24 @@ function useInset(selector: string, side: 'left' | 'right', ready: boolean) {
   return inset;
 }
 
+/** The layout being edited, kept in step with the server's until it's changed here. */
+function useLayoutDraft(saved: LayoutConfig | null): History<LayoutConfig> {
+  const draft = useMemo(() => new History<LayoutConfig>({ controllers: [], runs: [] }), []);
+  useSyncExternalStore((fn) => draft.subscribe(fn), () => draft.version);
+  const last = useRef<string>('');
+  useEffect(() => {
+    if (!saved) return;
+    const key = JSON.stringify(saved);
+    // Take the server's layout when it changes (after a save), unless there are unsaved edits.
+    const untouched = JSON.stringify(draft.value) === last.current || !draft.value.controllers.length;
+    if (key !== last.current && untouched) draft.reset(saved);
+    last.current = key;
+  }, [saved, draft]);
+  return draft;
+}
+
 /** ⌘Z / Ctrl+Z undo, ⇧⌘Z / Ctrl+Y redo, unless typing in a text field. */
-function useHistoryKeys(editor: SceneEditor) {
+function useHistoryKeys(editor: History<unknown> | SceneEditor) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;

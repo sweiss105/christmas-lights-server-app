@@ -359,7 +359,7 @@ function groupLabel(groups: GroupOption[], value: string) {
 
 // ---- icons (inline, so they follow the text colour) ---------------------------------------------
 
-function UndoIcon({ flip }: { flip?: boolean }) {
+export function UndoIcon({ flip }: { flip?: boolean }) {
   return (
     <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden style={flip ? { transform: 'scaleX(-1)' } : undefined}>
       <path d="M7 5 3 9l4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />

@@ -7,19 +7,19 @@ import type { House } from './api';
  * The scanned house, toned down to a night-time look so the lights stand out. Scans carry baked
  * daylight textures, so materials are replaced by unlit ones that keep the texture but darken it.
  */
-export function HouseModel({ house }: { house: House }) {
+export function HouseModel({ house, onPick }: { house: House; onPick?: (p: [number, number, number]) => void }) {
   if (!house.model) return null;
   const url = `/api/house/model?v=${encodeURIComponent(house.model.uploadedAt)}`;
   return (
     <Suspense fallback={null}>
-      <Model url={url} house={house} />
+      <Model url={url} house={house} onPick={onPick} />
     </Suspense>
   );
 }
 
 const NIGHT = 0.32; // how much of the daylight colour survives
 
-function Model({ url, house }: { url: string; house: House }) {
+function Model({ url, house, onPick }: { url: string; house: House; onPick?: (p: [number, number, number]) => void }) {
   // No Draco (its decoder would load from a CDN); meshopt compression is supported without one.
   const gltf = useGLTF(url, false, true);
   const scene = useMemo(() => {
@@ -52,7 +52,8 @@ function Model({ url, house }: { url: string; house: House }) {
   }, [scene]);
 
   return (
-    <group position={house.position} rotation-y={(house.rotation * Math.PI) / 180} scale={house.scale}>
+    <group position={house.position} rotation-y={(house.rotation * Math.PI) / 180} scale={house.scale}
+      onClick={onPick ? (e) => { if (e.delta > 6) return; e.stopPropagation(); onPick([e.point.x, Math.max(0, e.point.y), e.point.z]); } : undefined}>
       <primitive object={scene} />
     </group>
   );

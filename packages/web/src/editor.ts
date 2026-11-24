@@ -4,31 +4,31 @@ import { EFFECTS, type LayerConfig, type SceneConfig } from '@xmas/engine';
 export type Look = Omit<LayerConfig, 'id' | 'enabled'>;
 
 /**
- * Working copy of one scene with undo and redo. Scenes are treated as immutable values: every edit
- * produces a new scene, so history entries never change underneath us.
+ * A working copy of any JSON value with undo and redo. Values are treated as immutable: every edit
+ * produces a new value, so history entries never change underneath us.
  */
-export class SceneEditor {
-  private current: SceneConfig;
-  private past: SceneConfig[] = [];
-  private future: SceneConfig[] = [];
+export class History<T> {
+  private current: T;
+  private past: T[] = [];
+  private future: T[] = [];
   private mergeKey: string | null = null;
   private listeners = new Set<() => void>();
   /** Bumps on every change; handy as a React snapshot. */
   version = 0;
 
-  constructor(scene: SceneConfig, private readonly limit = 200) {
-    this.current = scene;
+  constructor(value: T, private readonly limit = 200) {
+    this.current = value;
   }
 
-  get scene(): SceneConfig { return this.current; }
+  get value(): T { return this.current; }
   get canUndo(): boolean { return this.past.length > 0; }
   get canRedo(): boolean { return this.future.length > 0; }
 
   /**
-   * Replace the working scene. Edits sharing a `merge` key with the previous one (a slider drag)
+   * Replace the working value. Edits sharing a `merge` key with the previous one (a slider drag)
    * collapse into a single undo step until `endGesture()`.
    */
-  edit(next: SceneConfig, opts: { merge?: string } = {}): void {
+  edit(next: T, opts: { merge?: string } = {}): void {
     if (JSON.stringify(next) === JSON.stringify(this.current)) return;
     const merging = opts.merge !== undefined && opts.merge === this.mergeKey && this.past.length > 0;
     if (!merging) {
@@ -45,7 +45,7 @@ export class SceneEditor {
 
   undo(): void {
     const prev = this.past.pop();
-    if (!prev) return;
+    if (prev === undefined) return;
     this.future.push(this.current);
     this.mergeKey = null;
     this.set(prev);
@@ -53,18 +53,18 @@ export class SceneEditor {
 
   redo(): void {
     const next = this.future.pop();
-    if (!next) return;
+    if (next === undefined) return;
     this.past.push(this.current);
     this.mergeKey = null;
     this.set(next);
   }
 
-  /** Load a different scene, clearing history. */
-  reset(scene: SceneConfig): void {
+  /** Load a different value, clearing history. */
+  reset(value: T): void {
     this.past = [];
     this.future = [];
     this.mergeKey = null;
-    this.set(scene);
+    this.set(value);
   }
 
   subscribe(fn: () => void): () => void {
@@ -72,11 +72,16 @@ export class SceneEditor {
     return () => this.listeners.delete(fn);
   }
 
-  private set(scene: SceneConfig) {
-    this.current = scene;
+  private set(value: T) {
+    this.current = value;
     this.version++;
     for (const fn of this.listeners) fn();
   }
+}
+
+/** Working copy of one scene. */
+export class SceneEditor extends History<SceneConfig> {
+  get scene(): SceneConfig { return this.value; }
 }
 
 // ---- pure scene operations (each returns a new scene) -----------------------------------------

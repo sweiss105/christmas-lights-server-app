@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { CameraControls, Grid, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { buildLayout, Engine, type Layout, type LayoutConfig, type SceneConfig, type Vec3 } from '@xmas/engine';
+import { buildLayout, Engine, hsv, type Layout, type LayoutConfig, type SceneConfig, type Vec3 } from '@xmas/engine';
+import { runHue } from './layoutColors';
 import type { ServerClock } from './clock';
 import type { House } from './api';
 import { HouseModel } from './HouseModel';
@@ -18,13 +19,23 @@ interface PreviewProps {
   leftInset?: number;
   rightInset?: number;
   house?: House | null;
+  /** Layout mode: diagnostic run colours, point handles and drawing. */
+  layoutEdit?: LayoutEdit | null;
+}
+
+export interface LayoutEdit {
+  selected: string | null;
+  drawing: boolean;
+  onAddPoint: (p: Vec3) => void;
+  /** `done` is true when a drag ends. */
+  onMovePoint: (index: number, p: Vec3, done: boolean) => void;
 }
 
 const BACKGROUND = '#06080d';
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** The 3D preview: the porch's pixels, rendered in the browser by the same engine as the porch. */
-export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, house }: PreviewProps) {
+export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, house, layoutEdit }: PreviewProps) {
   const built = useMemo(() => buildLayout(layout), [layout]);
   return (
     <Canvas
@@ -36,9 +47,10 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInse
     >
       <fog attach="fog" args={[BACKGROUND, 18, 60]} />
       <Ground layout={built} />
-      {house && <HouseModel house={house} />}
+      {house && <HouseModel house={house} onPick={layoutEdit?.drawing ? layoutEdit.onAddPoint : undefined} />}
       <Wires layout={layout} />
-      <Pixels layout={built} scene={scene} clock={clock} />
+      <Pixels layout={built} scene={scene} clock={clock} diagnostic={layoutEdit ? { config: layout, selected: layoutEdit.selected } : null} />
+      {layoutEdit && <LayoutTools layout={layout} edit={layoutEdit} />}
       <Camera layout={built} preset={preset} hidden={leftInset + rightInset} />
       <ViewOffset left={leftInset} right={rightInset} />
     </Canvas>
@@ -120,7 +132,25 @@ const fragmentShader = /* glsl */ `
   }
 `;
 
-function Pixels({ layout, scene, clock }: { layout: Layout; scene: SceneConfig | null; clock: ServerClock }) {
+/** Static colours for layout mode: each run its own hue, dim at its first pixel, bright at its last. */
+function diagnosticColors(layout: Layout, config: LayoutConfig, selected: string | null, index: Int32Array, out: Float32Array) {
+  const pos = new Map<number, number>();
+  index.forEach((g, j) => pos.set(g, j));
+  config.runs.forEach((r, i) => {
+    const base = layout.controllerOffset.get(r.controller);
+    if (base === undefined) return;
+    const dim = selected && selected !== r.id ? 0.35 : 1;
+    for (let k = 0; k < r.count; k++) {
+      const j = pos.get(base + r.start + k);
+      if (j === undefined) continue;
+      const v = (0.18 + 0.82 * (r.count > 1 ? k / (r.count - 1) : 1)) * dim;
+      const [cr, cg, cb] = hsv(runHue(i), 0.75, v);
+      out[j * 3] = cr; out[j * 3 + 1] = cg; out[j * 3 + 2] = cb;
+    }
+  });
+}
+
+function Pixels({ layout, scene, clock, diagnostic }: { layout: Layout; scene: SceneConfig | null; clock: ServerClock; diagnostic: { config: LayoutConfig; selected: string | null } | null }) {
   const { geometry, colors, index } = useMemo(() => {
     const idx: number[] = [];
     for (let i = 0; i < layout.count; i++) if (layout.mapped[i] && !Number.isNaN(layout.positions[i * 3]!)) idx.push(i);
@@ -151,9 +181,16 @@ function Pixels({ layout, scene, clock }: { layout: Layout; scene: SceneConfig |
   const size = useThree((s) => s.size);
   const dpr = useThree((s) => s.viewport.dpr);
 
+  useEffect(() => {
+    if (!diagnostic) return;
+    diagnosticColors(layout, diagnostic.config, diagnostic.selected, index, colors);
+    (geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+  }, [diagnostic, layout, index, colors, geometry]);
+
   useFrame(({ camera }) => {
     const fov = (camera as THREE.PerspectiveCamera).fov ?? 40;
     material.uniforms.uScale!.value = (size.height * dpr) / (2 * Math.tan((fov * Math.PI) / 360));
+    if (diagnostic) return;
     const frame = engine.render(clock.now());
     for (let j = 0; j < index.length; j++) {
       const i = index[j]! * 3, o = j * 3;
@@ -218,5 +255,86 @@ function Camera({ layout, preset, hidden: hiddenPx }: { layout: Layout; preset: 
       maxDistance={80}
       maxPolarAngle={Math.PI / 2 - 0.02}
     />
+  );
+}
+
+// ---- layout mode: point handles and drawing --------------------------------------------------
+
+/** Handles on the selected run's points (drag to move) and, while drawing, a surface to tap on. */
+function LayoutTools({ layout, edit }: { layout: LayoutConfig; edit: LayoutEdit }) {
+  const run = layout.runs.find((r) => r.id === edit.selected);
+  const points = run?.points ?? [];
+  const last = points.at(-1) ?? [0, 0, 0];
+  return (
+    <group>
+      {points.map((p, i) => <Handle key={i} p={p as Vec3} kind={i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'mid'} onMove={(q, done) => edit.onMovePoint(i, q, done)} />)}
+      {edit.drawing && <DrawSurface z={last[2]} onAdd={edit.onAddPoint} />}
+    </group>
+  );
+}
+
+const HANDLE_COLORS = { start: '#3ddc84', mid: '#ffffff', end: '#ff6b5e' };
+
+function Handle({ p, kind, onMove }: { p: Vec3; kind: 'start' | 'mid' | 'end'; onMove: (p: Vec3, done: boolean) => void }) {
+  const controls = useThree((s) => s.controls) as unknown as { enabled: boolean } | null;
+  const drag = useRef<{ plane: THREE.Plane; offset: THREE.Vector3 } | null>(null);
+  const [hover, setHover] = useState(false);
+  return (
+    <mesh
+      position={p}
+      onPointerOver={(e) => { e.stopPropagation(); setHover(true); }}
+      onPointerOut={() => setHover(false)}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        (e.target as Element).setPointerCapture?.(e.pointerId);
+        // Drag in the plane through the point that faces the camera.
+        const normal = new THREE.Vector3();
+        e.camera.getWorldDirection(normal);
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, new THREE.Vector3(...p));
+        const hit = new THREE.Vector3();
+        e.ray.intersectPlane(plane, hit);
+        drag.current = { plane, offset: new THREE.Vector3(...p).sub(hit) };
+        if (controls) controls.enabled = false;
+      }}
+      onPointerMove={(e) => {
+        if (!drag.current) return;
+        e.stopPropagation();
+        const hit = new THREE.Vector3();
+        if (!e.ray.intersectPlane(drag.current.plane, hit)) return;
+        hit.add(drag.current.offset);
+        onMove([hit.x, Math.max(0, hit.y), hit.z], false);
+      }}
+      onPointerUp={(e) => {
+        if (!drag.current) return;
+        e.stopPropagation();
+        drag.current = null;
+        if (controls) controls.enabled = true;
+        onMove(p, true);
+      }}
+    >
+      <sphereGeometry args={[kind === 'mid' ? 0.07 : 0.1, 16, 12]} />
+      <meshBasicMaterial color={HANDLE_COLORS[kind]} transparent opacity={hover ? 1 : 0.85} depthTest={false} />
+    </mesh>
+  );
+}
+
+/** While drawing: a faint vertical plane in line with the run's last point, plus the ground, to tap on. */
+function DrawSurface({ z, onAdd }: { z: number; onAdd: (p: Vec3) => void }) {
+  const add = (e: ThreeEvent<MouseEvent>) => {
+    if (e.delta > 6) return; // that was an orbit drag, not a tap
+    e.stopPropagation();
+    onAdd([e.point.x, Math.max(0, e.point.y), e.point.z]);
+  };
+  return (
+    <group>
+      <mesh position={[0, 10, z]} onClick={add}>
+        <planeGeometry args={[200, 20]} />
+        <meshBasicMaterial color="#7aa2ff" transparent opacity={0.05} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.001} onClick={add}>
+        <planeGeometry args={[200, 200]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+    </group>
   );
 }

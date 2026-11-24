@@ -69,6 +69,7 @@ export const api = {
   presets: () => call<Preset[]>('GET', '/api/presets'),
   savePreset: (name: string, look: Omit<Preset, 'name'>) => call<Preset>('PUT', `/api/presets/${enc(name)}`, look),
   deletePreset: (name: string) => call<{ deleted: string }>('DELETE', `/api/presets/${enc(name)}`),
+  saveLayout: (l: LayoutConfig) => call<{ pixels: number; groups: string[] }>('PUT', '/api/layout', l),
   house: () => call<House>('GET', '/api/house'),
   setHouse: (h: Partial<Omit<House, 'model'>>) => call<House>('PATCH', '/api/house', h),
   uploadHouseModel: async (file: Blob) => {
