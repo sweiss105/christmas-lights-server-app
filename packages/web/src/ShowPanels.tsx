@@ -30,7 +30,7 @@ export function PlaylistsView({ show }: { show: Show }) {
             <div className="playlist-row">
               <button className="scene-row" onClick={() => setEditing(structuredClone(p))}>
                 <span className="scene-name">{p.name}</span>
-                <span className="muted">{p.entries.length} scenes · {duration(p.entries.reduce((a, e) => a + e.seconds, 0))}{p.loop ? ' · loops' : ''}</span>
+                <span className="muted">{p.entries.length} scenes · {duration(p.entries.reduce((a, e) => a + e.seconds, 0))}{p.loop ? ' · loops' : ''}{p.shuffle ? ' · shuffled' : ''}</span>
               </button>
               <button className="btn small" disabled={playing?.name === p.name}
                 onClick={() => api.playPlaylist(p.name).then(show.refresh).catch(show.reportError)}>{playing?.name === p.name ? 'Playing' : 'Play'}</button>
@@ -80,6 +80,7 @@ function PlaylistEditor({ show, initial, sceneNames, onDone }: { show: Show; ini
       <div className="row">
         <button className="btn small" onClick={() => setP({ ...p, entries: [...p.entries, { scene: sceneNames[0]!, seconds: 300 }] })}>+ Add scene</button>
         <label className="check"><input type="checkbox" checked={p.loop} onChange={(e) => setP({ ...p, loop: e.target.checked })} /> Loop</label>
+        <label className="check" title="Play the scenes in a random order, a new one each time round"><input type="checkbox" checked={!!p.shuffle} onChange={(e) => setP({ ...p, shuffle: e.target.checked })} /> Shuffle</label>
       </div>
       <div className="row">
         <button className="btn small" disabled={saving || !p.name.trim()} onClick={() => void save()}>{saving ? 'Saving…' : 'Save playlist'}</button>

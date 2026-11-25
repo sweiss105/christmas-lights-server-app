@@ -5,7 +5,8 @@ import { WLED_EFFECTS } from './wled/index.js';
 
 export type ParamSpec =
   | { key: string; label: string; type: 'number'; min: number; max: number; step?: number; default: number }
-  | { key: string; label: string; type: 'color'; default: string }
+  /** `when`: only shown in the editor while another setting's value starts with this text (it always applies). */
+  | { key: string; label: string; type: 'color'; default: string; when?: { key: string; startsWith: string } }
   | { key: string; label: string; type: 'vec3'; default: [number, number, number] }
   | { key: string; label: string; type: 'select'; options: string[]; default: string; labels?: Record<string, string> }
   | { key: string; label: string; type: 'palette'; default: string }

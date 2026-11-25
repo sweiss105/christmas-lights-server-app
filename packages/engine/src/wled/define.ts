@@ -138,6 +138,14 @@ export function paramsFromMeta(m: WledMeta): ParamSpec[] {
     if (!label) return;
     ps.push({ key: COLOR_KEYS[i]!, label, type: 'color', default: DEFAULT_COLORS[i]! });
   });
+  // A WLED segment always has three colours, and the "* Color…" palettes are built from them even when
+  // the effect shows no colour controls. Keep the unused slots too, shown only with such a palette.
+  if (m.palette) {
+    m.colors.forEach((label, i) => {
+      if (label) return;
+      ps.push({ key: COLOR_KEYS[i]!, label: `Palette colour ${i + 1}`, type: 'color', default: DEFAULT_COLORS[i]!, when: { key: 'palette', startsWith: '* ' } });
+    });
+  }
   if (m.palette) {
     // Selecting an effect in WLED loads `pal=` into the segment's palette (setMode with loadDefaults).
     const pal = m.defaults.pal;
