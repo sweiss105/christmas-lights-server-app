@@ -65,6 +65,8 @@ export interface Status {
   stream: { running: boolean; targetFps: number; fps: number; renderMs: number; lateFrames: number; controllers: ControllerHealth[] };
   /** Counts changes made through the API; `by` is the id of the browser that made the last one. */
   rev?: { boot: string; n: number; by: string };
+  /** The MQTT link to Home Assistant (enabled when XMAS_MQTT_URL is set on the server). */
+  homeassistant?: { enabled: boolean; connected: boolean };
 }
 
 /** One spot the phone filmed from: what it found, kept on the server so it can be solved again. */

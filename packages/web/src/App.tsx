@@ -607,6 +607,7 @@ function ViewCaption({ view, show, selected }: { view: View; show: Show; selecte
 
 function Health({ show }: { show: Show }) {
   const s = show.status!.stream;
+  const ha = show.status!.homeassistant;
   return (
     <footer className="health glass" aria-label="Controller health">
       {s.controllers.map((c) => (
@@ -617,6 +618,12 @@ function Health({ show }: { show: Show }) {
       ))}
       <span className="health-item muted">{s.running ? `${s.fps} fps` : 'not streaming'}</span>
       {s.running && <span className="health-item muted">{s.controllers.reduce((a, c) => a + c.sendErrors, 0)} errors</span>}
+      {ha?.enabled && (
+        <span className="health-item muted" title={ha.connected ? 'Connected to Home Assistant over MQTT' : 'Cannot reach the MQTT broker; retrying'}>
+          <span className={`dot ${ha.connected ? 'ok' : 'bad'}`} aria-hidden />
+          Home Assistant {ha.connected ? 'linked' : 'offline'}
+        </span>
+      )}
     </footer>
   );
 }

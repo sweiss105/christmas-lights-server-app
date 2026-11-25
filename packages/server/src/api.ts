@@ -25,9 +25,35 @@ export interface AppOptions {
   logger?: boolean;
 }
 
-export interface App { server: FastifyInstance; output: OutputLoop; engine: () => Engine; /** Advance playlists and the schedule (runs every second in production). */ tick: () => Promise<void> }
+/**
+ * The show's controls, for things other than the HTTP API (Home Assistant). Each one is what the
+ * matching route does, so playlists, fades, saving and the schedule behave the same either way.
+ */
+export interface ShowControls {
+  /** The live show state (read it; change it only through these controls). */
+  readonly state: ShowState;
+  /** Go: put a scene on stage (fading), stopping a playlist. */
+  go(name: string): Promise<void>;
+  blackout(): Promise<void>;
+  playPlaylist(name: string): Promise<void>;
+  stopPlaylist(): Promise<void>;
+  /** Same as PATCH /api/output: brightness 0..1, enabled (streaming), fps, gamma, transition. */
+  setOutput(patch: Partial<ShowState['output']>): Promise<ShowState['output']>;
+  /** Called after every saved change to the show (scenes, playlists, stage, output), whoever made it. */
+  onChange(listener: () => void): () => void;
+  /** Count a change made outside the HTTP API, so open browsers reload (`by` names who made it). */
+  touched(by: string): void;
+  /** Adds `homeassistant: { enabled, connected }` to /api/status. */
+  setHomeAssistantStatus(fn: () => { enabled: boolean; connected: boolean }): void;
+}
 
-class HttpError extends Error { constructor(public statusCode: number, message: string) { super(message); } }
+export interface App {
+  server: FastifyInstance; output: OutputLoop; engine: () => Engine;
+  /** Advance playlists and the schedule (runs every second in production). */ tick: () => Promise<void>;
+  show: ShowControls;
+}
+
+export class HttpError extends Error { constructor(public statusCode: number, message: string) { super(message); } }
 const bad = (e: unknown) => new HttpError(400, (e as Error).message);
 /** Cookie the web UI signs in with (it can't add a header to downloads or to the 3D model loader). */
 const TOKEN_COOKIE = 'xmas_token';
@@ -46,10 +72,13 @@ export async function createApp(opts: AppOptions): Promise<App> {
   }
   const output = new OutputLoop(() => engine, state.output.fps);
   output.onWarn = (m) => server.log.warn(m);
-  /** Save, recording what's on stage so a restart can bring it back exactly. */
-  const persist = () => {
-    if (state.activeScene) state.stage = engine.scene; else delete state.stage;
-    return saveState(opts.statePath, state);
+  const changeListeners = new Set<() => void>();
+  /** Save, recording what's on stage so a restart can bring it back exactly, then tell whoever listens. */
+  const persist = async () => {
+    if (state.activeScene) { state.stage = engine.scene; state.lastScene = state.activeScene; } else delete state.stage;
+    try { await saveState(opts.statePath, state); } finally {
+      for (const l of changeListeners) { try { l(); } catch (e) { server.log.error(e); } }
+    }
   };
   /** Crossfade time for Go and Blackout. Live edits never fade. */
   const fadeSeconds = () => state.output.transition ?? 1;
@@ -120,6 +149,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     try { return JSON.stringify(validateScene(saved, engine.layout)) !== JSON.stringify(engine.scene); } catch { return true; }
   };
 
+  let homeAssistantStatus = () => ({ enabled: false, connected: false });
   server.get('/api/status', async () => ({
     scene: state.activeScene,
     stage: { scene: state.activeScene, dirty: stageDirty() },
@@ -129,6 +159,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     output: { ...engine.output, enabled: state.output.enabled, transition: fadeSeconds() },
     stream: output.stats(),
     rev: { ...rev },
+    homeassistant: homeAssistantStatus(),
   }));
 
   /** The scene the porch is running now (may differ from the saved copy while Blind edits are pending). */
@@ -238,27 +269,28 @@ export async function createApp(opts: AppOptions): Promise<App> {
     for (const pl of Object.values(state.playlists ?? {})) for (const e of pl.entries) if (e.scene === from) e.scene = to;
     if (state.schedule?.run.kind === 'scene' && state.schedule.run.name === from) state.schedule.run.name = to;
     if (state.activeScene === from) { state.activeScene = to; engine.scene = { ...engine.scene, name: to }; }
+    if (state.lastScene === from) state.lastScene = to;
     await persist();
     return renamed;
   });
 
-  server.post<{ Params: { name: string } }>('/api/scenes/:name/activate', async (req) => {
-    const s = state.scenes[req.params.name];
+  const go = async (name: string) => {
+    const s = Object.hasOwn(state.scenes, name) ? state.scenes[name] : undefined;
     if (!s) throw new HttpError(404, 'no such scene');
     try { engine.setScene(s, { fade: fadeSeconds() }); } catch (e) { throw bad(e); }
     state.activeScene = s.name;
     delete state.playing; // a manual Go takes over from a playlist
     await persist();
-    return { active: s.name };
-  });
+  };
+  server.post<{ Params: { name: string } }>('/api/scenes/:name/activate', async (req) => { await go(req.params.name); return { active: req.params.name }; });
 
-  server.post('/api/blackout', async () => {
+  const blackout = async () => {
     engine.setScene({ name: 'Blackout', layers: [] }, { fade: fadeSeconds() });
     state.activeScene = null;
     delete state.playing;
     await persist();
-    return { active: null };
-  });
+  };
+  server.post('/api/blackout', async () => { await blackout(); return { active: null }; });
 
   // ---- playlists ---------------------------------------------------------------
   const now = opts.now ?? Date.now;
@@ -298,14 +330,15 @@ export async function createApp(opts: AppOptions): Promise<App> {
   });
 
   const startPlaylist = async (name: string) => {
-    if (!state.playlists?.[name]) throw new HttpError(404, 'no such playlist');
+    if (!state.playlists || !Object.hasOwn(state.playlists, name)) throw new HttpError(404, 'no such playlist');
     state.playing = { playlist: name, startedAt: now() };
     await advancePlaylist();
     await persist();
   };
 
   server.post<{ Params: { name: string } }>('/api/playlists/:name/play', async (req) => { await startPlaylist(req.params.name); return { playing: req.params.name }; });
-  server.post('/api/playlists/stop', async () => { delete state.playing; await persist(); return { playing: null }; });
+  const stopPlaylist = async () => { delete state.playing; await persist(); };
+  server.post('/api/playlists/stop', async () => { await stopPlaylist(); return { playing: null }; });
 
   /** Put the playlist's current scene on stage when it's time. */
   const advancePlaylist = async () => {
@@ -708,8 +741,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
   // ---- output -------------------------------------------------------------
   server.get('/api/output', async () => ({ ...engine.output, fps: output.fps, enabled: state.output.enabled, transition: fadeSeconds() }));
 
-  server.patch<{ Body: Partial<ShowState['output']> }>('/api/output', async (req) => {
-    const b = req.body ?? {};
+  const setOutput = async (b: Partial<ShowState['output']>) => {
     // Check everything first, so a request with one bad value changes nothing.
     if (b.fps !== undefined && (!Number.isInteger(b.fps) || b.fps < 1 || b.fps > 60)) throw new HttpError(400, 'fps must be an integer 1..60');
     if (b.transition !== undefined && (typeof b.transition !== 'number' || !Number.isFinite(b.transition) || b.transition < 0 || b.transition > 10)) throw new HttpError(400, 'transition must be 0..10 seconds');
@@ -722,7 +754,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
     state.output = { ...engine.output, fps: output.fps, enabled: b.enabled ?? state.output.enabled, transition: b.transition ?? state.output.transition ?? 1 };
     await persist();
     return state.output;
-  });
+  };
+  server.patch<{ Body: Partial<ShowState['output']> }>('/api/output', async (req) => setOutput(req.body ?? {}));
 
   /** Raw RGB frame (global pixel order) for previews and debugging. */
   server.get('/api/frame', async (_req, reply) => {
@@ -787,5 +820,13 @@ export async function createApp(opts: AppOptions): Promise<App> {
 
   server.addHook('onClose', async () => { if (ticker) clearInterval(ticker); await output.close(); });
 
-  return { server, output, engine: () => engine, tick };
+  const show: ShowControls = {
+    get state() { return state; },
+    go, blackout, playPlaylist: startPlaylist, stopPlaylist, setOutput,
+    onChange: (l) => { changeListeners.add(l); return () => { changeListeners.delete(l); }; },
+    touched: (by) => { rev.n++; rev.by = by; },
+    setHomeAssistantStatus: (fn) => { homeAssistantStatus = fn; },
+  };
+
+  return { server, output, engine: () => engine, tick, show };
 }
