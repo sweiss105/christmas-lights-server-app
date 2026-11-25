@@ -171,7 +171,7 @@ function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: S
       />
 
       {def && def.params.length > 0 && <div className="section-head"><h3>{def.name} settings</h3></div>}
-      {def?.params.map((p) => (
+      {def?.params.filter((p) => !('when' in p && p.when) || String(params[p.when.key] ?? '').startsWith(p.when.startsWith)).map((p) => (
         <ParamControl key={p.key} spec={p} value={params[p.key]} params={params} onEnd={end}
           onChange={(v, merge) => editor.edit(setParam(scene(), id, p.key, v), merge ? { merge: `${id}.${p.key}` } : {})} />
       ))}

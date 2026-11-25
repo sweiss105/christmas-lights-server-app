@@ -143,7 +143,10 @@ describe('WLED metadata → params', () => {
     expect(m.colors[1]).toBeTruthy();
     expect(m.is2D).toBe(false);
     const ps = paramsFromMeta(m);
-    expect(ps.map((p) => p.key)).toEqual(['speed', 'intensity', 'custom1', 'check2', 'color2', 'palette', 'mapping']);
+    // color1 and color3 have no control in WLED's UI, but "* Color…" palettes still use them.
+    expect(ps.map((p) => p.key)).toEqual(['speed', 'intensity', 'custom1', 'check2', 'color2', 'color1', 'color3', 'palette', 'mapping']);
+    expect(ps.find((p) => p.key === 'color1')).toMatchObject({ label: 'Palette colour 1', when: { key: 'palette', startsWith: '* ' } });
+    expect(ps.find((p) => p.key === 'color2')).not.toHaveProperty('when');
     expect(ps.find((p) => p.key === 'custom1')!.default).toBe(0);
     expect(ps.find((p) => p.key === 'check2')).toMatchObject({ type: 'boolean', label: 'Overlay', default: false });
     expect(ps.find((p) => p.key === 'mapping')).toMatchObject({ type: 'select', label: 'Lights run', default: 'each' });
@@ -155,7 +158,7 @@ describe('WLED metadata → params', () => {
     expect(ps.find((p) => p.key === 'intensity')!.default).toBe(160);
     expect(ps.find((p) => p.key === 'custom3')).toMatchObject({ label: 'Boost', max: 31, default: 16 });
     expect(ps.find((p) => p.key === 'palette')!.default).toBe('Fire');
-    expect(ps.some((p) => p.type === 'color')).toBe(false);
+    expect(ps.some((p) => p.type === 'color' && !('when' in p && p.when))).toBe(false); // only palette colours
     const dna = parseWledMeta('DNA@Scroll speed,Blur,,,,Smear;;!;2;ix=0');
     expect(dna.is2D).toBe(true);
     expect(paramsFromMeta(dna).some((p) => p.key === 'mapping')).toBe(false);
@@ -227,6 +230,18 @@ describe('ported WLED effects', () => {
     let lit = 0;
     for (let i = 0; i < layout.count; i++) if (out[i * 3]! + out[i * 3 + 1]! + out[i * 3 + 2]! > 0.05) lit++;
     expect(lit).toBeGreaterThan(10);
+  });
+
+  it('"* Colors 1&2" uses the segment colours even when the effect shows no colour controls (Bpm)', () => {
+    const fx = EFFECTS['wled-bpm']!;
+    const params = resolveParams(fx, { palette: '* Colors 1&2', color1: '#0000ff', color2: '#00ff00' });
+    expect(params.color2).toBe('#00ff00'); // kept, not dropped as an unknown setting
+    const out = new Float32Array(layout.count * 3);
+    fx.create(params, layout)(3, out);
+    let red = 0, green = 0, blue = 0;
+    for (let i = 0; i < layout.count; i++) { red += out[i * 3]!; green += out[i * 3 + 1]!; blue += out[i * 3 + 2]!; }
+    expect(green).toBeGreaterThan(red * 5);
+    expect(blue).toBeGreaterThan(red * 5);
   });
 
   it('Blink follows its duty cycle (time-only effect)', () => {
