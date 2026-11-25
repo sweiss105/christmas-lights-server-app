@@ -1,19 +1,51 @@
-import { Component, Suspense, useEffect, useMemo, type ReactNode } from 'react';
+import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { House } from './api';
 import { addGlow, type GlowUniforms } from './glowMaterial';
+import { corners, type Box, type HouseBounds } from './cameraFit';
+
+const partKey = (p: House['parts'][number]) => `${p.id}@${p.uploadedAt}`;
 
 /**
  * The scanned house, toned down to a night-time look so the lights stand out. Each scan part sits
  * inside the house transform, so parts are first placed against each other, then the whole house
  * is lined up with the lights.
  */
-export function HouseModel({ house, onPick, glow }: { house: House; onPick?: (p: [number, number, number]) => void; glow?: GlowUniforms }) {
+export function HouseModel({ house, onPick, glow, onBounds }: {
+  house: House; onPick?: (p: [number, number, number]) => void; glow?: GlowUniforms;
+  /** Receives the world box around the shown, loaded parts (null while none is), for framing the camera. */
+  onBounds?: (bounds: HouseBounds | null) => void;
+}) {
   const parts = house.parts.filter((p) => p.visible);
+  const group = useRef<THREE.Group>(null);
+  const [loaded, setLoaded] = useState<ReadonlySet<string>>(new Set());
+  const onLoaded = useCallback((key: string) => setLoaded((s) => (s.has(key) ? s : new Set(s).add(key))), []);
+  // Which shown parts have loaded: a new set means a new model to frame.
+  const loadedKey = parts.map(partKey).filter((k) => loaded.has(k)).join('|');
+  useEffect(() => {
+    if (!onBounds) return;
+    const g = group.current;
+    if (!g || !loadedKey) { onBounds(null); return; }
+    g.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(g);
+    if (box.isEmpty()) { onBounds(null); return; }
+    // The corners of each mesh's own box hug the model much better than the overall box's corners
+    // (a long lawn and a tall roof don't make a tall block); a model made of very many meshes uses the latter.
+    const meshes: THREE.Mesh[] = [];
+    g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+    const points: Box['min'][] = [];
+    for (const m of meshes.length <= 400 ? meshes : []) {
+      const b = new THREE.Box3().setFromObject(m);
+      if (!b.isEmpty()) points.push(...corners({ min: b.min.toArray(), max: b.max.toArray() }));
+    }
+    const whole = { min: box.min.toArray(), max: box.max.toArray() };
+    onBounds({ box: whole, points: points.length ? points : corners(whole), key: loadedKey });
+  }, [house, loadedKey, onBounds]);
+  useEffect(() => () => onBounds?.(null), [onBounds]);
   if (!parts.length) return null;
   return (
-    <group position={house.position} rotation-y={(house.rotation * Math.PI) / 180} scale={house.scale}
+    <group ref={group} position={house.position} rotation-y={(house.rotation * Math.PI) / 180} scale={house.scale}
       onClick={onPick ? (e) => { if (e.delta > 6) return; e.stopPropagation(); onPick([e.point.x, e.point.y, e.point.z]); } : undefined}>
       {/* Light for clay-look models (scans use unlit materials and ignore it): soft sky light plus a low moon from front left. */}
       <hemisphereLight args={[0xb8c4e0, 0x1a1712, 0.45]} />
@@ -23,7 +55,7 @@ export function HouseModel({ house, onPick, glow }: { house: House; onPick?: (p:
         <group key={p.id} position={p.position} rotation-y={(p.rotation * Math.PI) / 180} scale={p.scale}>
           <SkipIfBroken key={p.uploadedAt}>
           <Suspense fallback={null}>
-            <Model url={`/api/house/parts/${encodeURIComponent(p.id)}/model?v=${encodeURIComponent(p.uploadedAt)}`} opacity={house.opacity} glow={glow} />
+            <Model url={`/api/house/parts/${encodeURIComponent(p.id)}/model?v=${encodeURIComponent(p.uploadedAt)}`} opacity={house.opacity} glow={glow} onLoaded={() => onLoaded(partKey(p))} />
           </Suspense>
           </SkipIfBroken>
         </group>
@@ -43,7 +75,7 @@ const EDGE_MAX_TRIS = 3000; // outline only simple, built shapes; leave bushes a
  * look, slightly tinted by each part's colour, with faint outlines on hard edges, so walls, roof,
  * railings and steps read as separate shapes, and catches the coloured spill of nearby lights.
  */
-function Model({ url, opacity, glow }: { url: string; opacity: number; glow?: GlowUniforms }) {
+function Model({ url, opacity, glow, onLoaded }: { url: string; opacity: number; glow?: GlowUniforms; onLoaded?: () => void }) {
   // No Draco (its decoder would load from a CDN); meshopt compression is supported without one.
   const gltf = useGLTF(url, false, true);
   const scene = useMemo(() => {
@@ -100,6 +132,8 @@ function Model({ url, opacity, glow }: { url: string; opacity: number; glow?: Gl
       if ((o as THREE.LineSegments).isLineSegments) (o as THREE.LineSegments).geometry.dispose();
     });
   }, [scene]);
+
+  useEffect(() => { onLoaded?.(); }, [scene]); // once per loaded model
 
   return <primitive object={scene} />;
 }

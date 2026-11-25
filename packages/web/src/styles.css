@@ -439,7 +439,7 @@ h1, h2 { margin: 0; }
 .fade-row select { min-height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 0.85rem; }
 
 /* ---- phone: preview on top, panels as a bottom sheet with tabs ----------------------------- */
-.phone-tabs { display: none; }
+.phone-tabs, .phone-camera { display: none; }
 @media (max-width: 760px) {
   :root { --gap: 8px; --sheet-h: min(52vh, 460px); }
   .topbar { min-height: 52px; padding: 6px 6px 6px 12px; gap: 8px; }
@@ -457,6 +457,10 @@ h1, h2 { margin: 0; }
   }
   .phone-tabs .segmented { background: rgba(10, 13, 20, 0.85); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
   .phone-tabs .segmented button { min-width: 0; padding: 0 14px; }
+  /* Camera views under the top bar: five short labels share the width. */
+  .phone-camera { display: flex; justify-content: center; position: absolute; top: calc(var(--gap) + 58px); left: var(--gap); right: var(--gap); }
+  .phone-camera .segmented { flex: 1; max-width: 420px; background: rgba(10, 13, 20, 0.85); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+  .phone-camera .segmented button { flex: 1; min-width: 0; min-height: 36px; padding: 0 6px; font-size: 0.84rem; }
   .editor-head { padding-top: 10px; }
   .banner { top: 66px; }
 }
