@@ -635,3 +635,13 @@ h1, h2 { margin: 0; }
 .panel-toggle { width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); cursor: pointer; }
 .panel-toggle:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
 .panel-toggle[aria-pressed='false'] { color: var(--text-3, rgba(255, 255, 255, 0.4)); }
+/* The bottom bar holds the preview switch, five camera views and the two panel toggles: keep it
+   between the side panels on smaller screens (an iPad is 1024–1180 px wide). */
+@media (max-width: 1280px) {
+  .viewbar { gap: 4px; padding: 4px; }
+  .viewbar .segmented button { min-width: 0; padding: 0 10px; }
+}
+@media (max-width: 1050px) {
+  .viewbar .segmented button { padding: 0 7px; font-size: 0.8rem; }
+  .viewbar .panel-toggle { width: 32px; }
+}
