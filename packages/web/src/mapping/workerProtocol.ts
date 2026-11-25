@@ -51,6 +51,9 @@ export class DecodeWorker {
     this.post({ type: 'frame', t, width, height, ...data }, [buf]);
   }
 
+  /** True once the decoder has stopped with an error (`finish()` then rejects with it). */
+  get failed() { return this.error !== null; }
+
   /** Frames sent but not yet decoded. */
   get backlog() { return this.framesSent - this.framesDone; }
 

@@ -15,8 +15,16 @@ export type FrameData = { rgba: ArrayBuffer } | { lum: ArrayBuffer };
 export interface FrameSource {
   readonly width: number;
   readonly height: number;
-  /** Deliver frames (t in ms on the performance.now() clock) until the returned stop function is called. */
-  start(onFrame: (t: number, data: FrameData) => void): () => void;
+  /**
+   * Set for the demo's simulated camera. Each of its frames carries the moment it shows, however late it is made,
+   * and it waits while the decoder is busy rather than losing frames, so a slow or busy computer just takes longer.
+   */
+  readonly simulated?: boolean;
+  /**
+   * Deliver frames (t in ms on the performance.now() clock) until the returned stop function is called.
+   * A simulated source makes no frame while `ready` says the receiver can't take one.
+   */
+  start(onFrame: (t: number, data: FrameData) => void, ready?: () => boolean): () => void;
 }
 
 type VideoFrameMeta = { presentationTime?: number; captureTime?: number; expectedDisplayTime?: number };
@@ -94,16 +102,20 @@ export function demoViews(layout: LayoutConfig, width: number, height: number): 
   }));
 }
 
+/** Longest the simulator works in one go before letting the page (and the decoder's replies) through. */
+const SIM_SLICE_MS = 25;
+
 /**
- * Simulated camera for demo mode: renders the sequence as the phone would see it, in real time,
- * and paints each frame onto `canvas` as the "camera picture".
+ * Simulated camera for demo mode: renders the sequence as the phone would see it, in real time when the
+ * computer keeps up, and paints each frame onto `canvas` as the "camera picture". On a slow or busy computer
+ * it falls behind rather than dropping frames: frames keep their simulated times, so the decode is the same.
  */
 export function simulatedSource(layout: LayoutConfig, plan: MappingPlan, view: SimView, startMs: number, canvas: HTMLCanvasElement | null): FrameSource {
   const built = buildLayout(layout);
   const masks = slotMasks(built, plan);
   return {
-    width: view.width, height: view.height,
-    start(onFrame) {
+    width: view.width, height: view.height, simulated: true,
+    start(onFrame, ready = () => true) {
       const gen = simulateFrames({
         positions: built.positions, masks, holdMs: plan.params.holdMs, view, startMs: startMs + 70,
         fromMs: performance.now(), toMs: startMs + plan.durationMs + 2000, seed: Math.floor(startMs) % 1000, shakePx: 0.3,
@@ -114,11 +126,14 @@ export function simulatedSource(layout: LayoutConfig, plan: MappingPlan, view: S
       let pending = gen.next();
       const timer = setInterval(() => {
         let latest: Uint8Array | null = null;
-        while (!pending.done && pending.value.t <= performance.now()) {
+        const sliceEnd = performance.now() + SIM_SLICE_MS;
+        // Catch up with the clock, but only as fast as the decoder takes frames, and a slice at a time.
+        while (!pending.done && pending.value.t <= performance.now() && ready()) {
           const f = pending.value;
           latest = f.lum;
           onFrame(f.t, { lum: f.lum.slice().buffer });
           pending = gen.next();
+          if (performance.now() > sliceEnd) break;
         }
         if (latest && ctx && img) {
           for (let i = 0, j = 0; i < latest.length; i++, j += 4) { const v = latest[i]!; img.data[j] = v; img.data[j + 1] = v; img.data[j + 2] = Math.min(255, v * 1.08); img.data[j + 3] = 255; }
@@ -152,24 +167,31 @@ export interface ViewRun {
 /** Frames allowed to wait for the decoder (each is a few MB) before new ones are skipped. */
 const MAX_BACKLOG = 40;
 
-/** Film and decode one view: feed frames from shortly before the expected start until just after the end. */
+/**
+ * Film and decode one view: feed frames from shortly before the expected start until just after the end.
+ * A camera's run ends by the clock; a simulated one's when its frames reach the end (it may run behind the clock).
+ */
 export function runView(source: FrameSource, plan: MappingPlan, startGuessMs: number, recorder?: Recorder | null): ViewRun {
   const worker = new DecodeWorker(plan, { width: source.width, height: source.height, startGuessMs });
   const from = startGuessMs - 1200, until = startGuessMs + plan.durationMs + 900;
   let cancelled = false;
   let skipped = 0;
+  let latest = -Infinity;
   let stop: () => void = () => {};
   const result = new Promise<DecodeResult>((resolve, reject) => {
     stop = source.start((t, data) => {
+      latest = Math.max(latest, t);
       if (t < from || t > until) return;
       if (recorder && 'rgba' in data) recorder.add(t, data.rgba, source.width); // before the buffer moves to the worker
       // If decoding falls behind (60 fps on a busy phone), skip frames rather than pile up full-size pictures.
+      // (A simulated source waits for the decoder instead, see `ready` below.)
       if (worker.backlog > MAX_BACKLOG) { skipped++; return; }
       worker.frame(t, source.width, source.height, data);
-    });
+    }, () => worker.backlog <= MAX_BACKLOG);
     const check = setInterval(() => {
       if (cancelled) { clearInterval(check); stop(); worker.cancel(); reject(new Error('cancelled')); return; }
-      if (performance.now() < until) return;
+      // (Also stop if the decoder failed: a simulated source would otherwise wait for it for ever.)
+      if (!worker.failed && (source.simulated ? latest : performance.now()) < until) return;
       clearInterval(check);
       stop();
       worker.finish().then((r) => resolve({ ...r, stats: { ...r.stats, skipped } as typeof r.stats }), reject);
