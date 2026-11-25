@@ -1,6 +1,6 @@
 import { cloneElement, useEffect, useId, useMemo, useState } from 'react';
 import { BLEND_MODES, EFFECTS, buildLayout, resolveParams, type BlendMode, type LayerConfig, type ParamSpec } from '@xmas/engine';
-import { addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, setParams, updateLayer, type SceneEditor } from './editor';
+import { addLayer, addLayerFromLook, applyLook, clearScene, confirmClear, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, setParams, updateLayer, type SceneEditor } from './editor';
 import { api, type Preset } from './api';
 import { LayerPicker } from './LayerPicker';
 import { paintedCount } from './paint';
@@ -103,6 +103,12 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
         <button className="btn small ghost" disabled={!layer} onClick={() => layer && editor.edit(duplicateLayer(scene, layer.id))}>Duplicate</button>
         <button className="btn small ghost danger-quiet" disabled={!layer} onClick={() => layer && editor.edit(removeLayer(scene, layer.id))}>Delete</button>
       </div>
+      {scene.layers.length > 0 && (
+        <div className="layer-actions clear-row">
+          <button className="btn small ghost danger-quiet" title="Remove every layer and start from a dark scene (Undo brings them back)"
+            onClick={() => { if (confirmClear(scene.name, live)) { editor.edit(clearScene(scene)); setSelectedId(null); } }}>Clear scene</button>
+        </div>
+      )}
       {adding && (
         <LayerPicker
           presets={show.presets}
