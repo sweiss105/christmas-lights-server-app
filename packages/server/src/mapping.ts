@@ -3,6 +3,7 @@
  * seconds, like Identify) and keeps what the phone found in each view, so positions can be solved
  * again later without filming again. The decoding and solving happen in the browser.
  */
+import { createReadStream } from 'node:fs';
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -138,8 +139,10 @@ export function registerMapping(server: FastifyInstance, deps: MappingDeps) {
   let writing: Promise<void> = Promise.resolve();
   const save = () => {
     const body = JSON.stringify(views ?? []) + '\n';
-    writing = writing.then(async () => { await writeFile(`${viewsPath}.tmp`, body); await rename(`${viewsPath}.tmp`, viewsPath); });
-    return writing;
+    // Wait for the write before, whether it worked or not: one failed save must not block the rest.
+    const mine = writing.catch(() => {}).then(async () => { await writeFile(`${viewsPath}.tmp`, body); await rename(`${viewsPath}.tmp`, viewsPath); });
+    writing = mine;
+    return mine;
   };
 
   server.get('/api/mapping/views', async () => load());
@@ -189,7 +192,32 @@ export function registerMapping(server: FastifyInstance, deps: MappingDeps) {
     return Promise.all(files.filter((f) => f.includes('.bin')).sort().map(async (f) => ({ file: f, bytes: (await stat(join(recDir, f))).size })));
   });
 
-  return { overlay, stop: () => { running = null; } };
+  const RECORDING_NAME = /^[A-Za-z0-9_-]+\.bin(\.gz)?$/;
+  /** Download one recording, to check the decoder against it on another machine. */
+  server.get<{ Params: { file: string } }>('/api/mapping/recordings/:file', async (req, reply) => {
+    const file = req.params.file;
+    if (!RECORDING_NAME.test(file)) throw httpError(404, 'no such recording');
+    let bytes: number;
+    try { bytes = (await stat(join(recDir, file))).size; } catch { throw httpError(404, 'no such recording'); }
+    reply.header('content-type', 'application/octet-stream').header('content-length', bytes).header('content-disposition', `attachment; filename="${file}"`);
+    return reply.send(createReadStream(join(recDir, file)));
+  });
+
+  server.delete<{ Params: { file: string } }>('/api/mapping/recordings/:file', async (req) => {
+    const file = req.params.file;
+    if (!RECORDING_NAME.test(file)) throw httpError(404, 'no such recording');
+    try { await unlink(join(recDir, file)); } catch { throw httpError(404, 'no such recording'); }
+    return { deleted: file };
+  });
+
+  /** Delete every recording (they're large and only for diagnosis). */
+  server.delete('/api/mapping/recordings', async () => {
+    const files = (await readdir(recDir).catch(() => [] as string[])).filter((f) => RECORDING_NAME.test(f));
+    await Promise.all(files.map((f) => unlink(join(recDir, f)).catch(() => {})));
+    return { deleted: files.length };
+  });
+
+  return { overlay, stop: () => { running = null; preview = null; } };
 }
 
 function parseView(b: Partial<MappingView> | undefined, layoutPixels: number): MappingView {

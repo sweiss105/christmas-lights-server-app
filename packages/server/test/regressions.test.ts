@@ -252,3 +252,107 @@ describe('handing the porch back to WLED', () => {
     expect(warnings[0]).toContain('could not hand controller "a"');
   });
 });
+
+// ---- second audit (2026-11-25) ------------------------------------------------------------------
+describe('shuffled playlists that run for a long time', () => {
+  it('work out the order of a far-off round without walking through every round before it', async () => {
+    const { playlistPosition, shuffledOrder } = await import('../src/show.js');
+    for (const count of [2, 3, 6, 16]) {
+      const order = shuffledOrder(count, 1795566363003, 5_000_000);
+      expect([...order].sort((a, b) => a - b)).toEqual(Array.from({ length: count }, (_, i) => i));
+    }
+    // A month of one-minute rounds.
+    const entries = [{ scene: 'a', seconds: 20 }, { scene: 'b', seconds: 20 }, { scene: 'c', seconds: 20 }];
+    expect(() => playlistPosition(entries, 0, 30 * 86_400_000, true, true)).not.toThrow();
+  });
+  it('never start a round with the scene the last round ended on, two scenes included', async () => {
+    const { shuffledOrder } = await import('../src/show.js');
+    for (const count of [2, 3, 4, 7]) {
+      for (let c = 1; c < 300; c++) expect(shuffledOrder(count, 1234, c)[0]).not.toBe(shuffledOrder(count, 1234, c - 1)[count - 1]);
+    }
+  });
+});
+
+describe('mapping data on the server', () => {
+  const view = { width: 100, height: 50, detections: [{ pixel: 1, x: 10, y: 10 }] };
+  it('a failed save of the spots does not stop later saves', async () => {
+    if (process.getuid?.() === 0) return;
+    const { app, statePath } = await clockApp('2026-12-21T12:00:00Z');
+    const dir = join(statePath, '..');
+    expect((await post(app, '/api/mapping/views', view)).statusCode).toBe(200);
+    await chmod(dir, 0o500);
+    expect((await post(app, '/api/mapping/views', view)).statusCode).toBe(500);
+    await chmod(dir, 0o700);
+    expect((await post(app, '/api/mapping/views', view)).statusCode).toBe(200);
+    expect(JSON.parse(await readFile(join(dir, 'mapping-views.json'), 'utf8'))).toHaveLength(3);
+  });
+  it('recordings can be listed, downloaded and deleted, by safe names only', async () => {
+    const { app } = await clockApp('2026-12-21T12:00:00Z');
+    const body = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const up = await app.server.inject({ method: 'POST', url: '/api/mapping/recordings?view=v1&label=Spot%201&gz=0', payload: body, headers: { 'content-type': 'application/octet-stream' } });
+    expect(up.statusCode).toBe(200);
+    const file = up.json().saved as string;
+    const got = await app.server.inject(`/api/mapping/recordings/${file}`);
+    expect(got.statusCode).toBe(200);
+    expect(got.rawPayload.equals(body)).toBe(true);
+    expect((await app.server.inject('/api/mapping/recordings/..%2Fstate.json')).statusCode).toBe(404);
+    expect((await app.server.inject({ method: 'DELETE', url: `/api/mapping/recordings/${file}` })).statusCode).toBe(200);
+    expect((await app.server.inject('/api/mapping/recordings')).json()).toEqual([]);
+    await app.server.inject({ method: 'POST', url: '/api/mapping/recordings?gz=0', payload: body, headers: { 'content-type': 'application/octet-stream' } });
+    expect((await app.server.inject({ method: 'DELETE', url: '/api/mapping/recordings' })).json()).toEqual({ deleted: 1 });
+  });
+});
+
+describe('backups', () => {
+  it('a manual backup only clears out old backups of its own kind', async () => {
+    const a = await clockApp('2026-12-01T12:00:00Z');
+    for (let d = 1; d <= 3; d++) { a.setNow(`2026-12-0${d}T12:00:00Z`); await post(a.app, '/api/backups', { reason: 'before-mapping' }); }
+    for (let d = 1; d <= 12; d++) { a.setNow(`2026-12-${String(d + 3).padStart(2, '0')}T12:00:00Z`); await post(a.app, '/api/backups', { reason: 'before' }); }
+    const files = ((await a.app.server.inject('/api/backups')).json() as { file: string }[]).map((b) => b.file);
+    expect(files.filter((f) => f.startsWith('before-mapping-'))).toHaveLength(3);
+    expect(files.filter((f) => /^before-\d/.test(f))).toHaveLength(10);
+  });
+});
+
+describe('starting with a damaged show file', () => {
+  it('uses the newest backup that loads, keeps the bad file aside and leaves streaming off', async () => {
+    const { loadStateOrBackup } = await import('../src/store.js');
+    const { mkdir, readdir, utimes, writeFile } = await import('node:fs/promises');
+    const dir = await mkdtemp(join(tmpdir(), 'xmas-load-'));
+    const path = join(dir, 'show.json');
+    await mkdir(join(dir, 'backups'));
+    await writeFile(join(dir, 'backups', 'daily-2026-12-01.json'), JSON.stringify(baseState({ activeScene: 'Red' })));
+    await writeFile(join(dir, 'backups', 'daily-2026-12-02.json'), JSON.stringify(baseState({ activeScene: 'Blue', output: { brightness: 1, gamma: 1, fps: 40, enabled: true } })));
+    await writeFile(join(dir, 'backups', 'daily-2026-12-03.json'), '{ "layout": '); // newest, but cut off too
+    await utimes(join(dir, 'backups', 'daily-2026-12-01.json'), 1000, 1000);
+    await utimes(join(dir, 'backups', 'daily-2026-12-02.json'), 2000, 2000);
+    await utimes(join(dir, 'backups', 'daily-2026-12-03.json'), 3000, 3000);
+    await writeFile(path, '{ "layout": { "controllers": [');
+    const warnings: string[] = [];
+    const state = await loadStateOrBackup(path, join(dir, 'none.json'), (m) => warnings.push(m));
+    expect(state.activeScene).toBe('Blue');
+    expect(state.output.enabled).toBe(false);
+    expect(warnings[0]).toContain('daily-2026-12-02.json');
+    expect((await readdir(dir)).some((f) => f.startsWith('show.json.unreadable-'))).toBe(true);
+  });
+  it('also falls back when the file parses but its layout is invalid, and fails clearly with no backup', async () => {
+    const { loadStateOrBackup } = await import('../src/store.js');
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const dir = await mkdtemp(join(tmpdir(), 'xmas-load-'));
+    const path = join(dir, 'show.json');
+    const bad = baseState();
+    bad.layout.runs[0]!.count = 9999;
+    await writeFile(path, JSON.stringify(bad));
+    await expect(loadStateOrBackup(path, join(dir, 'none.json'))).rejects.toThrow(/no backup could be loaded/);
+    await mkdir(join(dir, 'backups'));
+    await writeFile(join(dir, 'backups', 'daily-2026-12-01.json'), JSON.stringify(baseState()));
+    expect((await loadStateOrBackup(path, join(dir, 'none.json'))).layout.runs[0]!.count).toBe(10);
+  });
+  it('starts from the example when there is no show file yet', async () => {
+    const { loadStateOrBackup } = await import('../src/store.js');
+    const { writeFile } = await import('node:fs/promises');
+    const dir = await mkdtemp(join(tmpdir(), 'xmas-load-'));
+    await writeFile(join(dir, 'example.json'), JSON.stringify(baseState()));
+    expect((await loadStateOrBackup(join(dir, 'show.json'), join(dir, 'example.json'))).activeScene).toBe('Red');
+  });
+});

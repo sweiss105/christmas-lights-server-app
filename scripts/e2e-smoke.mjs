@@ -158,13 +158,16 @@ try {
   check(await phone.locator('.editor').isVisible() && !(await phone.locator('.scenes').isVisible()), 'the phone layout switches between Scenes and Edit');
 
   // Map lights in demo mode (a simulated camera, nothing sent to the server's lights): one spot end to end.
+  // The demo decodes simulated video in real time; close the other pages so their 3D views don't starve it on a busy machine.
+  await page.close();
+  await phone.close();
   const demo = await browser.newPage({ viewport: { width: 430, height: 932 } });
   const demoErrors = [];
   demo.on('pageerror', (e) => demoErrors.push(e.message));
   await demo.goto(`${base}/#map-demo`, { waitUntil: 'networkidle' });
   await demo.locator('.map-start').click();
   const before = (await (await fetch(`${base}/api/mapping/views`)).json()).length;
-  check(await demo.getByRole('heading', { name: /^Found \d+ lights$/ }).waitFor({ timeout: 40000 }).then(() => true, () => false), 'a demo spot is filmed and decoded');
+  check(await demo.getByRole('heading', { name: /^Found \d+ lights$/ }).waitFor({ timeout: 60000 }).then(() => true, () => false), 'a demo spot is filmed and decoded');
   const found = Number((await demo.getByRole('heading', { name: /^Found/ }).textContent()).match(/\d+/)[0]);
   check(found > 20, `the demo spot finds lights (${found})`);
   check((await (await fetch(`${base}/api/mapping/views`)).json()).length === before, 'demo spots stay in the page (nothing saved on the server)');

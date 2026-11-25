@@ -3,17 +3,19 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setWallClock } from '@xmas/engine';
 import { createApp } from './api.js';
-import { loadState } from './store.js';
+import { loadStateOrBackup } from './store.js';
 
 const root = resolve(fileURLToPath(import.meta.url), '../../../..');
 const statePath = resolve(process.env.XMAS_CONFIG ?? `${root}/config/local.json`);
-const state = await loadState(statePath, `${root}/config/example.json`);
+const startupWarnings: string[] = [];
+const state = await loadStateOrBackup(statePath, `${root}/config/example.json`, (m) => startupWarnings.push(m));
 
 const webRoot = resolve(process.env.XMAS_WEB_ROOT ?? `${root}/packages/web/dist`);
 // Real time for #TIME/#DATE in Scrolling Text, in the process time zone (TZ; set XMAS_TZ in .env for Docker).
 setWallClock(() => new Date());
 
 const app = await createApp({ state, statePath, webRoot, apiToken: process.env.XMAS_API_TOKEN || undefined, logger: true });
+for (const m of startupWarnings) app.server.log.error(m);
 if (!existsSync(webRoot)) app.server.log.warn(`web UI not built (${webRoot} missing): only the API is served. Run npm run build -w @xmas/web.`);
 if (!process.env.XMAS_API_TOKEN) app.server.log.warn('XMAS_API_TOKEN is not set: the API is open to anyone who can reach it. Put Cloudflare Access in front or set a token.');
 

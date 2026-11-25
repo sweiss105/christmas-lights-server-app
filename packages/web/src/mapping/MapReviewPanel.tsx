@@ -63,6 +63,7 @@ const cm = (m: number | null | undefined) => (m === null || m === undefined || !
 
 export function MapReviewPanel({ show, review, views, roles, setRole, layoutDraft, onCamera, onDone }: Props) {
   const layout = show.layout!;
+  const pixels = useMemo(() => buildLayout(layout).count, [layout]);
   const { result, chosen } = review;
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -110,6 +111,9 @@ export function MapReviewPanel({ show, review, views, roles, setRole, layoutDraf
 
       <div className="section-head"><h3>Spots</h3><span className="hint-inline">{views.views.length} filmed</span></div>
       {review.error && <p className="hint map-pad">{review.error}</p>}
+      {result && views.views.some((v) => v.layoutPixels !== pixels) && (
+        <p className="hint map-pad" role="status">Spots marked “older layout” were filmed before the number of lights changed, so they’re left out. Film those again, or delete them.</p>
+      )}
       <ul className="part-list">
         {views.views.map((v, i) => {
           const s = result?.views.find((x) => x.id === v.id);
@@ -118,7 +122,7 @@ export function MapReviewPanel({ show, review, views, roles, setRole, layoutDraf
               <span className={`dot ${s?.ok ? 'ok' : 'warn'}`} aria-hidden />
               <div className="backup-label">
                 <span className="part-name">Spot {i + 1} · {v.detections.length} lights</span>
-                <span className="hint-inline">{!s ? 'not used' : s.ok ? `placed from ${s.inliers} trusted lights · ${s.rmsPx.toFixed(1)} px · ${Math.round(s.fovDeg ?? 0)}° view` : s.reason}</span>
+                <span className="hint-inline">{!s ? (v.layoutPixels !== pixels ? 'older layout: not used' : 'not used') : s.ok ? `placed from ${s.inliers} trusted lights · ${s.rmsPx.toFixed(1)} px · ${Math.round(s.fovDeg ?? 0)}° view` : s.reason}</span>
               </div>
               <button className="icon-btn small" aria-label={`Delete spot ${i + 1}`} onClick={() => { if (window.confirm(`Delete spot ${i + 1}?`)) void views.remove(v.id); }}><CloseIcon /></button>
             </li>
