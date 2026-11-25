@@ -36,6 +36,7 @@ export function App() {
   const [preset, setPreset] = useState<{ name: CameraPreset; nonce: number }>({ name: 'angle', nonce: 0 });
   const phone = usePhone();
   const [phoneTab, setPhoneTab] = useState<'scenes' | 'edit'>('scenes');
+  const panels = usePanels();
   const sideLeft = useInset('.scenes', 'left', !!layout && !!status && !phone);
 
   const stageName = status?.stage.scene ?? null;
@@ -128,7 +129,7 @@ export function App() {
   const previewLayout = reviewing && mapReview.showMapped && mapReview.candidate ? mapReview.candidate : shownLayout;
 
   return (
-    <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : ''}`}>
+    <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : `${panels.left ? '' : 'hide-left'} ${panels.right ? '' : 'hide-right'}`}`}>
       <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
         selection={selectMode ? selection : null} onProjector={selectMode || paintMode ? onProjector : undefined}
         layoutEdit={layoutMode ? {
@@ -186,6 +187,7 @@ export function App() {
         : <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />}
 
       <div className="viewbar glass" role="toolbar" aria-label="Preview">
+        {!phone && <PanelToggle side="left" shown={panels.left} onToggle={() => panels.toggle('left')} />}
         <Segmented
           label="Show in preview"
           value={view}
@@ -200,6 +202,7 @@ export function App() {
           onChange={(v) => setPreset((p) => ({ name: v as CameraPreset, nonce: p.nonce + 1 }))}
           reselect
         />
+        {!phone && <PanelToggle side="right" shown={panels.right} onToggle={() => panels.toggle('right')} />}
       </div>
       {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
       {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
@@ -646,5 +649,33 @@ function Segmented<T extends string>({ label, value, options, onChange, reselect
         </button>
       ))}
     </div>
+  );
+}
+
+/** Which side panels are shown (desktop and tablet), remembered on this device. */
+function usePanels() {
+  const KEY = 'xmas.panels';
+  const [shown, setShown] = useState<{ left: boolean; right: boolean }>(() => {
+    try { return { left: true, right: true, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; } catch { return { left: true, right: true }; }
+  });
+  const toggle = (side: 'left' | 'right') => setShown((s) => {
+    const next = { ...s, [side]: !s[side] };
+    try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  return { ...shown, toggle };
+}
+
+/** Hide or show a side panel: a sidebar outline with the panel filled in when it's shown. */
+function PanelToggle({ side, shown, onToggle }: { side: 'left' | 'right'; shown: boolean; onToggle: () => void }) {
+  const what = side === 'left' ? 'scenes panel' : 'editing panel';
+  return (
+    <button className="panel-toggle" aria-pressed={shown} aria-label={`${shown ? 'Hide' : 'Show'} the ${what}`} title={`${shown ? 'Hide' : 'Show'} the ${what}`} onClick={onToggle}>
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+        <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+        <path d={side === 'left' ? 'M7.5 3.5v13' : 'M12.5 3.5v13'} />
+        {shown && <rect x={side === 'left' ? 3.5 : 13.5} y="4.5" width="3" height="11" rx="1" fill="currentColor" stroke="none" />}
+      </svg>
+    </button>
   );
 }
