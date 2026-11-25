@@ -20,6 +20,8 @@ export interface ViewInput {
   width: number;
   height: number;
   detections: { pixel: number; x: number; y: number }[];
+  /** Which camera filmed it (e.g. "Back Ultra Wide Camera@0.5"): spots with the same one share a focal length. */
+  camera?: string;
 }
 
 export interface SolveInput {
@@ -33,8 +35,10 @@ export interface SolveInput {
   fovGuessDeg?: number;
   /** Where a ray from a camera first meets the house model, if one is loaded. */
   raycast?: (origin: Vec3, dir: Vec3) => Vec3 | null;
-  /** Largest reprojection error for a measured light, picture pixels. */
+  /** Largest reprojection error for a measured light, picture pixels (default: 0.6% of the picture's long side). */
   maxErrorPx?: number;
+  /** Inlier threshold for placing a camera, picture pixels (default: 1.6% of the picture's long side). */
+  poseThresholdPx?: number;
   /** Smallest angle between rays for triangulation, degrees. */
   minAngleDeg?: number;
   /**
@@ -95,6 +99,9 @@ export interface SolveResult {
 const median = (a: number[]) => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2; };
 const quantile = (a: number[], q: number) => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(q * s.length))]!; };
 
+/** The ultra wide (0.5×) camera's horizontal field of view on recent iPhones, roughly. */
+const ULTRA_WIDE_FOV = 106;
+
 export function solveMapping(input: SolveInput): SolveResult {
   const layout = buildLayout(input.layout);
   const pos = (i: number): Vec3 => [layout.positions[i * 3]!, layout.positions[i * 3 + 1]!, layout.positions[i * 3 + 2]!];
@@ -102,12 +109,17 @@ export function solveMapping(input: SolveInput): SolveResult {
   const anchor = new Uint8Array(layout.count), target = new Uint8Array(layout.count);
   for (const id of input.anchorRuns) for (const i of runPixels(id)) anchor[i] = 1;
   for (const id of input.targetRuns) for (const i of runPixels(id)) target[i] = 1;
-  const maxPx = input.maxErrorPx ?? 4;
+  // Real lights sit a few centimetres off the model's tidy coil, and the phone's lens isn't perfect:
+  // tolerances that suit simulated pictures throw away good real ones, so they scale with the picture.
+  const bigOf = (v: { width: number; height: number }) => Math.max(v.width, v.height);
+  const maxBig = Math.max(1, ...input.views.map(bigOf));
+  const maxPx = input.maxErrorPx ?? Math.max(4, 0.006 * maxBig);
   const minAngle = input.minAngleDeg ?? 3;
 
   // 1. Place each camera.
   const fov = input.fovGuessDeg ?? 68;
-  const solveViews = (fixedFocalNorm: number | null) => input.views.map((v): ViewSolve => {
+  const solveViews = (focalFor: (v: ViewInput) => number | null) => input.views.map((v): ViewSolve => {
+    const fixedFocalNorm = focalFor(v);
     const cs: Correspondence[] = [];
     let targetsSeen = 0;
     for (const d of v.detections) {
@@ -119,18 +131,36 @@ export function solveMapping(input: SolveInput): SolveResult {
     if (cs.length < 12) return { ...base, ok: false, reason: `only ${cs.length} trusted lights seen (12 or more needed)` };
     const big = Math.max(v.width, v.height);
     // The field of view is across the picture's long side (the phone may be held either way).
-    const fGuess = fixedFocalNorm ? fixedFocalNorm * big : focalFromFov(big, fov);
-    const r = solvePose(cs, { width: v.width, height: v.height, fGuess, fixFocal: fixedFocalNorm !== null });
+    const thresholdPx = input.poseThresholdPx ?? Math.max(4, 0.016 * big);
+    // Not yet known: try the main camera's and the ultra wide's field of view, keep the better fit.
+    const guesses = fixedFocalNorm ? [fixedFocalNorm * big] : [focalFromFov(big, fov), focalFromFov(big, ULTRA_WIDE_FOV)];
+    let r: ReturnType<typeof solvePose> = null;
+    for (const fGuess of guesses) {
+      const t = solvePose(cs, { width: v.width, height: v.height, fGuess, fixFocal: fixedFocalNorm !== null, thresholdPx, iterations: 600 });
+      if (t && (!r || t.inliers.length > r.inliers.length || (t.inliers.length === r.inliers.length && t.rmsPx < r.rmsPx))) r = t;
+    }
     if (!r) return { ...base, ok: false, reason: 'the trusted lights did not fit one camera position' };
     const fovDeg = (2 * Math.atan(v.width / 2 / r.k.f) * 180) / Math.PI;
     return { ...base, ok: true, pose: r.pose, k: r.k, center: r.center, fovDeg, inliers: r.inliers.length, rmsPx: r.rmsPx };
   });
-  let views = solveViews(null);
-  // The same phone filmed every view: share one focal length (as a share of the picture size).
+  let views = solveViews(() => null);
+  // Spots filmed with the same camera share one focal length (as a share of the picture size); that
+  // steadies each spot's solution. Spots without a camera name share only with ones that already agree.
   const good = views.filter((v) => v.ok);
   if (good.length >= 2) {
-    const fNorm = median(good.map((v) => v.k!.f / Math.max(...sizeOf(input, v.id))));
-    const again = solveViews(fNorm);
+    const norm = (v: ViewSolve) => v.k!.f / Math.max(...sizeOf(input, v.id));
+    const camOf = (id: string) => input.views.find((x) => x.id === id)!.camera;
+    const shared = new Map<string, number>();
+    const groups = new Map<string, ViewSolve[]>();
+    for (const v of good) { const key = camOf(v.id) ?? ''; const g = groups.get(key); if (g) g.push(v); else groups.set(key, [v]); }
+    for (const [key, g] of groups) {
+      if (g.length < 2) continue;
+      const m = median(g.map(norm));
+      // Unnamed: only spots within 15% of the middle (a 1× and an ultra-wide spot differ by about 2×).
+      const agree = key ? g : g.filter((v) => Math.abs(norm(v) / m - 1) < 0.15);
+      if (agree.length >= 2) for (const v of agree) shared.set(v.id, median(agree.map(norm)));
+    }
+    const again = solveViews((v) => shared.get(v.id) ?? null);
     views = again.map((v, i) => (v.ok || !views[i]!.ok ? v : views[i]!));
   }
 

@@ -78,6 +78,8 @@ export interface MappingView {
   detections: { pixel: number; x: number; y: number; strength?: number; margin?: number }[];
   stats?: Partial<DecodeStats>;
   label?: string;
+  /** Which camera filmed it ("label@zoom"); spots with the same one share a focal length when solving. */
+  camera?: string;
 }
 
 export interface MappingStart { active: boolean; now: number; streaming: boolean; startsAt: number; endsAt: number; plan: MappingPlan }

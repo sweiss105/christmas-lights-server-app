@@ -152,6 +152,9 @@ describe('mapping mode on the server', () => {
     const list = (await app.server.inject('/api/mapping/views')).json();
     expect(list).toHaveLength(1);
     expect(list[0].detections[0]).toEqual({ pixel: 3, x: 100.5, y: 200.25, margin: 0.8 });
+    const withCam = (await app.server.inject({ method: 'POST', url: '/api/mapping/views', payload: { ...view, camera: 'Back Ultra Wide Camera@1' } })).json();
+    expect(withCam.camera).toBe('Back Ultra Wide Camera@1');
+    await app.server.inject({ method: 'DELETE', url: `/api/mapping/views/${withCam.id}` });
     expect((await app.server.inject({ method: 'POST', url: '/api/mapping/views', payload: { ...view, detections: [{ pixel: 999, x: 1, y: 1 }] } })).statusCode).toBe(400);
     expect((await app.server.inject({ method: 'DELETE', url: `/api/mapping/views/${saved.id}` })).statusCode).toBe(200);
     expect((await app.server.inject('/api/mapping/views')).json()).toEqual([]);

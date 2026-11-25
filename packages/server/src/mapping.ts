@@ -37,6 +37,8 @@ export interface MappingView {
   /** Free-form numbers from the decoder (blobs found, rejected, sync quality...). */
   stats?: Record<string, number>;
   label?: string;
+  /** Which camera filmed it, e.g. "Back Ultra Wide Camera@1" (label@zoom). */
+  camera?: string;
 }
 
 export const MAX_SEQUENCE_MS = 180_000;
@@ -209,11 +211,12 @@ function parseView(b: Partial<MappingView> | undefined, layoutPixels: number): M
   const stats: Record<string, number> = {};
   if (b.stats && typeof b.stats === 'object') for (const [k, v] of Object.entries(b.stats).slice(0, 40)) if (Number.isFinite(v) && k.length <= 40) stats[k] = v as number;
   const label = typeof b.label === 'string' ? b.label.slice(0, 60) : undefined;
+  const camera = typeof b.camera === 'string' ? b.camera.slice(0, 80) : undefined;
   return {
     id: `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     createdAt: new Date().toISOString(),
     width, height, layoutPixels,
     params: clampParams(b.params ?? {}),
-    detections, stats, ...(label && { label }),
+    detections, stats, ...(label && { label }), ...(camera && { camera }),
   };
 }

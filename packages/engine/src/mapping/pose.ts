@@ -114,28 +114,46 @@ function score(pose: Pose, k: Intrinsics, cs: Correspondence[], thr: number) {
   return { inliers, rms: inliers.length ? Math.sqrt(sq / inliers.length) : Infinity };
 }
 
-/** Refine pose (and focal length unless fixed) on the given points. */
-export function refinePose(pose: Pose, f: number, cs: Correspondence[], o: { cx: number; cy: number; fixFocal?: boolean; huber?: number }): { pose: Pose; f: number } {
+/** Points needed before the lens's distortion is fitted as well. */
+const MIN_POINTS_FOR_K1 = 15;
+
+/** Largest |k1| accepted: beyond this the fit is chasing bad points, not the lens. */
+export const MAX_K1 = 0.4;
+
+/**
+ * Refine pose (and focal length unless fixed, and the lens's k1 when `fitK1`) on the given points.
+ * k1 needs points spread over the picture; with few, leave it out.
+ */
+export function refinePose(pose: Pose, f: number, cs: Correspondence[], o: { cx: number; cy: number; fixFocal?: boolean; huber?: number; k1?: number; fitK1?: boolean }): { pose: Pose; f: number; k1: number } {
   const w0 = rotationVector(pose.R);
-  const start = [...w0, ...pose.t, f];
   const fixed = o.fixFocal;
+  const fitK1 = !!o.fitK1;
+  const k1Start = o.k1 ?? 0;
+  // Parameters: rotation (3), translation (3), then focal length unless fixed, then k1 if fitted.
+  const start = [...w0, ...pose.t, ...(fixed ? [] : [f]), ...(fitK1 ? [k1Start] : [])];
   const res = (p: number[]) => {
     const R = rodrigues([p[0]!, p[1]!, p[2]!]);
     const t: Vec3 = [p[3]!, p[4]!, p[5]!];
     const ff = fixed ? f : p[6]!;
-    const r = new Float64Array(cs.length * 2);
+    const k1 = fitK1 ? p[fixed ? 6 : 7]! : k1Start;
+    const r = new Float64Array(cs.length * 2 + (fitK1 ? 1 : 0));
     cs.forEach((c, i) => {
       const q = add(mulMV(R, c.X), t);
       const z = Math.max(1e-6, q[2]);
-      r[i * 2] = ff * q[0] / z + o.cx - c.x;
-      r[i * 2 + 1] = ff * q[1] / z + o.cy - c.y;
+      const xn = q[0] / z, yn = q[1] / z;
+      const s = 1 + k1 * (xn * xn + yn * yn);
+      r[i * 2] = ff * xn * s + o.cx - c.x;
+      r[i * 2 + 1] = ff * yn * s + o.cy - c.y;
     });
+    // A gentle pull towards no distortion, so k1 only moves when the points really call for it.
+    if (fitK1) r[cs.length * 2] = k1 * 20;
     return r;
   };
-  const steps = [1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-3];
-  const out = levenbergMarquardt(fixed ? start.slice(0, 6) : start, res, { huber: o.huber ?? 2, iterations: 50, steps });
+  const steps = [1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, ...(fixed ? [] : [1e-3]), ...(fitK1 ? [1e-4] : [])];
+  const out = levenbergMarquardt(start, res, { huber: o.huber ?? 2, iterations: 50, steps });
   const p = out.params;
-  return { pose: { R: rodrigues([p[0]!, p[1]!, p[2]!]), t: [p[3]!, p[4]!, p[5]!] }, f: fixed ? f : p[6]! };
+  const k1 = fitK1 ? Math.max(-MAX_K1, Math.min(MAX_K1, p[fixed ? 6 : 7]!)) : k1Start;
+  return { pose: { R: rodrigues([p[0]!, p[1]!, p[2]!]), t: [p[3]!, p[4]!, p[5]!] }, f: fixed ? f : p[6]!, k1 };
 }
 
 /** Robust camera pose from trusted points; null if there's no consistent fit. */
@@ -167,16 +185,20 @@ export function solvePose(cs: Correspondence[], o: PoseOptions): PoseResult | nu
   }
   if (best.cand) cands.push(best.cand);
 
-  // Starts from typical spots in the yard, looking at the middle of the trusted lights.
+  // Starts from typical spots: out in the yard, close up on a slope or the front walk, and on the
+  // porch itself looking out past the lights (all round the middle of the trusted lights, at a few heights).
   const mid: Vec3 = [0, 0, 0];
   for (const c of cs) { mid[0] += c.X[0] / cs.length; mid[1] += c.X[1] / cs.length; mid[2] += c.X[2] / cs.length; }
-  for (const dist of [6, 12, 20]) for (const az of [-50, -20, 0, 20, 50]) {
-    const a = (az * Math.PI) / 180;
-    const eye: Vec3 = [mid[0] + dist * Math.sin(a), mid[1] + 0.5, mid[2] + dist * Math.cos(a)];
-    cands.push({ pose: lookAt(eye, mid), f: o.fGuess });
+  for (const dist of [1.5, 3, 6, 12, 20]) for (const az of dist <= 3 ? [-150, -90, -50, -20, 0, 20, 50, 90, 150, 180] : [-50, -20, 0, 20, 50]) {
+    for (const up of dist <= 3 ? [-1, 0.5] : [-1.5, 0.5]) {
+      const a = (az * Math.PI) / 180;
+      const eye: Vec3 = [mid[0] + dist * Math.sin(a), mid[1] + up, mid[2] + dist * Math.cos(a)];
+      cands.push({ pose: lookAt(eye, mid), f: o.fGuess });
+    }
   }
 
-  let bestFit: PoseResult | null = null;
+  // Kept in an object: TypeScript doesn't see assignments made inside the closure below.
+  const top: { fit: PoseResult | null } = { fit: null };
   for (const cand of cands) {
     // Coarse refine on everything with a wide robust loss, then on the inliers with a tight one.
     let { pose, f } = refinePose(cand.pose, cand.f, cs, { cx, cy, fixFocal: true, huber: 20 });
@@ -188,11 +210,27 @@ export function solvePose(cs: Correspondence[], o: PoseOptions): PoseResult | nu
       ({ pose, f } = refinePose(pose, f, s.inliers.map((i) => cs[i]!), { cx, cy, fixFocal: o.fixFocal, huber: thr / 2 }));
     }
     if (!fOk(f)) continue;
-    const s = score(pose, { f, cx, cy }, cs, thr);
-    if (!bestFit || s.inliers.length > bestFit.inliers.length || (s.inliers.length === bestFit.inliers.length && s.rms < bestFit.rmsPx)) {
-      bestFit = { pose, k: { f, cx, cy }, inliers: s.inliers, rmsPx: s.rms, center: cameraCenter(pose) };
+    const consider = (pz: Pose, k: Intrinsics) => {
+      const sc = score(pz, k, cs, thr);
+      const b = top.fit;
+      if (!b || sc.inliers.length > b.inliers.length || (sc.inliers.length === b.inliers.length && sc.rms < b.rmsPx)) {
+        top.fit = { pose: pz, k, inliers: sc.inliers, rmsPx: sc.rms, center: cameraCenter(pz) };
+      }
+      return sc;
+    };
+    const plain = consider(pose, { f, cx, cy });
+    // With enough points, let the lens's barrel distortion in too (wide lenses up close need it).
+    if (plain.inliers.length >= MIN_POINTS_FOR_K1) {
+      let pz = pose, ff = f, k1 = 0;
+      for (let round = 0; round < 3; round++) {
+        const sc = score(pz, { f: ff, cx, cy, k1 }, cs, thr * (round === 0 ? 1.5 : 1));
+        if (sc.inliers.length < MIN_POINTS_FOR_K1) break;
+        ({ pose: pz, f: ff, k1 } = refinePose(pz, ff, sc.inliers.map((i) => cs[i]!), { cx, cy, fixFocal: o.fixFocal, huber: thr / 2, k1, fitK1: true }));
+      }
+      if (fOk(ff)) consider(pz, { f: ff, cx, cy, k1 });
     }
   }
+  const bestFit = top.fit;
   if (!bestFit || bestFit.inliers.length < Math.max(8, cs.length * 0.3)) return null;
   return bestFit;
 }

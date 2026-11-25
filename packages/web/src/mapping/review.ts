@@ -69,7 +69,7 @@ export function useMappingViews(demo: boolean, pixels: number, onError: (e: unkn
 
 /** Views as the solver takes them, leaving out ones filmed against a different layout size. */
 export function solverViews(views: MappingView[], pixels: number): ViewInput[] {
-  return views.filter((v) => v.layoutPixels === pixels).map((v) => ({ id: v.id, width: v.width, height: v.height, detections: v.detections }));
+  return views.filter((v) => v.layoutPixels === pixels).map((v) => ({ id: v.id, width: v.width, height: v.height, detections: v.detections, ...(v.camera && { camera: v.camera }) }));
 }
 
 /** The layout with measured positions written into the chosen runs. */

@@ -173,6 +173,7 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
         detections: result.detections.map((d) => ({ pixel: d.pixel, x: d.x, y: d.y, strength: d.strength, margin: d.margin })),
         stats: { ...result.stats },
         label,
+        ...(track && { camera: cameraKey(track) }),
       });
       const upload = await sendFootage(saved.id);
       setPhase({ kind: 'done', result, placed: saved.id, upload });
@@ -283,6 +284,12 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
       </section>
     </div>
   );
+}
+
+/** "label@zoom": the same lens at the same zoom has the same focal length. */
+function cameraKey(track: MediaStreamTrack): string {
+  const z = (track.getSettings?.() as { zoom?: number }).zoom;
+  return `${track.label || 'camera'}@${z ?? 1}`;
 }
 
 function placedText(p: { ok: boolean; text: string } | undefined): string {
