@@ -265,7 +265,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const playlistStatus = () => {
     const pl = state.playing && state.playlists?.[state.playing.playlist];
     if (!pl || !state.playing) return null;
-    const pos = playlistPosition(pl.entries, state.playing.startedAt, now(), pl.loop);
+    const pos = playlistPosition(pl.entries, state.playing.startedAt, now(), pl.loop, pl.shuffle);
     return { name: pl.name, index: pos.index, scene: pl.entries[pos.index]?.scene ?? null, nextAt: pos.nextAt };
   };
 
@@ -280,7 +280,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
       if (!e || typeof e.scene !== 'string' || !state.scenes[e.scene]) throw new HttpError(400, `unknown scene "${e?.scene}"`);
       if (!Number.isFinite(e.seconds) || e.seconds < 1 || e.seconds > 86_400) throw new HttpError(400, 'each scene plays for 1 second to 24 hours');
     }
-    const pl: PlaylistConfig = { name, entries: entries.map((e) => ({ scene: e.scene, seconds: e.seconds })), loop: req.body?.loop !== false };
+    const pl: PlaylistConfig = { name, entries: entries.map((e) => ({ scene: e.scene, seconds: e.seconds })), loop: req.body?.loop !== false, ...(req.body?.shuffle === true && { shuffle: true }) };
     state.playlists = { ...(state.playlists ?? {}), [name]: pl };
     await persist();
     return pl;

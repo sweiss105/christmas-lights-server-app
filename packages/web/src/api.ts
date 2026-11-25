@@ -41,7 +41,7 @@ export interface ControllerHealth {
 }
 
 export interface PlaylistEntry { scene: string; seconds: number }
-export interface Playlist { name: string; entries: PlaylistEntry[]; loop: boolean }
+export interface Playlist { name: string; entries: PlaylistEntry[]; loop: boolean; /** Random order, new each time round. */ shuffle?: boolean }
 export type OnAt = { kind: 'sunset'; offsetMinutes?: number } | { kind: 'time'; time: string };
 export type OffAt = { kind: 'time'; time: string } | { kind: 'sunrise'; offsetMinutes?: number };
 export interface Schedule {
@@ -144,7 +144,7 @@ export const api = {
   setHousePart: (id: string, p: Partial<Omit<HousePart, 'id' | 'bytes' | 'uploadedAt'>>) => call<HousePart>('PATCH', `/api/house/parts/${enc(id)}`, p),
   deleteHousePart: (id: string) => call<{ deleted: string }>('DELETE', `/api/house/parts/${enc(id)}`),
   playlists: () => call<Playlist[]>('GET', '/api/playlists'),
-  savePlaylist: (p: Playlist) => call<Playlist>('PUT', `/api/playlists/${enc(p.name)}`, { entries: p.entries, loop: p.loop }),
+  savePlaylist: (p: Playlist) => call<Playlist>('PUT', `/api/playlists/${enc(p.name)}`, { entries: p.entries, loop: p.loop, shuffle: !!p.shuffle }),
   deletePlaylist: (name: string) => call<{ deleted: string }>('DELETE', `/api/playlists/${enc(name)}`),
   playPlaylist: (name: string) => call<{ playing: string }>('POST', `/api/playlists/${enc(name)}/play`),
   stopPlaylist: () => call<{ playing: null }>('POST', '/api/playlists/stop'),

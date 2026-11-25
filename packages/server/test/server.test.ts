@@ -212,6 +212,14 @@ describe('playlists and the nightly schedule', () => {
   }
   const pixel = async (app: App) => [...(await app.server.inject('/api/frame')).rawPayload.subarray(0, 3)];
 
+  it('keeps a playlist’s shuffle setting (and leaves it off unless asked)', async () => {
+    const { app } = await clockApp();
+    const on = await app.server.inject({ method: 'PUT', url: '/api/playlists/Mix', payload: { entries: [{ scene: 'Blue', seconds: 60 }, { scene: 'Red', seconds: 30 }], shuffle: true } });
+    expect(on.json()).toMatchObject({ shuffle: true, loop: true });
+    const off = await app.server.inject({ method: 'PUT', url: '/api/playlists/Plain', payload: { entries: [{ scene: 'Blue', seconds: 60 }] } });
+    expect(off.json()).not.toHaveProperty('shuffle');
+  });
+
   it('plays a playlist, moving through scenes on time and looping; Go stops it', async () => {
     const { app, advance } = await clockApp();
     const put = await app.server.inject({ method: 'PUT', url: '/api/playlists/Evening', payload: { entries: [{ scene: 'Blue', seconds: 60 }, { scene: 'Red', seconds: 30 }], loop: true } });
