@@ -218,6 +218,9 @@ export function startHomeAssistant(app: App, opts: HomeAssistantOptions, log: Lo
       const b = Math.min(1, Math.max(0, cmd.brightness / 255));
       if (b !== show.state.output.brightness) await show.setOutput({ brightness: b });
     }
+    // Owner's choice (2026-11-25): "on" means the porch shows the app, so take the porch back from
+    // WLED's own playlist too. ("Off" stays a blackout under the app's control.)
+    if (!show.state.output.enabled) await show.setOutput({ enabled: true });
     if (show.state.activeScene === null) {
       // Back on: the last scene that was on (if it still exists), else the first one.
       const s = show.state;

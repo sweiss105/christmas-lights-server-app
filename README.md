@@ -65,14 +65,14 @@ If the broker is down or the password is wrong, the lights carry on as normal: t
 
 | Entity | What it does |
 |---|---|
-| **Porch Lights** (light) | Off = Blackout: the porch goes dark but stays under the app's control. On = puts back the last scene that was on (or the first scene). Brightness is the app's master brightness. |
+| **Porch Lights** (light) | Off = Blackout: the porch goes dark but stays under the app's control. On = turns streaming on and puts back the last scene that was on (or the first scene). Brightness is the app's master brightness. |
 | **Scene** (select) | Lists the scenes as the app does. Choosing one is the app's Go (with its fade), and stops a playing playlist. Shows the scene on the porch, or nothing when blacked out. |
 | **Playlist** (select) | `(none)` plus your playlists. Choosing one plays it; `(none)` stops it (the scene on stage stays on). |
 | **App controls porch** (switch) | The app's streaming switch. On: the app drives the porch. Off: the porch is handed back to the WLED controller's own playlist. |
 | **Now showing** (sensor) | The scene on the porch, `Off` when blacked out, or `WLED playlist` when the app isn't controlling the porch. |
 | **Controller** (connectivity, diagnostic) | Whether the WLED controller answers the app's health checks. |
 
-**Streaming must be on** (*App controls porch*) for the porch to follow the light, scene and playlist controls. With it off they still change what the app has on stage, which shows as soon as streaming is turned back on, e.g. by the nightly schedule.
+**Turning the light on also turns streaming on** (*App controls porch*), so the porch follows the app. The scene and playlist pickers don't: with streaming off they change what the app has on stage, which shows as soon as streaming is turned on (by the light, the switch or the nightly schedule). Turning the light off is a blackout; the app keeps control of the porch.
 
 Scenes and playlists added, renamed or deleted in the app show up in the selects straight away. Everything goes through the same code as the app's own buttons, so fades, playlists, the schedule and saving work the same either way. Home Assistant shows the device as unavailable when the app is stopped or can't be reached.
 

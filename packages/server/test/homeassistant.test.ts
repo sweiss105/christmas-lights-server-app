@@ -150,7 +150,7 @@ describe('Home Assistant over MQTT', () => {
     expect(JSON.parse(got.get('xmas/streaming/attributes')!).description).toMatch(/WLED controller's own playlist/);
   });
 
-  it('light off blacks out, on brings back the last scene at the given brightness', async () => {
+  it('light off blacks out, on brings back the last scene at the given brightness and takes the porch back', async () => {
     const { app, state, ha } = await linked();
     await ha.send('xmas/light/set', JSON.stringify({ state: 'OFF' }));
     await ha.until('xmas/light/state', (p) => JSON.parse(p).state === 'OFF');
@@ -162,6 +162,8 @@ describe('Home Assistant over MQTT', () => {
     await ha.send('xmas/light/set', JSON.stringify({ state: 'ON', brightness: 128 }));
     await ha.until('xmas/light/state', (p) => JSON.parse(p).state === 'ON');
     expect(state.activeScene).toBe('Red');
+    expect(state.output.enabled).toBe(true); // on = the porch follows the app (owner's choice)
+    await ha.until('xmas/streaming/state', (p) => p === 'ON');
     expect(app.engine().output.brightness).toBeCloseTo(128 / 255);
     expect(state.output.brightness).toBeCloseTo(128 / 255);
     expect(ha.json('xmas/light/state')).toEqual({ state: 'ON', brightness: 128, color_mode: 'brightness' });
