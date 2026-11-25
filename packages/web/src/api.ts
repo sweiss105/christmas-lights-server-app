@@ -78,6 +78,8 @@ export interface MappingView {
   detections: { pixel: number; x: number; y: number; strength?: number; margin?: number }[];
   stats?: Partial<DecodeStats>;
   label?: string;
+  /** Which camera filmed it ("label@zoom"); spots with the same one share a focal length when solving. */
+  camera?: string;
 }
 
 export interface MappingStart { active: boolean; now: number; streaming: boolean; startsAt: number; endsAt: number; plan: MappingPlan }
@@ -151,9 +153,19 @@ export const api = {
   go: (name: string) => call<{ active: string }>('POST', `/api/scenes/${enc(name)}/activate`),
   blackout: () => call<{ active: null }>('POST', '/api/blackout'),
   mappingStart: (p: Partial<MappingParams> & { leadMs?: number }) => call<MappingStart>('POST', '/api/mapping/start', p),
+  /** Brightness test: every k-th light held at `level` for `seconds` (0 stops it). */
+  mappingPreview: (p: Partial<MappingParams> & { seconds: number }) => call<{ preview: { lights: number; level: number } | null }>('POST', '/api/mapping/preview', p),
   mappingStop: () => call<{ active: boolean }>('POST', '/api/mapping/stop'),
   mappingViews: () => call<MappingView[]>('GET', '/api/mapping/views'),
   saveMappingView: (v: Omit<MappingView, 'id' | 'createdAt' | 'layoutPixels'>) => call<MappingView>('POST', '/api/mapping/views', v),
+  /** A spot's footage copy (see mapping/cameraControl.ts); raw bytes, not JSON. */
+  uploadRecording: async (blob: Blob, q: { view: string; label: string; gz: boolean }) => {
+    const res = await fetch(`/api/mapping/recordings?view=${enc(q.view)}&label=${enc(q.label)}&gz=${q.gz ? 1 : 0}`, {
+      method: 'POST', headers: { 'x-client-id': CLIENT_ID, 'content-type': 'application/octet-stream' }, body: blob, credentials: 'same-origin',
+    });
+    if (!res.ok) throw new ApiError(res.status, `uploading the footage failed (${res.status})`);
+    return (await res.json()) as { saved: string; bytes: number };
+  },
   deleteMappingView: (id: string) => call<{ deleted: string }>('DELETE', `/api/mapping/views/${enc(id)}`),
   /** Save a backup now; `reason` starts its file name. */
   backupNow: (reason: string) => call<{ file: string }>('POST', '/api/backups', { reason }),

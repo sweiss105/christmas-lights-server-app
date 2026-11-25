@@ -5,6 +5,8 @@
  * y down, z forward (away from the camera). A pose is the rotation R and translation t taking
  * world points into camera coordinates: Xc = R·Xw + t. Pictures are in pixels with (0,0) at the top
  * left; the principal point is the picture centre and pixels are square, which suits phone video.
+ * Wide lenses bend straight lines (barrel distortion); one radial term `k1` covers most of it:
+ * a point at normalised radius r is drawn at r·(1 + k1·r²).
  */
 import type { Vec3 } from '../layout.js';
 
@@ -13,7 +15,7 @@ export type Mat3 = [number, number, number, number, number, number, number, numb
 
 export interface Pose { R: Mat3; t: Vec3 }
 
-export interface Intrinsics { f: number; cx: number; cy: number }
+export interface Intrinsics { f: number; cx: number; cy: number; /** Radial distortion (0 = none; negative = barrel). */ k1?: number }
 
 export const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 export const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -58,7 +60,19 @@ export const cameraCenter = (p: Pose): Vec3 => scale(mulMV(transpose(p.R), p.t),
 export function project(p: Pose, k: Intrinsics, X: Vec3): [number, number] | null {
   const c = add(mulMV(p.R, X), p.t);
   if (c[2] <= 1e-6) return null;
-  return [k.f * c[0] / c[2] + k.cx, k.f * c[1] / c[2] + k.cy];
+  const xn = c[0] / c[2], yn = c[1] / c[2];
+  const s = 1 + (k.k1 ?? 0) * (xn * xn + yn * yn);
+  return [k.f * xn * s + k.cx, k.f * yn * s + k.cy];
+}
+
+/** Normalised, undistorted picture coordinates of a pixel (inverting the k1 term by iteration). */
+export function undistort(k: Intrinsics, x: number, y: number): [number, number] {
+  const xd = (x - k.cx) / k.f, yd = (y - k.cy) / k.f;
+  const k1 = k.k1 ?? 0;
+  if (!k1) return [xd, yd];
+  let xn = xd, yn = yd;
+  for (let i = 0; i < 20; i++) { const s = 1 + k1 * (xn * xn + yn * yn); xn = xd / s; yn = yd / s; }
+  return [xn, yn];
 }
 
 /** Depth of a world point in front of the camera. */
@@ -66,7 +80,8 @@ export const depth = (p: Pose, X: Vec3) => dot([p.R[6], p.R[7], p.R[8]], X) + p.
 
 /** World-space ray (origin, unit direction) through a picture point. */
 export function pixelRay(p: Pose, k: Intrinsics, x: number, y: number): { origin: Vec3; dir: Vec3 } {
-  const dc: Vec3 = [(x - k.cx) / k.f, (y - k.cy) / k.f, 1];
+  const [xn, yn] = undistort(k, x, y);
+  const dc: Vec3 = [xn, yn, 1];
   return { origin: cameraCenter(p), dir: normalize(mulMV(transpose(p.R), dc)) };
 }
 
