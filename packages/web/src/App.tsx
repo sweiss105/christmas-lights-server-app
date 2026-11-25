@@ -26,6 +26,14 @@ type View = 'preview' | 'stage';
 /** Width of the house panel (matches .house-panel in styles.css); the 3D view shifts aside while it's open. */
 const HOUSE_PANEL_W = 280;
 
+const CAMERA_VIEWS: { value: CameraPreset; label: string; hint: string }[] = [
+  { value: 'house', label: 'House', hint: 'The whole house and yard' },
+  { value: 'front', label: 'Front', hint: 'The front of the house, straight on' },
+  { value: 'close', label: 'Close', hint: 'Close up on the lights' },
+  { value: 'angle', label: 'Angle', hint: 'From the front left' },
+  { value: 'top', label: 'Top', hint: 'From above' },
+];
+
 export function App() {
   const show = useShow();
   const { layout, scenes, status, stage } = show;
@@ -91,6 +99,13 @@ export function App() {
   const sheetInset = useSheetInset(phone, !!layout && !!status);
   const leftInset = phone ? 0 : sideLeft;
   const rightInset = phone ? 0 : sideRight;
+  // The top bar (and on phones the camera bar under it) and the view bar cover the canvas too.
+  const topbarInset = useInset('.topbar', 'top', !!layout && !!status);
+  const phoneCameraInset = useInset('.phone-camera', 'top', !!layout && !!status && phone);
+  const viewbarInset = useInset('.viewbar', 'bottom', !!layout && !!status && !phone);
+  const topInset = phone ? Math.max(topbarInset, phoneCameraInset) : topbarInset;
+  const bottomInset = phone ? sheetInset : viewbarInset;
+  const pickCamera = (v: CameraPreset) => setPreset((p) => ({ name: v, nonce: p.nonce + 1 }));
   useHistoryKeys(layoutMode ? layoutDraft : editor);
 
   const selectedScene = scenes.find((s) => s.name === selected) ?? null;
@@ -130,7 +145,7 @@ export function App() {
 
   return (
     <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : `${panels.left ? '' : 'hide-left'} ${panels.right ? '' : 'hide-right'}`}`}>
-      <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} bottomInset={sheetInset} house={show.house}
+      <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} topInset={topInset} bottomInset={bottomInset} house={show.house}
         selection={selectMode ? selection : null} onProjector={selectMode || paintMode ? onProjector : undefined}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
@@ -198,12 +213,17 @@ export function App() {
         <Segmented
           label="Camera"
           value={preset.name}
-          options={[{ value: 'front', label: 'Front' }, { value: 'close', label: 'Close' }, { value: 'angle', label: 'Angle' }, { value: 'top', label: 'Top' }]}
-          onChange={(v) => setPreset((p) => ({ name: v as CameraPreset, nonce: p.nonce + 1 }))}
+          options={CAMERA_VIEWS}
+          onChange={pickCamera}
           reselect
         />
         {!phone && <PanelToggle side="right" shown={panels.right} onToggle={() => panels.toggle('right')} />}
       </div>
+      {phone && (
+        <div className="phone-camera" role="toolbar" aria-label="Preview camera">
+          <Segmented label="Camera" value={preset.name} options={CAMERA_VIEWS} onChange={pickCamera} reselect />
+        </div>
+      )}
       {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
       {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
 
@@ -264,14 +284,16 @@ function useSheetInset(phone: boolean, ready: boolean): number {
   return inset;
 }
 
-/** How much of the window's width a side panel covers (plus margin), tracked through resizes. */
-function useInset(selector: string, side: 'left' | 'right', ready: boolean) {
+/** How much of the window a panel or bar covers from one edge (plus margin), tracked through resizes. */
+function useInset(selector: string, side: 'left' | 'right' | 'top' | 'bottom', ready: boolean) {
   const [inset, setInset] = useState(0);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready) { setInset(0); return; }
     const measure = () => {
       const r = document.querySelector(selector)?.getBoundingClientRect();
-      setInset(!r || r.width === 0 ? 0 : side === 'left' ? r.right + 12 : window.innerWidth - r.left + 12);
+      setInset(!r || r.width === 0 ? 0
+        : side === 'left' ? r.right + 12 : side === 'right' ? window.innerWidth - r.left + 12
+        : side === 'top' ? r.bottom + 8 : window.innerHeight - r.top + 8);
     };
     measure();
     const ro = new ResizeObserver(measure);
