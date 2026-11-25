@@ -1,7 +1,7 @@
 /** Persisted show state: one JSON file, written atomically. */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { LayerConfig, LayoutConfig, OutputSettings, SceneConfig } from '@xmas/engine';
+import type { LayerConfig, LayoutConfig, OutputSettings, SavedPalette, SceneConfig } from '@xmas/engine';
 import type { PlaylistConfig, ScheduleConfig } from './show.js';
 
 /** A saved layer look: an effect with all its settings, reusable in any scene. */
@@ -60,6 +60,12 @@ export interface ShowState {
   scheduleInWindow?: boolean;
   /** Layer presets by name. Missing in state files from before presets existed. */
   presets?: Record<string, PresetConfig>;
+  /**
+   * Saved palettes by name (edited copies of built-in ones), for any layer to pick. A layer that uses
+   * one keeps its own copy of the stops (params.paletteStops), so renaming or deleting one never changes
+   * a scene. Missing in state files from before palettes could be saved.
+   */
+  palettes?: Record<string, SavedPalette>;
 }
 
 export async function loadState(path: string, examplePath: string): Promise<ShowState> {

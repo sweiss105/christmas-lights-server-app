@@ -419,6 +419,21 @@ h1, h2 { margin: 0; }
   border-radius: 14px; background: #121620; border: 1px solid var(--edge-top); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6); animation: pop-in 160ms ease-out; transform-origin: top center;
 }
 .palette-list { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; }
+/* The selected palette's colours: tap one to change it. */
+.palette-edit { padding: 0 16px 6px; display: flex; flex-direction: column; gap: 8px; }
+.palette-swatches { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+.pal-swatch {
+  position: relative; height: 32px; border-radius: 8px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  transition: transform 120ms ease-out, box-shadow 150ms ease;
+}
+.pal-swatch:hover { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45); }
+.pal-swatch:active { transform: scale(0.94); transition-duration: 60ms; }
+.pal-swatch:focus-within { box-shadow: 0 0 0 2px var(--bg, #0b0d12), 0 0 0 4px #fff; }
+/* The native colour input fills the swatch, invisible, so a tap opens the system colour picker. */
+.pal-swatch input[type='color'] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; }
+.palette-actions { padding: 0; }
+.palette-actions .title-input { flex: 1; min-width: 120px; }
+@media (prefers-reduced-motion: reduce) { .pal-swatch { transition: none; } }
 
 .fade-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 10px; font-size: 0.82rem; color: var(--text-2); }
 .fade-row select { min-height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 0.85rem; }

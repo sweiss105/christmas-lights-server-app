@@ -125,6 +125,28 @@ try {
   check(await shows(page.getByRole('dialog', { name: 'Map lights' })), 'the Map lights screen opens');
   await page.getByRole('button', { name: 'Close mapping' }).click();
   check(await shows(page.locator('.scene-row')), 'closing Map lights goes back to the app');
+  // Palette colours: the selected palette's colours show as swatches; changing one makes an edited copy
+  // that the preview draws at once, and Undo puts the original back.
+  const sceneApi = `${base}/api/scenes/${encodeURIComponent('Palette test')}`;
+  const savedLayer = async () => (await (await fetch(sceneApi)).json()).layers[0];
+  await fetch(`${sceneApi}?apply=false`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ layers: [{ id: 'p', effect: 'wled-palette', params: { palette: 'Party', check1: false } }] }) });
+  await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Palette test' }).click({ timeout: 8000 });
+  const swatches = page.getByRole('group', { name: 'Colours of Party' }).locator('input[type="color"]');
+  check(await shows(swatches) && await swatches.count() === 16, 'the selected palette shows its colours as swatches');
+  const canvas = page.locator('.preview-canvas canvas');
+  await page.waitForTimeout(500);
+  const shotBefore = await canvas.screenshot();
+  await page.getByLabel('Palette colour 1 of 16', { exact: true }).fill('#00ff00');
+  await page.waitForTimeout(800);
+  check(await shows(page.getByRole('button', { name: 'Palette: Party (edited)' })), 'changing a colour makes an edited copy of the palette');
+  check(!shotBefore.equals(await canvas.screenshot()), 'the preview shows the edited palette');
+  const edited = await savedLayer();
+  check(edited.params.palette === 'Party (edited)' && edited.params.paletteStops?.[0]?.[1] === '#00ff00', 'the edited colours are saved with the layer');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await page.waitForTimeout(600);
+  const undone = await savedLayer();
+  check(undone.params.palette === 'Party' && undone.params.paletteStops === undefined, 'Undo puts the original palette back');
   const camErrors = errors.filter((e) => !/camera|getUserMedia|NotFound|NotAllowed|Requested device/i.test(e));
   check(camErrors.length === 0, `no page errors${camErrors.length ? `: ${camErrors.join(' | ')}` : ''}`);
 

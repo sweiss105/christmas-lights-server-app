@@ -144,7 +144,7 @@ describe('WLED metadata → params', () => {
     expect(m.is2D).toBe(false);
     const ps = paramsFromMeta(m);
     // color1 and color3 have no control in WLED's UI, but "* Color…" palettes still use them.
-    expect(ps.map((p) => p.key)).toEqual(['speed', 'intensity', 'custom1', 'check2', 'color2', 'color1', 'color3', 'palette', 'mapping']);
+    expect(ps.map((p) => p.key)).toEqual(['speed', 'intensity', 'custom1', 'check2', 'color2', 'color1', 'color3', 'palette', 'paletteStops', 'mapping']);
     expect(ps.find((p) => p.key === 'color1')).toMatchObject({ label: 'Palette colour 1', when: { key: 'palette', startsWith: '* ' } });
     expect(ps.find((p) => p.key === 'color2')).not.toHaveProperty('when');
     expect(ps.find((p) => p.key === 'custom1')!.default).toBe(0);
@@ -162,7 +162,7 @@ describe('WLED metadata → params', () => {
     const dna = parseWledMeta('DNA@Scroll speed,Blur,,,,Smear;;!;2;ix=0');
     expect(dna.is2D).toBe(true);
     expect(paramsFromMeta(dna).some((p) => p.key === 'mapping')).toBe(false);
-    expect(paramsFromMeta(parseWledMeta('Solid')).map((p) => p.key)).toEqual(['speed', 'intensity', 'color1', 'color2', 'color3', 'palette', 'mapping']);
+    expect(paramsFromMeta(parseWledMeta('Solid')).map((p) => p.key)).toEqual(['speed', 'intensity', 'color1', 'color2', 'color3', 'palette', 'paletteStops', 'mapping']);
     expect(wledSlug('Fire 2012')).toBe('wled-fire-2012');
   });
 });

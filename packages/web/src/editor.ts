@@ -152,6 +152,15 @@ export function setParam(scene: SceneConfig, id: string, key: string, value: unk
   return mapLayer(scene, id, (l) => ({ ...l, params: { ...(l.params ?? {}), [key]: value } }));
 }
 
+/** Set several params at once (one undo step); `undefined` removes a param. */
+export function setParams(scene: SceneConfig, id: string, patch: Record<string, unknown>): SceneConfig {
+  return mapLayer(scene, id, (l) => {
+    const params = { ...(l.params ?? {}), ...patch };
+    for (const [k, v] of Object.entries(patch)) if (v === undefined) delete params[k];
+    return { ...l, params };
+  });
+}
+
 /** The parts of a layer a preset saves. */
 export function lookOf(layer: LayerConfig): Look {
   const { id: _id, enabled: _enabled, paint: _paint, ...look } = layer;

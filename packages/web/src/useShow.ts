@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LayoutConfig, SceneConfig } from '@xmas/engine';
+import type { LayoutConfig, SavedPalette, SceneConfig } from '@xmas/engine';
 import { api, ApiError, CLIENT_ID, type House, type Preset, type Status } from './api';
 import { ServerClock } from './clock';
 
@@ -17,6 +17,9 @@ export interface Show {
   refresh: () => Promise<void>;
   presets: Preset[];
   refreshPresets: () => Promise<void>;
+  /** Saved palettes (edited copies of built-in ones), for every layer's palette picker. */
+  palettes: SavedPalette[];
+  refreshPalettes: () => Promise<void>;
   house: House | null;
   setHouseLocal: (h: House) => void;
   /** Record a scene the editor just saved, without reloading everything. */
@@ -41,6 +44,7 @@ export function useShow(): Show {
   const [status, setStatus] = useState<Status | null>(null);
   const [stage, setStage] = useState<SceneConfig | null>(null);
   const [presets, setPresets] = useState<Preset[]>([]);
+  const [palettes, setPalettes] = useState<SavedPalette[]>([]);
   const [house, setHouse] = useState<House | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,15 +113,16 @@ export function useShow(): Show {
   }, [refresh, pollStatus, reportError]);
 
   const refreshPresets = useCallback(async () => { setPresets(await api.presets()); }, []);
-  useEffect(() => { refreshPresets().catch(() => {}); api.house().then(setHouse).catch(() => {}); }, [refreshPresets]);
+  const refreshPalettes = useCallback(async () => { setPalettes(await api.palettes()); }, []);
+  useEffect(() => { refreshPresets().catch(() => {}); refreshPalettes().catch(() => {}); api.house().then(setHouse).catch(() => {}); }, [refreshPresets, refreshPalettes]);
 
   const reloadAll = useCallback(async () => {
-    await Promise.all([load(), refreshPresets(), api.house().then(setHouse)]);
+    await Promise.all([load(), refreshPresets(), refreshPalettes(), api.house().then(setHouse)]);
     setEpoch((n) => n + 1);
-  }, [load, refreshPresets]);
+  }, [load, refreshPresets, refreshPalettes]);
   onOutsideChange.current = () => {
     void (async () => {
-      const [scenesChanged] = await Promise.all([load(), refreshPresets(), api.house().then(setHouse)]);
+      const [scenesChanged] = await Promise.all([load(), refreshPresets(), refreshPalettes(), api.house().then(setHouse)]);
       if (scenesChanged) setEpoch((n) => n + 1);
     })().catch(() => {});
   };
@@ -136,7 +141,7 @@ export function useShow(): Show {
 
   return useMemo(() => ({
     layout, scenes, status, stage, clock: clockRef.current, connected, error,
-    reportError, clearError, refresh, markSceneSaved, presets, refreshPresets, house, setHouseLocal: setHouse,
+    reportError, clearError, refresh, markSceneSaved, presets, refreshPresets, palettes, refreshPalettes, house, setHouseLocal: setHouse,
     needsToken, epoch, reloadAll,
-  }), [layout, scenes, status, stage, connected, error, reportError, clearError, refresh, markSceneSaved, presets, refreshPresets, house, needsToken, epoch, reloadAll]);
+  }), [layout, scenes, status, stage, connected, error, reportError, clearError, refresh, markSceneSaved, presets, refreshPresets, palettes, refreshPalettes, house, needsToken, epoch, reloadAll]);
 }

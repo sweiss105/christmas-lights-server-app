@@ -4,7 +4,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { dirname, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { buildLayout, Engine, EFFECTS, LayoutError, validateScene, type LayerConfig, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { buildLayout, checkPaletteStops, Engine, EFFECTS, LayoutError, PALETTE_NAMES, validateScene, type LayerConfig, type LayoutConfig, type SavedPalette, type SceneConfig } from '@xmas/engine';
 import { registerMapping } from './mapping.js';
 import { OutputLoop } from './output.js';
 import { inWindow, isTimeZone, nextWindow, playlistPosition, type PlaylistConfig, type ScheduleConfig } from './show.js';
@@ -163,6 +163,19 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.get('/api/groups', async () => [...engine.layout.groups.entries()].map(([name, m]) => ({ name, pixels: m.reduce((a, b) => a + b, 0) })));
 
   // ---- scenes -------------------------------------------------------------
+  /**
+   * A layer that names a saved palette without its colours (e.g. a scene written by hand or a script)
+   * gets a copy of them, so it draws the same whatever later happens to the saved palette.
+   */
+  const withSavedPalettes = (layers: LayerConfig[] | undefined): LayerConfig[] => {
+    if (!Array.isArray(layers)) return layers as unknown as LayerConfig[];
+    return layers.map((l) => {
+      const name = l?.params?.palette;
+      if (typeof name !== 'string' || l.params!.paletteStops != null || PALETTE_NAMES.includes(name)) return l;
+      const saved = state.palettes && Object.hasOwn(state.palettes, name) ? state.palettes[name] : undefined;
+      return saved ? { ...l, params: { ...l.params, paletteStops: structuredClone(saved.stops) } } : l;
+    });
+  };
   const sceneNameOk = (name: string) => name.length > 0 && name.length <= MAX_NAME && name === name.trim() && name !== '__proto__';
   /** What still refers to a scene, in words for an error message. */
   const sceneUses = (name: string): string[] => {
@@ -190,7 +203,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     if (!sceneNameOk(req.params.name)) throw new HttpError(400, `a scene name must be 1..${MAX_NAME} characters`);
     let valid: SceneConfig;
     const probe = new Engine(engine.layout);
-    try { valid = probe.setScene({ ...req.body, name: req.params.name }); } catch (e) { throw bad(e); }
+    try { valid = probe.setScene({ ...req.body, name: req.params.name, layers: withSavedPalettes(req.body?.layers) }); } catch (e) { throw bad(e); }
     state.scenes[valid.name] = valid;
     if (apply === 'true' && state.activeScene === valid.name) engine.setScene(valid); // Live edit
     await persist();
@@ -624,7 +637,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     const name = req.params.name.trim();
     if (!name || name.length > 80) throw new HttpError(400, 'preset name must be 1..80 characters');
     let preset: PresetConfig;
-    try { preset = validatePreset(name, req.body ?? {}); } catch (e) { throw bad(e); }
+    try { preset = validatePreset(name, withSavedPalettes([req.body ?? {}] as LayerConfig[])[0]!); } catch (e) { throw bad(e); }
     state.presets = { ...(state.presets ?? {}), [name]: preset };
     await persist();
     return preset;
@@ -633,6 +646,60 @@ export async function createApp(opts: AppOptions): Promise<App> {
   server.delete<{ Params: { name: string } }>('/api/presets/:name', async (req) => {
     if (!state.presets?.[req.params.name]) throw new HttpError(404, 'no such preset');
     delete state.presets[req.params.name];
+    await persist();
+    return { deleted: req.params.name };
+  });
+
+  // ---- saved palettes -------------------------------------------------------
+  const savedPalette = (name: string): SavedPalette | undefined => (state.palettes && Object.hasOwn(state.palettes, name) ? state.palettes[name] : undefined);
+  /** A built-in name always means the built-in palette, and "* " starts WLED's colour-based ones. */
+  const paletteNameError = (name: string): string | null => {
+    if (!name || name.length > 60 || name !== name.trim() || name === '__proto__') return 'a palette name must be 1..60 characters';
+    if (PALETTE_NAMES.includes(name) || name.startsWith('* ')) return `"${name}" is a built-in palette's name`;
+    return null;
+  };
+
+  server.get('/api/palettes', async () => Object.values(state.palettes ?? {}).sort((a, b) => a.name.localeCompare(b.name)));
+
+  server.get<{ Params: { name: string } }>('/api/palettes/:name', async (req) => {
+    const p = savedPalette(req.params.name);
+    if (!p) throw new HttpError(404, 'no such palette');
+    return p;
+  });
+
+  /** Save (or replace) a palette: `{ stops: [[0, "#ff0000"], ..., [255, "#0000ff"]] }`. */
+  server.put<{ Params: { name: string }; Body: { stops?: unknown } }>('/api/palettes/:name', async (req) => {
+    const name = req.params.name;
+    const err = paletteNameError(name);
+    if (err) throw new HttpError(400, err);
+    let stops;
+    try { stops = checkPaletteStops(req.body?.stops); } catch (e) { throw bad(e); }
+    const p: SavedPalette = { name, stops };
+    state.palettes = { ...(state.palettes ?? {}), [name]: p };
+    await persist();
+    return p;
+  });
+
+  /** Rename a palette. Layers keep their own copy of its colours (under the name they had), so scenes don't change. */
+  server.post<{ Params: { name: string }; Body: { to?: string } }>('/api/palettes/:name/rename', async (req) => {
+    const from = req.params.name;
+    const p = savedPalette(from);
+    if (!p) throw new HttpError(404, 'no such palette');
+    const to = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
+    const err = paletteNameError(to);
+    if (err) throw new HttpError(400, err);
+    if (to === from) return p;
+    if (savedPalette(to)) throw new HttpError(409, `there is already a palette called "${to}"`);
+    const renamed = { ...p, name: to };
+    state.palettes = Object.fromEntries(Object.entries(state.palettes!).map(([k, v]) => (k === from ? [to, renamed] : [k, v])));
+    await persist();
+    return renamed;
+  });
+
+  /** Delete a palette. Layers using it keep their own copy of its colours. */
+  server.delete<{ Params: { name: string } }>('/api/palettes/:name', async (req) => {
+    if (!savedPalette(req.params.name)) throw new HttpError(404, 'no such palette');
+    delete state.palettes![req.params.name];
     await persist();
     return { deleted: req.params.name };
   });

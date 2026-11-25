@@ -1,10 +1,10 @@
 import { cloneElement, useEffect, useId, useMemo, useState } from 'react';
 import { BLEND_MODES, EFFECTS, buildLayout, resolveParams, type BlendMode, type LayerConfig, type ParamSpec } from '@xmas/engine';
-import { addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, updateLayer, type SceneEditor } from './editor';
+import { addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, setParams, updateLayer, type SceneEditor } from './editor';
 import { api, type Preset } from './api';
 import { LayerPicker } from './LayerPicker';
 import { paintedCount } from './paint';
-import { PalettePicker } from './PalettePicker';
+import { PaletteControl, type PalettePatch } from './PalettePicker';
 import type { EditMode } from './useSceneEditor';
 import type { Show } from './useShow';
 
@@ -172,14 +172,19 @@ function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: S
 
       {def && def.params.length > 0 && <div className="section-head"><h3>{def.name} settings</h3></div>}
       {def?.params.filter((p) => !('when' in p && p.when) || String(params[p.when.key] ?? '').startsWith(p.when.startsWith)).map((p) => (
-        <ParamControl key={p.key} spec={p} value={params[p.key]} params={params} onEnd={end}
-          onChange={(v, merge) => editor.edit(setParam(scene(), id, p.key, v), merge ? { merge: `${id}.${p.key}` } : {})} />
+        <ParamControl key={p.key} spec={p} value={params[p.key]} params={params} onEnd={end} show={show}
+          onChange={(v, merge) => editor.edit(setParam(scene(), id, p.key, v), merge ? { merge: `${id}.${p.key}` } : {})}
+          onPatch={(patch, merge) => editor.edit(setParams(scene(), id, { ...patch }), merge ? { merge: `${id}.paletteStops` } : {})} />
       ))}
     </div>
   );
 }
 
-export function ParamControl({ spec, value, params, onChange, onEnd }: { spec: ParamSpec; value: unknown; params?: Record<string, unknown>; onChange: (v: unknown, merge: boolean) => void; onEnd: () => void }) {
+export function ParamControl({ spec, value, params, onChange, onEnd, show, onPatch }: {
+  spec: ParamSpec; value: unknown; params?: Record<string, unknown>; onChange: (v: unknown, merge: boolean) => void; onEnd: () => void;
+  /** For the palette: saved palettes, and setting the palette with its colours (params `palette` and `paletteStops`) in one step. */
+  show?: Show; onPatch?: (p: PalettePatch, merge: boolean) => void;
+}) {
   switch (spec.type) {
     case 'number':
       return <Slider label={spec.label} min={spec.min} max={spec.max} step={spec.step ?? 0.01} value={value as number}
@@ -218,7 +223,13 @@ export function ParamControl({ spec, value, params, onChange, onEnd }: { spec: P
         </div>
       );
     case 'palette':
-      return <PalettePicker label={spec.label} value={value as string} params={params ?? {}} onChange={(v) => onChange(v, false)} />;
+      return (
+        <PaletteControl label={spec.label} value={value as string} params={params ?? {}} saved={show?.palettes ?? []} onEnd={onEnd}
+          onPatch={(p, merge) => (onPatch ? onPatch(p, merge) : onChange(p.palette, merge))}
+          onSavedChange={show?.refreshPalettes ?? (async () => {})} reportError={show?.reportError ?? (() => {})} />
+      );
+    case 'stops':
+      return null; // edited with the palette
     case 'vec3':
       return spec.key === 'center'
         ? <PositionControl label={spec.label} value={value as number[]} onChange={onChange} onEnd={onEnd} />
