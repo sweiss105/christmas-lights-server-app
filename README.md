@@ -36,6 +36,45 @@ Environment variables:
 | `XMAS_WEB_ROOT` | `packages/web/dist` | Built web UI served at `/` |
 | `XMAS_TZ` (Docker) / `TZ` | UTC | Time zone for Scrolling Text's `#TIME`/`#DATE` tokens, e.g. `America/Chicago` |
 | `XMAS_API_TOKEN` | unset | Requires the token on every `/api` route except `/api/health` and `/api/login`: scripts send `Authorization: Bearer <token>`, and the web UI asks for it once and keeps it in a cookie. **Set this or put Cloudflare Access in front before you expose the site through cloudflared.** |
+| `XMAS_MQTT_URL` | unset | MQTT broker for Home Assistant, e.g. `mqtt://10.10.1.5:1883`. Unset: no Home Assistant link. See [Home Assistant](#home-assistant) |
+| `XMAS_MQTT_USERNAME`, `XMAS_MQTT_PASSWORD` | unset | The MQTT user the app signs in as (the password is never logged) |
+| `XMAS_MQTT_DISCOVERY_PREFIX` | `homeassistant` | Home Assistant's MQTT discovery prefix |
+| `XMAS_MQTT_TOPIC` | `xmas` | Base topic for state and commands; also makes the entity ids unique |
+
+## Home Assistant
+
+The porch can show up in Home Assistant as a device called **Porch Lights**, with no YAML: the app talks to Home Assistant's MQTT broker and announces itself (MQTT discovery).
+
+### Setup
+
+1. In Home Assistant, if you don't already have an MQTT broker: *Settings → Add-ons → Add-on store → Mosquitto broker → Install*, then *Start* (turn on *Start on boot*).
+2. Add the MQTT integration if Home Assistant hasn't offered it already: *Settings → Devices & services → Add integration → MQTT*, and accept the Mosquitto broker it finds.
+3. Create a user for the app to sign in with: *Settings → People → Users → Add user* (turn on *Advanced mode* in your profile if you don't see Users), e.g. name `xmas-lights`, a long password, and *Can only log in from the local network*. Mosquitto accepts Home Assistant users.
+4. On the server that runs the lights, add to the `.env` next to `docker-compose.yml` (use Home Assistant's IP address; the broker listens on port 1883):
+   ```
+   XMAS_MQTT_URL=mqtt://10.10.1.5:1883
+   XMAS_MQTT_USERNAME=xmas-lights
+   XMAS_MQTT_PASSWORD=the-password
+   ```
+5. Restart the container: `docker compose up -d`. The log says `home assistant: connected to MQTT broker …`, and the app's health bar at the bottom shows *Home Assistant linked*.
+6. In Home Assistant, *Settings → Devices & services → MQTT → Devices* now lists **Porch Lights**. Add it to a dashboard, or use its entities in automations.
+
+If the broker is down or the password is wrong, the lights carry on as normal: the app keeps retrying every few seconds and logs why it can't connect.
+
+### What appears
+
+| Entity | What it does |
+|---|---|
+| **Porch Lights** (light) | Off = Blackout: the porch goes dark but stays under the app's control. On = puts back the last scene that was on (or the first scene). Brightness is the app's master brightness. |
+| **Scene** (select) | Lists the scenes as the app does. Choosing one is the app's Go (with its fade), and stops a playing playlist. Shows the scene on the porch, or nothing when blacked out. |
+| **Playlist** (select) | `(none)` plus your playlists. Choosing one plays it; `(none)` stops it (the scene on stage stays on). |
+| **App controls porch** (switch) | The app's streaming switch. On: the app drives the porch. Off: the porch is handed back to the WLED controller's own playlist. |
+| **Now showing** (sensor) | The scene on the porch, `Off` when blacked out, or `WLED playlist` when the app isn't controlling the porch. |
+| **Controller** (connectivity, diagnostic) | Whether the WLED controller answers the app's health checks. |
+
+**Streaming must be on** (*App controls porch*) for the porch to follow the light, scene and playlist controls. With it off they still change what the app has on stage, which shows as soon as streaming is turned back on, e.g. by the nightly schedule.
+
+Scenes and playlists added, renamed or deleted in the app show up in the selects straight away. Everything goes through the same code as the app's own buttons, so fades, playlists, the schedule and saving work the same either way. Home Assistant shows the device as unavailable when the app is stopped or can't be reached.
 
 ## WLED setup (each controller)
 
@@ -66,7 +105,7 @@ Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare A
 | Method | Path | |
 |---|---|---|
 | GET | `/api/health` | Liveness (no auth) |
-| GET | `/api/status` | Active scene, `stage {scene, dirty}`, output settings, real fps, render time, per-controller health |
+| GET | `/api/status` | Active scene, `stage {scene, dirty}`, output settings, real fps, render time, per-controller health, `homeassistant {enabled, connected}` |
 | GET | `/api/stage` | The scene the porch is running now (can differ from the saved copy while Blind edits are pending) |
 | GET | `/api/clock` | Effect time in seconds, so the browser preview renders the same frame as the porch |
 | GET | `/api/effects` | Effect catalogue with param specs |

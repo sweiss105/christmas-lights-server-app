@@ -12,6 +12,15 @@ services:
       XMAS_API_TOKEN: ${XMAS_API_TOKEN:-}
       # Time zone for Scrolling Text's #TIME/#DATE tokens, e.g. America/Chicago.
       TZ: ${XMAS_TZ:-UTC}
+      # Home Assistant (MQTT discovery). Off unless XMAS_MQTT_URL is set, e.g. mqtt://10.10.1.5:1883
+      # (the broker, usually Home Assistant's Mosquitto add-on). See "Home Assistant" in README.md.
+      XMAS_MQTT_URL: ${XMAS_MQTT_URL:-}
+      # The MQTT user the app signs in as (create one for it in Home Assistant). The password is never logged.
+      XMAS_MQTT_USERNAME: ${XMAS_MQTT_USERNAME:-}
+      XMAS_MQTT_PASSWORD: ${XMAS_MQTT_PASSWORD:-}
+      # Only change these if your Home Assistant uses another discovery prefix, or to run two copies of the app.
+      XMAS_MQTT_DISCOVERY_PREFIX: ${XMAS_MQTT_DISCOVERY_PREFIX:-homeassistant}
+      XMAS_MQTT_TOPIC: ${XMAS_MQTT_TOPIC:-xmas}
     volumes:
       - ./data:/data
     stop_grace_period: 10s

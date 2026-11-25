@@ -45,6 +45,8 @@ export interface ShowState {
   layout: LayoutConfig;
   scenes: Record<string, SceneConfig>;
   activeScene: string | null;
+  /** The last scene that was on stage, so a Blackout can be undone (Home Assistant's light "on"). */
+  lastScene?: string;
   /** `transition`: seconds Go and Blackout crossfade over (0 = cut); missing in older state files. */
   output: OutputSettings & { fps: number; enabled: boolean; transition?: number };
   /** 3D house model (a phone scan) and how it lines up with the lights. */
