@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo } from 'react';
+import { Component, Suspense, useEffect, useMemo, type ReactNode } from 'react';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { House } from './api';
@@ -21,9 +21,11 @@ export function HouseModel({ house, onPick, glow }: { house: House; onPick?: (p:
       <directionalLight position={[7, 4, 5]} intensity={0.18} color={0xffe2c0} />
       {parts.map((p) => (
         <group key={p.id} position={p.position} rotation-y={(p.rotation * Math.PI) / 180} scale={p.scale}>
+          <SkipIfBroken key={p.uploadedAt}>
           <Suspense fallback={null}>
             <Model url={`/api/house/parts/${encodeURIComponent(p.id)}/model?v=${encodeURIComponent(p.uploadedAt)}`} opacity={house.opacity} glow={glow} />
           </Suspense>
+          </SkipIfBroken>
         </group>
       ))}
     </group>
@@ -100,4 +102,15 @@ function Model({ url, opacity, glow }: { url: string; opacity: number; glow?: Gl
   }, [scene]);
 
   return <primitive object={scene} />;
+}
+
+/**
+ * A house model that fails to load (its file missing, say after restoring a backup on another
+ * server, or a broken upload) is left out instead of taking the whole app down with it.
+ */
+class SkipIfBroken extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(e: unknown) { console.warn('A house model could not be shown:', e); }
+  render() { return this.state.failed ? null : this.props.children; }
 }

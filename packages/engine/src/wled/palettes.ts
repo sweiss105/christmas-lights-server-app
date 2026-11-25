@@ -7,6 +7,7 @@ import { createRandom, type Random } from '../fx/random.js';
 import { PALETTES as OWN_PALETTES, paletteFor, samplePalette } from '../fx/palettes.js';
 import { CHSV, color_blend, CRGB, B, G, R, RGBW32, rgb2hsv } from './color.js';
 import { FASTLED_PALETTES, GRADIENT_PALETTES } from './palette-data.js';
+import { isPaletteStops, stopsToGradient, type PaletteStop, type SavedPalette } from './stops.js';
 
 export type Palette16 = Uint32Array;
 
@@ -45,6 +46,57 @@ const ID_BY_NAME = new Map<string, number>([
  */
 export function resolvePaletteId(name: string): number {
   return ID_BY_NAME.get(name) ?? -1;
+}
+
+/**
+ * Id of a layer's own palette (params.paletteStops: an edited or saved palette), as WLED numbers custom
+ * palettes from WLED_CUSTOM_PALETTE_ID_BASE (200) down. Built-in names always mean the built-in palette.
+ */
+export const CUSTOM_STOPS_ID = 200;
+
+/** Palette id for a layer: its palette name, or its own stops when the name isn't a built-in palette. */
+export function layerPaletteId(name: string, params: Record<string, unknown>): number {
+  const id = resolvePaletteId(name);
+  if (id >= 0) return id;
+  return isPaletteStops(params.paletteStops) ? CUSTOM_STOPS_ID : 0;
+}
+
+/**
+ * The colours that define a built-in palette, as gradient stops, for editing a copy of it: a gradient
+ * palette's own stops, a 16-entry palette's entries (stop k at 17k, which loadDynamicGradientPalette
+ * builds back into exactly the same 16 entries), or our own palette's stops at 0..255. Null for
+ * palettes that aren't fixed colours: Default, "* Random Cycle" and the "* Color…" ones.
+ */
+export function builtinPaletteStops(name: string): PaletteStop[] | null {
+  const id = resolvePaletteId(name);
+  const hex = (c: number) => `#${(c & 0xffffff).toString(16).padStart(6, '0')}`;
+  if (id >= CUSTOM_PALETTE_BASE) {
+    const own = OWN_PALETTES[OWN_EXTRA[id - CUSTOM_PALETTE_BASE]!];
+    if (!own) return null;
+    const stops = own.map((s): PaletteStop => [Math.min(255, Math.max(0, Math.round(s.at * 255))), hex(RGBW32(Math.round(s.rgb[0] * 255), Math.round(s.rgb[1] * 255), Math.round(s.rgb[2] * 255)))]);
+    stops[0]![0] = 0;
+    stops.at(-1)![0] = 255;
+    for (let i = 1; i < stops.length; i++) stops[i]![0] = Math.max(stops[i]![0], stops[i - 1]![0]);
+    return stops;
+  }
+  if (id < DYNAMIC_PALETTE_COUNT) return null;
+  if (id < DYNAMIC_PALETTE_COUNT + FASTLED_PALETTE_COUNT) return FASTLED_PALETTES[id - DYNAMIC_PALETTE_COUNT]!.map((c, k): PaletteStop => [k * 17, hex(c)]);
+  const g = GRADIENT_PALETTES[id - DYNAMIC_PALETTE_COUNT - FASTLED_PALETTE_COUNT]!;
+  const stops: PaletteStop[] = [];
+  for (let i = 0; i < g.length; i += 4) stops.push([g[i]!, hex(RGBW32(g[i + 1]!, g[i + 2]!, g[i + 3]!))]);
+  return stops;
+}
+
+/**
+ * The stops a layer's palette is drawn from: a built-in palette's own (see builtinPaletteStops), else
+ * the layer's own copy (params.paletteStops), else a saved palette of that name. Null when the palette
+ * has no fixed colours or the name is unknown.
+ */
+export function paletteStopsFor(name: string, params: Record<string, unknown> = {}, saved: Record<string, SavedPalette> = {}): PaletteStop[] | null {
+  if (resolvePaletteId(name) >= 0) return builtinPaletteStops(name);
+  if (isPaletteStops(params.paletteStops)) return params.paletteStops;
+  const s = Object.hasOwn(saved, name) ? saved[name] : undefined;
+  return s && isPaletteStops(s.stops) ? s.stops : null;
 }
 
 // ---- CRGBPalette16 construction (fastled_slim) ---------------------------------------------------
@@ -257,12 +309,16 @@ function ownPalette16(name: string, colorParams: Record<string, unknown>): Palet
 
 /**
  * Segment::loadPalette: fill `target` for palette id `pal` (0 = the effect's default palette `defaultPal`).
- * `colors` are the segment colours (uint32). `nowMs` drives "* Random Cycle". `ownName`/`colorParams`
- * resolve our own palettes (ids >= CUSTOM_PALETTE_BASE).
+ * `colors` are the segment colours (uint32). `nowMs` drives "* Random Cycle". `colorParams` (the layer's
+ * params) resolve our own palettes (ids >= CUSTOM_PALETTE_BASE) and the layer's own stops (CUSTOM_STOPS_ID).
  */
 export function loadPalette(target: Palette16, pal: number, defaultPal: number, colors: ArrayLike<number>, nowMs = 0, colorParams: Record<string, unknown> = {}): void {
   if (pal === 0) pal = defaultPal;
-  if (pal >= CUSTOM_PALETTE_BASE) {
+  if (pal === CUSTOM_STOPS_ID) {
+    // A layer's own palette, built like WLED builds a custom palette (loadCustomPalettes).
+    if (isPaletteStops(colorParams.paletteStops)) { loadGradientPalette(target, stopsToGradient(colorParams.paletteStops)); return; }
+    pal = 0;
+  } else if (pal >= CUSTOM_PALETTE_BASE) {
     const name = OWN_EXTRA[pal - CUSTOM_PALETTE_BASE];
     if (name) { target.set(ownPalette16(name, colorParams)); return; }
     pal = 0;

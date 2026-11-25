@@ -2,6 +2,7 @@ import FastNoiseLite from 'fastnoise-lite';
 import { clamp01, hsv, lerp, parseColor } from './color.js';
 import type { Layout } from './layout.js';
 import { WLED_EFFECTS } from './wled/index.js';
+import { checkPaletteStops } from './wled/stops.js';
 
 export type ParamSpec =
   | { key: string; label: string; type: 'number'; min: number; max: number; step?: number; default: number }
@@ -10,6 +11,8 @@ export type ParamSpec =
   | { key: string; label: string; type: 'vec3'; default: [number, number, number] }
   | { key: string; label: string; type: 'select'; options: string[]; default: string; labels?: Record<string, string> }
   | { key: string; label: string; type: 'palette'; default: string }
+  /** The colours of an edited or saved palette (see wled/stops.ts); absent for a built-in palette. Edited with the palette. */
+  | { key: string; label: string; type: 'stops'; default: null }
   | { key: string; label: string; type: 'boolean'; default: boolean }
   /** Free text, cut to `maxLength` characters (default 64, WLED's WLED_MAX_SEGNAME_LEN). */
   | { key: string; label: string; type: 'text'; default: string; maxLength?: number };
@@ -42,7 +45,7 @@ export function resolveParams(def: EffectDef, input: Params = {}): Params {
   const out: Params = {};
   for (const p of def.params) {
     const v = input[p.key];
-    if (v === undefined) { out[p.key] = p.default; continue; }
+    if (v === undefined || (v === null && p.type === 'stops')) { if (p.default !== null) out[p.key] = p.default; continue; }
     switch (p.type) {
       case 'number':
         if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${def.id}.${p.key} must be a number`);
@@ -62,9 +65,12 @@ export function resolveParams(def: EffectDef, input: Params = {}): Params {
         out[p.key] = v;
         break;
       case 'palette':
-        // Any name is accepted: palettes imported from WLED live in the show state; unknown ones fall back to Rainbow.
+        // Any name is accepted: edited and saved palettes bring their colours in `paletteStops`; other unknown names draw as Default.
         if (typeof v !== 'string' || !v) throw new Error(`${def.id}.${p.key} must be a palette name`);
         out[p.key] = v;
+        break;
+      case 'stops':
+        try { out[p.key] = checkPaletteStops(v); } catch (e) { throw new Error(`${def.id}.${p.key}: ${(e as Error).message}`); }
         break;
       case 'boolean':
         if (typeof v !== 'boolean') throw new Error(`${def.id}.${p.key} must be true or false`);

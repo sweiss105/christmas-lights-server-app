@@ -1,4 +1,4 @@
-import type { LayerConfig, LayoutConfig, ParamSpec, SceneConfig } from '@xmas/engine';
+import type { LayerConfig, LayoutConfig, PaletteStop, ParamSpec, SavedPalette, SceneConfig } from '@xmas/engine';
 import type { DecodeStats, MappingParams, MappingPlan } from '@xmas/engine/mapping';
 
 /** A saved layer look. */
@@ -127,6 +127,10 @@ export const api = {
   presets: () => call<Preset[]>('GET', '/api/presets'),
   savePreset: (name: string, look: Omit<Preset, 'name'>) => call<Preset>('PUT', `/api/presets/${enc(name)}`, look),
   deletePreset: (name: string) => call<{ deleted: string }>('DELETE', `/api/presets/${enc(name)}`),
+  palettes: () => call<SavedPalette[]>('GET', '/api/palettes'),
+  savePalette: (name: string, stops: PaletteStop[]) => call<SavedPalette>('PUT', `/api/palettes/${enc(name)}`, { stops }),
+  renamePalette: (name: string, to: string) => call<SavedPalette>('POST', `/api/palettes/${enc(name)}/rename`, { to }),
+  deletePalette: (name: string) => call<{ deleted: string }>('DELETE', `/api/palettes/${enc(name)}`),
   /** Flash one run on the porch (only visible while streaming); run null cancels. */
   identify: (run: string | null, seconds = 5) => call<{ run: string | null; streaming?: boolean }>('POST', '/api/identify', { run, seconds }),
   saveLayout: (l: LayoutConfig) => call<{ pixels: number; groups: string[] }>('PUT', '/api/layout', l),

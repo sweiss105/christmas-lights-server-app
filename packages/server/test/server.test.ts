@@ -465,6 +465,76 @@ describe('house model (3D scan parts)', () => {
   });
 });
 
+describe('saved palettes', () => {
+  const stops = [[0, '#FF0000'], [128, '#00ff00'], [255, '#0000ff']];
+
+  it('saves, lists, reads, renames and deletes palettes, persisting them', async () => {
+    const { app, statePath } = await makeApp();
+    const put = await app.server.inject({ method: 'PUT', url: '/api/palettes/Candy%20Party', payload: { stops } });
+    expect(put.statusCode).toBe(200);
+    expect(put.json()).toEqual({ name: 'Candy Party', stops: [[0, '#ff0000'], [128, '#00ff00'], [255, '#0000ff']] });
+    await app.server.inject({ method: 'PUT', url: '/api/palettes/Aqua', payload: { stops } });
+    expect((await app.server.inject('/api/palettes')).json().map((p: { name: string }) => p.name)).toEqual(['Aqua', 'Candy Party']);
+    expect((await app.server.inject('/api/palettes/Aqua')).json().stops).toHaveLength(3);
+    expect(JSON.parse(await readFile(statePath, 'utf8')).palettes['Candy Party'].stops[1]).toEqual([128, '#00ff00']);
+
+    const ren = await app.server.inject({ method: 'POST', url: '/api/palettes/Candy%20Party/rename', payload: { to: 'Sweet' } });
+    expect(ren.statusCode).toBe(200);
+    expect(ren.json().name).toBe('Sweet');
+    expect((await app.server.inject('/api/palettes')).json().map((p: { name: string }) => p.name)).toEqual(['Aqua', 'Sweet']);
+    expect((await app.server.inject({ method: 'POST', url: '/api/palettes/Sweet/rename', payload: { to: 'Aqua' } })).statusCode).toBe(409);
+    expect((await app.server.inject({ method: 'POST', url: '/api/palettes/Sweet/rename', payload: { to: 'Party' } })).statusCode).toBe(400);
+    expect((await app.server.inject({ method: 'POST', url: '/api/palettes/Nope/rename', payload: { to: 'X' } })).statusCode).toBe(404);
+
+    expect((await app.server.inject({ method: 'DELETE', url: '/api/palettes/Aqua' })).statusCode).toBe(200);
+    expect((await app.server.inject('/api/palettes')).json().map((p: { name: string }) => p.name)).toEqual(['Sweet']);
+    expect((await app.server.inject({ method: 'DELETE', url: '/api/palettes/Aqua' })).statusCode).toBe(404);
+    expect((await app.server.inject('/api/palettes/Aqua')).statusCode).toBe(404);
+  });
+
+  it('rejects bad names and bad stops', async () => {
+    const { app } = await makeApp();
+    const put = (name: string, body: unknown) => app.server.inject({ method: 'PUT', url: `/api/palettes/${encodeURIComponent(name)}`, payload: body as object });
+    expect((await put('Party', { stops })).statusCode).toBe(400); // built-in WLED name
+    expect((await put('Christmas', { stops })).statusCode).toBe(400); // built-in name of our own
+    expect((await put('* Mine', { stops })).statusCode).toBe(400);
+    expect((await put(' Mine', { stops })).statusCode).toBe(400);
+    expect((await put('x'.repeat(61), { stops })).statusCode).toBe(400);
+    expect((await put('__proto__', { stops })).statusCode).toBe(400);
+    expect((await put('Mine', {})).statusCode).toBe(400);
+    expect((await put('Mine', { stops: [[0, '#ff0000']] })).statusCode).toBe(400);
+    expect((await put('Mine', { stops: [[0, '#ff0000'], [200, '#00ff00']] })).statusCode).toBe(400); // must end at 255
+    expect((await put('Mine', { stops: [[0, 'red'], [255, '#00ff00']] })).statusCode).toBe(400);
+    expect((await put('Mine', { stops: [[0, '#ff0000'], [255, '#00ff00'], [100, '#000000']] })).statusCode).toBe(400);
+    expect((await app.server.inject('/api/palettes')).json()).toEqual([]);
+  });
+
+  it('a layer keeps its own copy: deleting a palette in use leaves the scene as it was', async () => {
+    const { app } = await makeApp();
+    await app.server.inject({ method: 'PUT', url: '/api/palettes/Mine', payload: { stops } });
+    // A scene that names the saved palette without its colours gets a copy of them.
+    const put = await app.server.inject({ method: 'PUT', url: '/api/scenes/Pal', payload: { layers: [{ id: 'l', effect: 'wled-palette', params: { palette: 'Mine' } }] } });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().layers[0].params.paletteStops).toEqual([[0, '#ff0000'], [128, '#00ff00'], [255, '#0000ff']]);
+    expect((await app.server.inject({ method: 'DELETE', url: '/api/palettes/Mine' })).statusCode).toBe(200);
+    const scene = (await app.server.inject('/api/scenes/Pal')).json();
+    expect(scene.layers[0].params).toMatchObject({ palette: 'Mine', paletteStops: [[0, '#ff0000'], [128, '#00ff00'], [255, '#0000ff']] });
+    expect((await app.server.inject({ method: 'POST', url: '/api/scenes/Pal/activate' })).statusCode).toBe(200);
+    // Bad stops in a scene are refused like any other bad setting.
+    expect((await app.server.inject({ method: 'PUT', url: '/api/scenes/Pal', payload: { layers: [{ id: 'l', effect: 'wled-palette', params: { palette: 'X', paletteStops: [[0, '#ff0000']] } }] } })).statusCode).toBe(400);
+  });
+
+  it('palettes are part of backups and restores', async () => {
+    const { app } = await makeApp();
+    await app.server.inject({ method: 'PUT', url: '/api/palettes/Mine', payload: { stops } });
+    const data = (await app.server.inject('/api/backup')).json();
+    expect(data.palettes.Mine.stops).toHaveLength(3);
+    await app.server.inject({ method: 'DELETE', url: '/api/palettes/Mine' });
+    expect((await app.server.inject({ method: 'POST', url: '/api/restore', payload: data })).statusCode).toBe(200);
+    expect((await app.server.inject('/api/palettes')).json().map((p: { name: string }) => p.name)).toEqual(['Mine']);
+  });
+});
+
 describe('layer presets', () => {
   const look = { effect: 'twinkle', params: { color: '#ffd080', density: 0.4 }, blend: 'screen', opacity: 0.8, group: 'all' };
 

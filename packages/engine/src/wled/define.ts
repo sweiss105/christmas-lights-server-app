@@ -9,7 +9,7 @@ import { simulation } from '../fx/sim.js';
 import type { Layout } from '../layout.js';
 import { RGBW32 } from './color.js';
 import { setMillis, setRandomSource } from './math.js';
-import { loadPalette, resolvePaletteId, WLED_PALETTE_NAMES } from './palettes.js';
+import { layerPaletteId, loadPalette, WLED_PALETTE_NAMES } from './palettes.js';
 import { beginDraw, DEFAULT_C1, DEFAULT_C2, DEFAULT_C3, DEFAULT_INTENSITY, DEFAULT_SPEED, Segment } from './segment.js';
 
 /** A ported WLED mode function: draws one frame into SEGMENT (C: `void mode_xxx(void)`). */
@@ -153,6 +153,8 @@ export function paramsFromMeta(m: WledMeta): ParamSpec[] {
     // (which draws many effects in plain colour 1). An explicit pal=0 still means Default.
     const def = pal === undefined ? 'Party' : pal > 0 && pal < WLED_PALETTE_NAMES.length ? WLED_PALETTE_NAMES[pal]! : 'Default';
     ps.push({ key: 'palette', label: m.palette === 'Palette' ? 'Palette' : m.palette, type: 'palette', default: def });
+    // An edited or saved palette's colours, kept with the layer (shown by the palette control, not on its own).
+    ps.push({ key: 'paletteStops', label: 'Palette colours', type: 'stops', default: null });
   }
   if (!m.is2D) {
     ps.push({ key: 'mapping', label: 'Lights run', type: 'select', options: [...MAPPINGS_1D], labels: { ...MAPPING_LABELS }, default: 'each' });
@@ -219,9 +221,9 @@ export function wledEffect(opts: WledEffectOptions): EffectDef {
         return RGBW32(Math.round(r * 255), Math.round(g * 255), Math.round(b * 255));
       });
       const palName = typeof p.palette === 'string' ? p.palette : 'Default';
-      const palId = Math.max(0, resolvePaletteId(palName));
+      const palId = layerPaletteId(palName, p);
       const randomPal = palId === 1 || (palId === 0 && defaultPal === 1);
-      const colorParams: Record<string, unknown> = { color1: p.color1, color2: p.color2, color3: p.color3 };
+      const colorParams: Record<string, unknown> = { color1: p.color1, color2: p.color2, color3: p.color3, paletteStops: p.paletteStops };
       const segName = !opts.text ? '' : typeof p.text === 'string' ? p.text : opts.text.default;
 
       const makeSegment = (): Segment => {

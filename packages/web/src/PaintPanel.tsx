@@ -74,9 +74,12 @@ export function PaintPanel({ show, editor, paint, mode, onModeChange, onDone }: 
   const fxDef = fx ? EFFECTS[fx.look.effect] : undefined;
   const fxParams = fx && fxDef ? resolveParams(fxDef, fx.look.params) : {};
   /** Tuning the effect brush also retunes what it has already painted. */
-  const setFxParam = (key: string, value: unknown, merge: boolean) => {
+  /** Set brush-effect params (`undefined` removes one); `key` names the gesture for merging undo steps. */
+  const setFxParams = (patch: Record<string, unknown>, merge: boolean, key: string) => {
     if (!fx) return;
-    const next: Look = { ...fx.look, params: { ...(fx.look.params ?? {}), [key]: value } };
+    const params: Record<string, unknown> = { ...(fx.look.params ?? {}), ...patch };
+    for (const [k, v] of Object.entries(patch)) if (v === undefined) delete params[k];
+    const next: Look = { ...fx.look, params };
     if (paintLayerFor(editor.scene, fx.look)) editor.edit(retunePaint(editor.scene, fx.look, next), merge ? { merge: `brush.${key}` } : {});
     paint.setEffect({ ...fx, look: next });
   };
@@ -154,7 +157,8 @@ export function PaintPanel({ show, editor, paint, mode, onModeChange, onDone }: 
           )}
           {!fx && !picking && <p className="empty">Choose an effect or a saved preset, then drag over the lights.</p>}
           {fx && fxDef?.params.map((p) => (
-            <ParamControl key={`${fx.look.effect}.${p.key}`} spec={p} value={fxParams[p.key]} params={fxParams} onEnd={() => editor.endGesture()} onChange={(v, merge) => setFxParam(p.key, v, merge)} />
+            <ParamControl key={`${fx.look.effect}.${p.key}`} spec={p} value={fxParams[p.key]} params={fxParams} onEnd={() => editor.endGesture()} show={show}
+              onChange={(v, merge) => setFxParams({ [p.key]: v }, merge, p.key)} onPatch={(patch, merge) => setFxParams({ ...patch }, merge, 'paletteStops')} />
           ))}
         </>
       )}
