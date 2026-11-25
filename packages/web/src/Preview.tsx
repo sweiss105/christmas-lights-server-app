@@ -301,7 +301,8 @@ function Camera({ layout, preset, hidden: hiddenPx, hiddenY: hiddenYPx = 0 }: { 
 /** Handles on the selected run's points (drag to move) and, while drawing, a surface to tap on. */
 function LayoutTools({ layout, edit }: { layout: LayoutConfig; edit: LayoutEdit }) {
   const run = layout.runs.find((r) => r.id === edit.selected);
-  const points = run?.points ?? [];
+  // A run placed by camera mapping has no path to drag: its lights sit at their measured positions.
+  const points = run?.positions?.length ? [] : run?.points ?? [];
   const last = points.at(-1) ?? [0, 0, 0];
   return (
     <group>

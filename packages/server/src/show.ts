@@ -30,13 +30,24 @@ function seeded(seed: number) {
  * never starts with the scene the previous round ended on, when it can help it.
  */
 export function shuffledOrder(count: number, startedAt: number, cycle: number): number[] {
+  // Two scenes can only avoid a repeat by taking turns, so every round has the same order.
+  if (count === 2) return rawShuffle(2, startedAt, 0);
+  const order = rawShuffle(count, startedAt, cycle);
+  // The fix-up below only swaps a round's first two places, so with three or more scenes the scene
+  // a round ends on is its plain shuffle's last. That makes each round depend on the one before it
+  // only, however long the playlist has been running (it used to walk back through every round).
+  if (cycle > 0 && count > 2) {
+    const prev = rawShuffle(count, startedAt, cycle - 1);
+    if (order[0] === prev[count - 1]) [order[0], order[1]] = [order[1]!, order[0]!];
+  }
+  return order;
+}
+
+/** A plain seeded shuffle of 0..count-1 for one round. */
+function rawShuffle(count: number, startedAt: number, cycle: number): number[] {
   const order = Array.from({ length: count }, (_, i) => i);
   const rand = seeded(Math.floor(startedAt) ^ Math.imul(cycle + 1, 0x9e3779b1));
   for (let i = count - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j]!, order[i]!]; }
-  if (cycle > 0 && count > 1) {
-    const prev = shuffledOrder(count, startedAt, cycle - 1);
-    if (order[0] === prev[count - 1]) [order[0], order[1]] = [order[1]!, order[0]!];
-  }
   return order;
 }
 

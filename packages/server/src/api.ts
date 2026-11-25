@@ -414,7 +414,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
   };
   /** Keep only the newest `keep` backups whose names start with `prefix`. */
   const prune = async (prefix: string, keep: number) => {
-    const old = (await listBackups()).filter((b) => b.file.startsWith(prefix)).slice(keep);
+    // The date follows the prefix directly, so "before-" doesn't also count "before-restore-…" files.
+    const old = (await listBackups()).filter((b) => b.file.startsWith(prefix) && /\d/.test(b.file[prefix.length] ?? '')).slice(keep);
     await Promise.all(old.map((b) => rm(join(backupDir, b.file), { force: true })));
   };
 

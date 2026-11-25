@@ -98,6 +98,8 @@ function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, o
   const id = run.id;
   const len = runLength(run);
   const points = run.points ?? [];
+  /** Placed light by light by camera mapping: the engine uses those positions and ignores the path and coil. */
+  const measured = !!run.positions?.length;
   const num = (v: string, fallback: number) => (Number.isFinite(Number(v)) && v !== '' ? Number(v) : fallback);
   return (
     <div className="inspector">
@@ -115,17 +117,25 @@ function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, o
           <input className="num wide" type="number" min={0} value={run.start} onChange={(e) => draft.edit(updateRun(l, id, { start: Math.max(0, Math.round(num(e.target.value, run.start))) }))} />
         </label>
         <label className="field"><span className="field-label">Pixels</span>
-          <input className="num wide" type="number" min={1} value={run.count} onChange={(e) => draft.edit(updateRun(l, id, { count: Math.max(1, Math.round(num(e.target.value, run.count))) }))} />
+          <input className="num wide" type="number" min={1} value={run.count} disabled={measured} title={measured ? 'This run has a measured position for each light. Go back to the drawn path to change how many it has.' : undefined} onChange={(e) => draft.edit(updateRun(l, id, { count: Math.max(1, Math.round(num(e.target.value, run.count))) }))} />
         </label>
       </div>
+      {measured && (
+        <div className="field painted-note">
+          <span className="field-label">Placed by camera mapping: each of its {run.positions!.length} lights has a measured position, so the path and coil aren’t used.</span>
+          <button className="btn small ghost" title="Drop the measured positions and place the lights along the drawn path again"
+            onClick={() => { if (window.confirm('Drop the measured positions and use the drawn path again? Undo brings them back.')) draft.edit(updateRun(l, id, { positions: undefined })); }}>Use the drawn path</button>
+        </div>
+      )}
       <p className="effect-desc inline">{len > 0 ? `${len.toFixed(2)} m long, ${(run.count / len).toFixed(0)} pixels per metre (${((len / run.count) * 100).toFixed(1)} cm apart).` : 'Give the run at least two points to spread its pixels out.'}</p>
       <div className="layer-actions">
-        <button className={`btn small ${drawing ? 'drawing' : ''}`} aria-pressed={drawing} onClick={() => onDrawingChange(!drawing)}>{drawing ? 'Drawing: tap the house…' : 'Draw points'}</button>
+        {!measured && <button className={`btn small ${drawing ? 'drawing' : ''}`} aria-pressed={drawing} onClick={() => onDrawingChange(!drawing)}>{drawing ? 'Drawing: tap the house…' : 'Draw points'}</button>}
         <button className="btn small ghost" onClick={() => draft.edit(reverseRun(l, id))} title="The first pixel is at the other end">Reverse</button>
         <IdentifyButton show={show} run={run} saved={!!show.layout?.runs.some((r) => r.id === id)} />
         <button className="btn small ghost danger-quiet" onClick={() => { if (window.confirm(`Delete the run “${run.name ?? id}”?`)) { draft.edit(removeRun(l, id)); onDeleted(); } }}>Delete</button>
       </div>
 
+      {!measured && (<>
       <div className="section-head"><h3>Coil</h3><span className="hint-inline">lights wound round a rail</span></div>
       <label className="check coil-check">
         <input type="checkbox" checked={!!run.coil} onChange={(e) => draft.edit(updateRun(l, id, { coil: e.target.checked ? { radius: 0.04, pitch: 0.27 } : undefined }))} />
@@ -166,6 +176,7 @@ function RunInspector({ show, layout: l, run, draft, drawing, onDrawingChange, o
           </li>
         ))}
       </ol>
+      </>)}
     </div>
   );
 }

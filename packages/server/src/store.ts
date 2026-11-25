@@ -1,6 +1,7 @@
 /** Persisted show state: one JSON file, written atomically. */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { copyFile, mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { buildLayout } from '@xmas/engine';
 import type { LayerConfig, LayoutConfig, OutputSettings, SavedPalette, SceneConfig } from '@xmas/engine';
 import type { PlaylistConfig, ScheduleConfig } from './show.js';
 
@@ -77,6 +78,43 @@ export async function loadState(path: string, examplePath: string): Promise<Show
     raw = await readFile(examplePath, 'utf8');
   }
   return JSON.parse(raw) as ShowState;
+}
+
+/** Parse a state file's text, checking it's a show this server can start from (throws if not). */
+function parseState(raw: string): ShowState {
+  const s = JSON.parse(raw) as ShowState;
+  if (!s || typeof s !== 'object' || !s.layout || typeof s.scenes !== 'object' || s.scenes === null || !s.output) throw new Error('not a show file (needs layout, scenes and output)');
+  buildLayout(s.layout);
+  return s;
+}
+
+/**
+ * Load the show for startup. If the state file is damaged or its layout is invalid, the server
+ * would otherwise fail to start, over and over under Docker's restart policy. Instead the bad file
+ * is kept aside as `<name>.unreadable-<time>` and the newest backup that loads is used.
+ */
+export async function loadStateOrBackup(path: string, examplePath: string, warn: (message: string) => void = () => {}): Promise<ShowState> {
+  let raw: string;
+  try { raw = await readFile(path, 'utf8'); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    return parseState(await readFile(examplePath, 'utf8'));
+  }
+  let problem: Error;
+  try { return parseState(raw); } catch (e) { problem = e as Error; }
+  const dir = join(dirname(path), 'backups');
+  const names = await readdir(dir).catch(() => [] as string[]);
+  const backups = (await Promise.all(names.filter((f) => f.endsWith('.json')).map(async (f) => ({ f, at: (await stat(join(dir, f))).mtimeMs })))).sort((a, b) => b.at - a.at);
+  for (const { f } of backups) {
+    let state: ShowState;
+    try { state = parseState(await readFile(join(dir, f), 'utf8')); } catch { continue; }
+    const aside = `${path}.unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    await copyFile(path, aside).catch(() => {});
+    warn(`the show file ${path} could not be used (${problem.message}); started from the backup ${f} instead. The bad file is kept as ${aside}.`);
+    // Leave the lights as they are until someone looks: a backup may be days old.
+    state.output = { ...state.output, enabled: false };
+    return state;
+  }
+  throw new Error(`the show file ${path} could not be used (${problem.message}) and no backup could be loaded`);
 }
 
 let writing: Promise<void> = Promise.resolve();

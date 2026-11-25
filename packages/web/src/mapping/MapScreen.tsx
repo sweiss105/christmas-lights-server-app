@@ -90,6 +90,10 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
     return () => { clearTimeout(t); clearTimeout(end); };
   }, [testUntil, settings.k, settings.level, demo, show.reportError]);
   const stopTest = () => { setTestUntil(null); if (!demo) void api.mappingStop().catch(() => {}); };
+  // Closing the screen mid-test ends it, rather than leaving the test dots on the house.
+  const testing = useRef(false);
+  testing.current = testUntil !== null && !demo;
+  useEffect(() => () => { if (testing.current) void api.mappingStop().catch(() => {}); }, []);
 
   // Demo: a still simulated picture of the next spot.
   useEffect(() => {
@@ -120,6 +124,7 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
     setPhase({ kind: 'starting' });
     setTestUntil(null); // the sequence replaces the brightness test (its lights stay on until then, for the exposure lock)
     let wake: { release: () => Promise<void> } | null = null;
+    let lockedTrack: MediaStreamTrack | null = null;
     try {
       wake = await (navigator as unknown as { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen').catch(() => null) ?? null;
       let p: MappingPlan, startMs: number, source;
@@ -127,6 +132,7 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
       const track = streamRef.current?.getVideoTracks()[0] ?? null;
       if (!demo && track && cam.lock) {
         // Freeze exposure while the porch shows its normal look (the sequence then goes dark and flashes).
+        lockedTrack = track;
         const locked = await lockCamera(track, cam);
         setCamInfo(describeCamera(track, { ...(camInfo?.applied ?? {}), ...locked }));
       }
@@ -182,6 +188,8 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
       const msg = (e as Error).message;
       setPhase(msg === 'cancelled' ? { kind: 'idle' } : { kind: 'error', message: msg });
     } finally {
+      // Also when starting failed part-way: otherwise exposure and focus stay frozen until the page reloads.
+      if (lockedTrack) void unlockCamera(lockedTrack);
       void wake?.release().catch(() => {});
     }
   };
