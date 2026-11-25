@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inWindow, nextWindow, playlistPosition, sunTimes, zonedTime, type ScheduleConfig } from '../src/show.js';
+import { inWindow, nextWindow, playlistPosition, shuffledOrder, sunTimes, zonedTime, type ScheduleConfig } from '../src/show.js';
 
 const H = 3600_000, M = 60_000;
 const utc = (s: string) => Date.parse(s);
@@ -16,6 +16,40 @@ describe('playlist position', () => {
 
   it('holds the last entry when not looping', () => {
     expect(playlistPosition(entries, 0, 600_000, false)).toMatchObject({ index: 2, nextAt: null });
+  });
+});
+
+describe('shuffled playlists', () => {
+  const entries = [{ scene: 'A', seconds: 10 }, { scene: 'B', seconds: 20 }, { scene: 'C', seconds: 30 }];
+  const many = Array.from({ length: 8 }, (_, i) => ({ scene: `S${i}`, seconds: 10 }));
+  const round = (startedAt: number, cycle: number) =>
+    Array.from({ length: 8 }, (_, k) => playlistPosition(many, startedAt, startedAt + cycle * 80_000 + k * 10_000 + 5, true, true).index);
+
+  it('plays every scene once per round, in an order that changes from round to round', () => {
+    const r0 = round(1_700_000_000_000, 0), r1 = round(1_700_000_000_000, 1);
+    expect([...r0].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect([...r1].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(r0).not.toEqual(r1);
+    expect(r0).not.toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it('gives the same order when asked again (so it survives a restart)', () => {
+    expect(round(1_700_000_123_456, 3)).toEqual(round(1_700_000_123_456, 3));
+    expect(shuffledOrder(8, 42, 5)).toEqual(shuffledOrder(8, 42, 5));
+  });
+
+  it('never starts a round with the scene the last round ended on', () => {
+    for (let c = 1; c < 200; c++) expect(shuffledOrder(5, 99, c)[0]).not.toBe(shuffledOrder(5, 99, c - 1)[4]);
+  });
+
+  it('keeps each scene’s own length, and not looping ends on the round’s last scene', () => {
+    const order = shuffledOrder(entries.length, 0, 0);
+    let at = 0;
+    for (const i of order) {
+      expect(playlistPosition(entries, 0, at + 1, true, true)).toMatchObject({ index: i, nextAt: at + entries[i]!.seconds * 1000 });
+      at += entries[i]!.seconds * 1000;
+    }
+    expect(playlistPosition(entries, 0, 10 * 60_000, false, true)).toMatchObject({ index: order[2], nextAt: null });
   });
 });
 
