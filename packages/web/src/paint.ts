@@ -128,3 +128,51 @@ export function clearPaint(scene: SceneConfig): SceneConfig {
 export function retunePaint(scene: SceneConfig, from: Look, to: Look): SceneConfig {
   return { ...scene, layers: scene.layers.map((l) => (isPainted(l) && sameLook(l, from) ? { ...l, params: structuredClone(to.params ?? {}) } : l)) };
 }
+
+// ---- painting an effect as a pattern ----------------------------------------------------------------
+
+/**
+ * The Brush paints effects as a pattern, not a colour: the painted layer is a mask (show below where
+ * bright), with the effect's own colours set to white on black, so the lights already coloured below
+ * twinkle, chase or ripple in their own colours.
+ */
+const PATTERN_PALETTE = '* Color 1';
+/** These draw a background from their palette, so an all-white palette would leave them always on: a white-to-black gradient instead. */
+const GRADIENT_PATTERNS = new Set<string>([
+  'wled-android', 'wled-chase', 'wled-chase-random', 'wled-colorful', 'wled-fill-noise', 'wled-glitter', 'wled-gradient', 'wled-loading',
+  'wled-noise-1', 'wled-noise-4', 'wled-railway', 'wled-rainbow-runner', 'wled-slow-transition', 'wled-solid-pattern', 'wled-sparkle',
+  'wled-sparkle-dark', 'wled-strobe-mega',
+]);
+/** Effects that make no moving pattern in white on black (found by `pattern-effects.test.ts`). */
+const NOT_PATTERNS = new Set<string>(['solid', 'wled-halloween-eyes', 'wled-solid-glitter']);
+
+/** Whether the Brush offers this effect: it has a colour to turn white, and draws a pattern with it. */
+export function isPatternEffect(id: string): boolean {
+  const def = EFFECTS[id];
+  if (!def || NOT_PATTERNS.has(id) || def.category === '2D') return false;
+  return def.params.some((p) => p.type === 'color' && !p.when);
+}
+
+/** The settings the Brush hides for a pattern (they'd only tint it): colours and palettes. */
+export const isPatternColourParam = (p: { type: string }): boolean => p.type === 'color' || p.type === 'palette' || p.type === 'stops';
+
+/** A look painted as a pattern: a mask over everything below, its colours white on black. */
+export function patternLook(look: Look): Look {
+  const def = EFFECTS[look.effect];
+  const params: Record<string, unknown> = { ...(look.params ?? {}) };
+  let first = true;
+  for (const p of def?.params ?? []) {
+    if (p.type === 'color' && !p.when) {
+      // WLED effects draw with color1 on color2; the built-ins call theirs color / colorA.
+      const main = p.key === 'color1' || p.key === 'color' || p.key === 'colorA' || (first && !def!.params.some((q) => q.key === 'color1' || q.key === 'color' || q.key === 'colorA'));
+      params[p.key] = main ? '#ffffff' : '#000000';
+      first = false;
+    } else if (p.type === 'palette') params[p.key] = GRADIENT_PATTERNS.has(look.effect) ? '* Color Gradient' : PATTERN_PALETTE;
+    else if (p.type === 'stops' || (p.type === 'color' && p.when)) delete params[p.key];
+  }
+  const { maskScope: _scope, ...rest } = look;
+  return { ...rest, params, blend: 'mask' };
+}
+
+/** A painted layer that's a pattern (an effect painted as a mask). */
+export const isPatternPaint = (l: LayerConfig): boolean => l.paint !== undefined && l.blend === 'mask';

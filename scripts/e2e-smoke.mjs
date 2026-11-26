@@ -268,10 +268,17 @@ try {
   await page.waitForTimeout(1500);
   await rail.getByRole('button', { name: 'Brush', exact: true }).click(); // its pop-out again
   await page.getByRole('radio', { name: 'Effect', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Add a layer' }).getByRole('option', { name: /^Rainbow/ }).first().click();
+  const brushPicker = page.getByRole('dialog', { name: 'Add a layer' });
+  await brushPicker.getByRole('searchbox').or(brushPicker.locator('input')).first().fill('solid');
+  check(await brushPicker.getByRole('option', { name: /^Solid(?! Pattern)/ }).count() === 0, 'the Brush doesn’t offer effects that make no pattern (Solid)');
+  await brushPicker.getByRole('searchbox').or(brushPicker.locator('input')).first().fill('');
+  await brushPicker.getByRole('option', { name: /^Rainbow/ }).first().click();
+  const paintPanel = page.getByRole('complementary', { name: 'Paint on the lights' });
+  check(await paintPanel.getByText('Effects paint as a pattern').isVisible() && await paintPanel.getByLabel(/^Colour/).count() === 0 && await paintPanel.getByLabel(/^Palette/).count() === 0,
+    'a Brush effect paints as a pattern, so its colour and palette settings are hidden');
   await scribble();
   await shot('paint-effect');
-  check(await paintItems.count() === 2, 'painting an effect adds a second painted layer');
+  check(await paintItems.count() === 2 && /pattern/.test(await paintItems.first().textContent()), 'painting an effect adds a second painted layer, a pattern');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   check(await paintItems.count() === 1, 'Undo takes back one whole stroke');
   await rail.getByRole('button', { name: 'Eraser', exact: true }).click();

@@ -8,6 +8,8 @@ interface Props {
   onPickPreset: (preset: Preset) => void;
   onDeletePreset: (name: string) => void;
   onClose: () => void;
+  /** Only these effects (and presets of them); default every effect. */
+  only?: (effectId: string) => boolean;
 }
 
 type Tab = 'effects' | 'presets';
@@ -19,23 +21,23 @@ const matches = (q: string, ...texts: (string | undefined)[]) => {
 };
 
 /** "Add layer": every effect grouped by category, or a saved preset. Searchable, as there are ~190 effects. */
-export function LayerPicker({ presets, onPickEffect, onPickPreset, onDeletePreset, onClose }: Props) {
+export function LayerPicker({ presets, onPickEffect, onPickPreset, onDeletePreset, onClose, only }: Props) {
   const [tab, setTab] = useState<Tab>('effects');
   const [query, setQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
   useEffect(() => { search.current?.focus({ preventScroll: true }); }, [tab]);
 
   const groups = useMemo(() => {
-    const all = Object.values(EFFECTS);
+    const all = Object.values(EFFECTS).filter((fx) => !only || only(fx.id));
     return EFFECT_CATEGORIES
       .map((cat) => ({
         cat,
         items: all.filter((fx) => fx.category === cat && matches(query, fx.name, fx.description, fx.wled, fx.category)).sort((a, b) => a.name.localeCompare(b.name)),
       }))
       .filter((g) => g.items.length > 0);
-  }, [query]);
+  }, [query, only]);
 
-  const shownPresets = presets.filter((p) => matches(query, p.name, EFFECTS[p.effect]?.name));
+  const shownPresets = presets.filter((p) => (!only || only(p.effect)) && matches(query, p.name, EFFECTS[p.effect]?.name));
   const effectCount = groups.reduce((a, g) => a + g.items.length, 0);
 
   return (
