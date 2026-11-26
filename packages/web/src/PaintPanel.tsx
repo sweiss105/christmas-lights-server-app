@@ -5,7 +5,7 @@ import { confirmClear, lookOf, removeLayer, type Look } from './editor';
 import { modeHint, ParamControl, Slider, UnsavedNote } from './EditorPanel';
 import { PanelHead } from './PanelHead';
 import { LayerPicker } from './LayerPicker';
-import { clearPaint, colorLook, isPainted, paintedCount, paintLayerFor, retunePaint, type Brush } from './paint';
+import { clearPaint, colorLook, isPainted, isPatternColourParam, isPatternEffect, isPatternPaint, paintedCount, paintLayerFor, patternLook, retunePaint, type Brush } from './paint';
 import type { PaintTool } from './PaintOverlay';
 import type { EditMode } from './useSceneEditor';
 import type { WorkingCopy } from './workingCopy';
@@ -57,7 +57,8 @@ export function PaintPanel({ show, editor, paint, mode, onHide }: Props) {
     return <aside className="editor glass paint-panel" aria-label="Paint on the lights"><PanelHead title="Paint" onHide={onHide} /><p className="empty">Pick a scene to paint on.</p></aside>;
   }
 
-  const pickEffect = (lookIn: Look, name: string) => { paint.setEffect({ look: lookIn, name }); paint.setSource('effect'); paint.setTool('paint'); setPicking(false); };
+  /** An effect (or a preset) picked for the Brush paints as a pattern over the colours below. */
+  const pickEffect = (lookIn: Look, name: string) => { paint.setEffect({ look: patternLook(lookIn), name }); paint.setSource('effect'); paint.setTool('paint'); setPicking(false); };
   /** Carry on with a paint that's already in the scene. */
   const pickUp = (l: LayerConfig) => {
     const lk = lookOf(l);
@@ -127,13 +128,15 @@ export function PaintPanel({ show, editor, paint, mode, onHide }: Props) {
             <LayerPicker
               presets={show.presets}
               onClose={() => setPicking(false)}
+              only={isPatternEffect}
               onPickEffect={(id) => pickEffect({ effect: id, params: {} }, EFFECTS[id]?.name ?? id)}
               onPickPreset={({ name, ...lookIn }) => pickEffect(lookIn, name)}
               onDeletePreset={(name) => { api.deletePreset(name).then(show.refreshPresets).catch(show.reportError); }}
             />
           )}
+          <p className="mode-hint paint-pattern-note">Effects paint as a pattern, not a colour: the lights you’ve already coloured twinkle, chase or ripple in their own colours. Paint colours first, then the effect over them.</p>
           {!fx && !picking && <p className="empty">Choose an effect or a saved preset, then drag over the lights.</p>}
-          {fx && fxDef?.params.map((p) => (
+          {fx && fxDef?.params.filter((p) => fx.look.blend !== 'mask' || !isPatternColourParam(p)).map((p) => (
             <ParamControl key={`${fx.look.effect}.${p.key}`} spec={p} value={fxParams[p.key]} params={fxParams} onEnd={() => editor.endGesture()} show={show}
               onChange={(v, merge) => setFxParams({ [p.key]: v }, merge, p.key)} onPatch={(patch, merge) => setFxParams({ ...patch }, merge, 'paletteStops')} />
           ))}
@@ -189,10 +192,11 @@ export function EraserTools({ paint, editor, mode }: { paint: PaintState; editor
   );
 }
 
-const paintName = (l: LayerConfig): string => (l.effect === 'solid' && typeof l.params?.['color'] === 'string' ? (l.params['color'] as string).toUpperCase() : EFFECTS[l.effect]?.name ?? l.effect);
+const paintName = (l: LayerConfig): string => (l.effect === 'solid' && typeof l.params?.['color'] === 'string' ? (l.params['color'] as string).toUpperCase() : `${EFFECTS[l.effect]?.name ?? l.effect}${isPatternPaint(l) ? ' pattern' : ''}`);
 
 /** A chip showing a paint's colours. */
 function layerSwatch(l: LayerConfig): string {
+  if (isPatternPaint(l)) return 'repeating-linear-gradient(90deg, #f4f6fb 0 5px, #2a3142 5px 10px)';
   const def = EFFECTS[l.effect];
   let params: Record<string, unknown> = l.params ?? {};
   try { if (def) params = resolveParams(def, l.params); } catch { /* show what we can */ }
