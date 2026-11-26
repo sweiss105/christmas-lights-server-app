@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch --conditions=source src/main.ts",
     "start": "tsx --conditions=source src/main.ts",
+    "demo": "tsx --conditions=source src/demo.ts",
     "build": "tsc -b"
   },
   "dependencies": {
