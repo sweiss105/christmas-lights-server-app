@@ -4,6 +4,7 @@ import { api } from './api';
 import { aboveHeight, combine, endsOfRuns, everyNth, invert, selectAll, sideOf, type SelectMode, type Selection } from './selection';
 import type { SelectTool } from './SelectionOverlay';
 import type { Show } from './useShow';
+import { PanelHead } from './PanelHead';
 
 interface Props {
   show: Show;
@@ -15,8 +16,7 @@ interface Props {
   onMode: (m: SelectMode) => void;
   brushSize: number;
   onBrushSize: (n: number) => void;
-  /** Back to editing scenes (the selection is kept). */
-  onDone: () => void;
+  onHide?: () => void;
 }
 
 const TOOLS: [SelectTool, string, string][] = [
@@ -25,7 +25,7 @@ const TOOLS: [SelectTool, string, string][] = [
 const MODES: [SelectMode, string][] = [['replace', 'New'], ['add', 'Add'], ['subtract', 'Remove']];
 
 /** Select lights with box, lasso, brush or rules, and save selections as (optionally soft-edged) groups. */
-export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, onMode, brushSize, onBrushSize, onDone }: Props) {
+export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, onMode, brushSize, onBrushSize, onHide }: Props) {
   const config = show.layout!;
   const layout = useMemo(() => buildLayout(config), [config]);
   const [nth, setNth] = useState(3);
@@ -61,14 +61,7 @@ export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, 
 
   return (
     <aside className="editor glass select-panel" aria-label="Select lights">
-      <div className="editor-sticky">
-        <div className="editor-head">
-          <div className="editor-title">
-            <span className="eyebrow">Select lights</span>
-            <h2>{selection.size} selected</h2>
-          </div>
-          <button className="btn small done-btn" onClick={onDone} title="Back to editing scenes (Esc)">Done</button>
-        </div>
+      <PanelHead eyebrow="Select lights" title={`${selection.size} selected`} onHide={onHide}>
         <div className="mode-row">
           <div className="segmented tools-seg" role="radiogroup" aria-label="Selection tool">
             {TOOLS.map(([t, label, hint]) => <button key={t} role="radio" aria-checked={tool === t} className={tool === t ? 'active' : ''} title={hint} onClick={() => onTool(t)}>{label}</button>)}
@@ -78,7 +71,7 @@ export function SelectPanel({ show, selection, onSelection, tool, onTool, mode, 
           </div>
           <p className="mode-hint">{tool === 'orbit' ? 'Pick Box, Lasso, Brush or String to select; Move turns the view.' : 'Shift adds, Option/Alt removes, whatever the mode.'}</p>
         </div>
-      </div>
+      </PanelHead>
 
       {tool === 'brush' && (
         <label className="field slider">

@@ -5,6 +5,9 @@ import type { SceneFlow } from './sceneFlow';
 import type { WorkingCopy } from './workingCopy';
 import { api, type Preset } from './api';
 import { LayerPicker } from './LayerPicker';
+import { Popover } from './chrome';
+import { DuplicateIcon, MoreIcon, PlusIcon, TrashIcon } from './icons';
+import { PanelHead } from './PanelHead';
 import { paintedCount } from './paint';
 import { PaletteControl, type PalettePatch } from './PalettePicker';
 import type { EditMode } from './useSceneEditor';
@@ -15,18 +18,19 @@ interface Props {
   editor: WorkingCopy;
   flow: SceneFlow;
   mode: EditMode;
-  onModeChange: (m: EditMode) => void;
+  onHide?: () => void;
 }
 
 /** Short names for the layer list. */
 const BLEND_SHORT: Partial<Record<BlendMode, string>> = { mask: 'Mask', 'mask-invert': 'Inverted mask' };
 const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', add: 'Add', multiply: 'Multiply', screen: 'Screen', max: 'Brightest', mask: 'Mask: show below where bright', 'mask-invert': 'Mask: hide below where bright' };
 
-/** Right-hand panel: the selected scene's layers and the selected layer's settings. */
-export function EditorPanel({ show, editor, flow, mode, onModeChange }: Props) {
+/** Create's Edit panel (the Move tool): the scene's layers, and the selected layer's settings under them. */
+export function EditorPanel({ show, editor, flow, mode, onHide }: Props) {
   const scene = editor.scene;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [namingPreset, setNamingPreset] = useState(false);
 
   // Keep a valid layer selected: the top layer by default.
   useEffect(() => {
@@ -37,39 +41,43 @@ export function EditorPanel({ show, editor, flow, mode, onModeChange }: Props) {
   const groups = useMemo(() => groupOptions(layout), [layout]);
   const layer = scene.layers.find((l) => l.id === selectedId) ?? null;
 
-  if (!scene.name) return <aside className="editor glass" aria-label="Scene editor"><p className="empty">Pick a scene to edit it.</p></aside>;
+  if (!scene.name) return <aside className="editor glass" aria-label="Scene editor"><PanelHead title="Edit" onHide={onHide} /><p className="empty">Pick a scene to edit it.</p></aside>;
 
   const live = mode === 'live';
   return (
     <aside className={`editor glass ${live ? 'is-live' : ''}`} aria-label={`Editing ${scene.name}`}>
-      <div className="editor-sticky">
-      <div className="editor-head">
-        <div className="editor-title">
-          <span className="eyebrow">{editor.neverStored ? 'New scene' : 'Editing'}<UnsavedNote editor={editor} /></span>
-          <SceneTitle name={scene.name} unsaved={editor.dirty} onRename={flow.rename} />
-        </div>
-        <div className="history">
-          <button className="icon-btn" onClick={() => editor.undo()} disabled={!editor.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
-          <button className="icon-btn" onClick={() => editor.redo()} disabled={!editor.canRedo} aria-label="Redo" title="Redo (⇧⌘Z)"><UndoIcon flip /></button>
-        </div>
-      </div>
-
-      <div className="mode-row">
-        <div className="segmented mode" role="radiogroup" aria-label="Edit mode">
-          <button role="radio" aria-checked={!live} className={!live ? 'active' : ''} onClick={() => onModeChange('blind')}>Blind</button>
-          <button role="radio" aria-checked={live} className={live ? 'active live' : ''} onClick={() => onModeChange('live')}>
-            <span className="live-dot" aria-hidden /> Live
-          </button>
-        </div>
-        <p className="mode-hint">{modeHint(show, editor, live, 'edit')}</p>
-      </div>
-      <SaveBar editor={editor} flow={flow} />
-      </div>
+      <PanelHead eyebrow={<>{editor.neverStored ? 'Edit · new scene' : 'Edit'}<UnsavedNote editor={editor} /></>}
+        title={<SceneTitle name={scene.name} unsaved={editor.dirty} onRename={flow.rename} />} onHide={onHide} />
 
       <div className="section-head">
         <h3>Layers</h3>
-        <span className="hint-inline">top covers bottom</span>
+        <div className="icon-row" role="toolbar" aria-label="Layer actions">
+          <button className="icon-btn tiny" onClick={() => setAdding((a) => !a)} aria-expanded={adding} aria-label="Add layer" title="Add layer"><PlusIcon /></button>
+          <button className="icon-btn tiny" disabled={!layer} onClick={() => layer && editor.edit(duplicateLayer(scene, layer.id))} aria-label="Duplicate layer" title="Duplicate layer"><DuplicateIcon /></button>
+          <button className="icon-btn tiny danger" disabled={!layer} onClick={() => layer && editor.edit(removeLayer(scene, layer.id))} aria-label="Delete layer" title="Delete layer"><TrashIcon /></button>
+          <Popover label="More layer actions" align="right" trigger={(p) => (
+            <button className="icon-btn tiny" aria-label="More layer actions" title="Clear scene, Save as preset" {...p}><MoreIcon size={14} /></button>
+          )}>
+            {(close) => (
+              <>
+                <button role="menuitem" className="menu-item" disabled={!layer} onClick={() => { close(); setNamingPreset(true); }}>Save layer as preset…<span className="menu-hint">Reuse this layer’s look in other scenes</span></button>
+                <button role="menuitem" className="menu-item danger" disabled={scene.layers.length === 0}
+                  onClick={() => { close(); if (confirmClear(scene.name, live)) { editor.edit(clearScene(scene)); setSelectedId(null); } }}>Clear scene<span className="menu-hint">Remove every layer (Undo brings them back)</span></button>
+              </>
+            )}
+          </Popover>
+        </div>
       </div>
+      {adding && (
+        <LayerPicker
+          presets={show.presets}
+          onClose={() => setAdding(false)}
+          onPickEffect={(id) => { const next = addLayer(scene, id); editor.edit(next); setSelectedId(next.layers.at(-1)!.id); setAdding(false); }}
+          onPickPreset={(p) => { const next = addLayerFromLook(scene, p); editor.edit(next); setSelectedId(next.layers.at(-1)!.id); setAdding(false); }}
+          onDeletePreset={(name) => { api.deletePreset(name).then(show.refreshPresets).catch(show.reportError); }}
+        />
+      )}
+      {namingPreset && layer && <PresetNamer show={show} layer={layer} onDone={() => setNamingPreset(false)} />}
       <ul className="layer-list" aria-label="Layers, top first">
         {[...scene.layers].reverse().map((l, i, arr) => (
           <li key={l.id}>
@@ -93,29 +101,8 @@ export function EditorPanel({ show, editor, flow, mode, onModeChange }: Props) {
             </div>
           </li>
         ))}
-        {scene.layers.length === 0 && <li className="empty">No layers: the porch is dark in this scene.</li>}
+        {scene.layers.length === 0 && <li className="empty">No layers: the porch is dark in this scene. Add one with +.</li>}
       </ul>
-
-      <div className="layer-actions">
-        <button className="btn small" onClick={() => setAdding((a) => !a)} aria-expanded={adding}>+ Add layer</button>
-        <button className="btn small ghost" disabled={!layer} onClick={() => layer && editor.edit(duplicateLayer(scene, layer.id))}>Duplicate</button>
-        <button className="btn small ghost danger-quiet" disabled={!layer} onClick={() => layer && editor.edit(removeLayer(scene, layer.id))}>Delete</button>
-      </div>
-      {scene.layers.length > 0 && (
-        <div className="layer-actions clear-row">
-          <button className="btn small ghost danger-quiet" title="Remove every layer and start from a dark scene (Undo brings them back)"
-            onClick={() => { if (confirmClear(scene.name, live)) { editor.edit(clearScene(scene)); setSelectedId(null); } }}>Clear scene</button>
-        </div>
-      )}
-      {adding && (
-        <LayerPicker
-          presets={show.presets}
-          onClose={() => setAdding(false)}
-          onPickEffect={(id) => { const next = addLayer(scene, id); editor.edit(next); setSelectedId(next.layers.at(-1)!.id); setAdding(false); }}
-          onPickPreset={(p) => { const next = addLayerFromLook(scene, p); editor.edit(next); setSelectedId(next.layers.at(-1)!.id); setAdding(false); }}
-          onDeletePreset={(name) => { api.deletePreset(name).then(show.refreshPresets).catch(show.reportError); }}
-        />
-      )}
 
       {layer && <LayerInspector key={layer.id} show={show} editor={editor} layer={layer} groups={groups} />}
     </aside>
@@ -134,7 +121,7 @@ function LayerInspector({ show, editor, layer, groups }: { show: Show; editor: S
   return (
     <div className="inspector">
       <div className="section-head"><h3>Layer</h3></div>
-      <PresetBar show={show} layer={layer} onApply={(p) => editor.edit(applyLook(scene(), id, p))} />
+      <PresetBar show={show} onApply={(p) => editor.edit(applyLook(scene(), id, p))} />
       <Field label="Effect">
         <select value={layer.effect} onChange={(e) => editor.edit(updateLayer(scene(), id, { effect: e.target.value }))}>
           {Object.values(EFFECTS).map((fx) => <option key={fx.id} value={fx.id}>{fx.name}</option>)}
@@ -277,39 +264,38 @@ function PositionControl({ label, value, onChange, onEnd }: { label: string; val
   );
 }
 
-/** Save the selected layer's look as a preset, or apply a saved one to it. */
-function PresetBar({ show, layer, onApply }: { show: Show; layer: LayerConfig; onApply: (p: Preset) => void }) {
-  const [naming, setNaming] = useState(false);
-  const [name, setName] = useState('');
+/** Apply a saved preset to the selected layer. */
+function PresetBar({ show, onApply }: { show: Show; onApply: (p: Preset) => void }) {
+  if (show.presets.length === 0) return null;
+  return (
+    <div className="preset-bar">
+      <select className="preset-apply" value="" aria-label="Apply a preset to this layer"
+        onChange={(e) => { const p = show.presets.find((x) => x.name === e.target.value); if (p) onApply(p); }}>
+        <option value="" disabled>Apply preset…</option>
+        {show.presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+      </select>
+    </div>
+  );
+}
+
+/** Name the selected layer's look and store it as a preset. */
+function PresetNamer({ show, layer, onDone }: { show: Show; layer: LayerConfig; onDone: () => void }) {
+  const [name, setName] = useState(EFFECTS[layer.effect]?.name ?? '');
   const [busy, setBusy] = useState(false);
   const save = async () => {
     const n = name.trim();
-    if (!n) { setNaming(false); return; }
+    if (!n) { onDone(); return; }
     if (show.presets.some((p) => p.name === n) && !window.confirm(`Replace the preset “${n}”?`)) return;
     setBusy(true);
-    try { await api.savePreset(n, lookOf(layer)); await show.refreshPresets(); setNaming(false); setName(''); } catch (e) { show.reportError(e); }
+    try { await api.savePreset(n, lookOf(layer)); await show.refreshPresets(); onDone(); } catch (e) { show.reportError(e); }
     setBusy(false);
   };
-  if (naming) {
-    return (
-      <div className="preset-bar">
-        <input className="title-input small" autoFocus value={name} maxLength={80} placeholder="Preset name" aria-label="Preset name"
-          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') setNaming(false); }} />
-        <button className="btn small" disabled={busy || !name.trim()} onClick={() => void save()}>Save</button>
-        <button className="btn small ghost" onClick={() => setNaming(false)}>Cancel</button>
-      </div>
-    );
-  }
   return (
     <div className="preset-bar">
-      <button className="btn small" onClick={() => { setName(EFFECTS[layer.effect]?.name ?? ''); setNaming(true); }}>Save as preset</button>
-      {show.presets.length > 0 && (
-        <select className="preset-apply" value="" aria-label="Apply a preset to this layer"
-          onChange={(e) => { const p = show.presets.find((x) => x.name === e.target.value); if (p) onApply(p); }}>
-          <option value="" disabled>Apply preset…</option>
-          {show.presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
-        </select>
-      )}
+      <input className="title-input small" autoFocus value={name} maxLength={80} placeholder="Preset name" aria-label="Preset name"
+        onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') onDone(); }} />
+      <button className="btn small" disabled={busy || !name.trim()} onClick={() => void save()}>Save preset</button>
+      <button className="btn small ghost" onClick={onDone}>Cancel</button>
     </div>
   );
 }
@@ -324,21 +310,6 @@ export function modeHint(show: Show, editor: WorkingCopy, live: boolean, what: '
 /** "Unsaved changes" after the panel's eyebrow, while there are some. */
 export function UnsavedNote({ editor }: { editor: WorkingCopy }) {
   return <span className="eyebrow-unsaved" role="status">{editor.dirty ? (editor.neverStored ? ' · Not saved' : ' · Unsaved changes') : ''}</span>;
-}
-
-/** Save, Save as new and Revert. */
-export function SaveBar({ editor, flow }: { editor: WorkingCopy; flow: SceneFlow }) {
-  const dirty = editor.dirty;
-  return (
-    <div className="save-row" role="group" aria-label="Save">
-      <div className="save-buttons">
-        <button className="btn small primary" disabled={!dirty} onClick={() => void flow.save()} title={editor.neverStored ? 'Store this new scene (asks for a name)' : 'Store the changes over the saved scene'}>Save</button>
-        <button className="btn small ghost" disabled={!dirty} onClick={() => void flow.saveAsNew()} title="Store a copy under a new name; the saved scene stays as it was">Save as new…</button>
-        <button className="btn small ghost" disabled={!dirty || (editor.neverStored && editor.scene.layers.length === 0)} onClick={() => void flow.revert()}
-          title={editor.neverStored ? 'Clear it back to a blank scene' : 'Throw the changes away and go back to the saved scene'}>Revert</button>
-      </div>
-    </div>
-  );
 }
 
 /** The scene name; tap it to rename. Enter saves, Escape cancels. */

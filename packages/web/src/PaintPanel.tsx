@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react';
 import { EFFECTS, paletteColors, resolveParams, type LayerConfig } from '@xmas/engine';
 import { api } from './api';
 import { confirmClear, lookOf, removeLayer, type Look } from './editor';
-import { modeHint, ParamControl, SaveBar, Slider, UndoIcon, UnsavedNote } from './EditorPanel';
+import { modeHint, ParamControl, Slider, UnsavedNote } from './EditorPanel';
+import { PanelHead } from './PanelHead';
 import { LayerPicker } from './LayerPicker';
 import { clearPaint, colorLook, isPainted, paintedCount, paintLayerFor, retunePaint, type Brush } from './paint';
 import type { PaintTool } from './PaintOverlay';
-import type { SceneFlow } from './sceneFlow';
 import type { EditMode } from './useSceneEditor';
 import type { WorkingCopy } from './workingCopy';
 import type { Show } from './useShow';
@@ -39,18 +39,15 @@ export function usePaint(): PaintState {
 interface Props {
   show: Show;
   editor: WorkingCopy;
-  flow: SceneFlow;
   paint: PaintState;
   mode: EditMode;
-  onModeChange: (m: EditMode) => void;
-  /** Back to editing the scene's layers. */
-  onDone: () => void;
+  onHide?: () => void;
 }
 
 const TOOLS: [PaintTool, string, string][] = [['orbit', 'Move', 'Drag to turn the view'], ['paint', 'Paint', 'Drag over lights to paint them'], ['erase', 'Erase', 'Drag over lights to wipe paint off']];
 
 /** Paint colours and effects onto the lights with a brush. What's painted is part of the scene. */
-export function PaintPanel({ show, editor, flow, paint, mode, onModeChange, onDone }: Props) {
+export function PaintPanel({ show, editor, paint, mode, onHide }: Props) {
   const scene = editor.scene;
   const [picking, setPicking] = useState(false);
   const { brush, look } = paint;
@@ -59,7 +56,7 @@ export function PaintPanel({ show, editor, flow, paint, mode, onModeChange, onDo
   const current = look ? paintLayerFor(scene, look) : null;
 
   if (!scene.name) {
-    return <aside className="editor glass paint-panel" aria-label="Paint on the lights"><p className="empty">Pick a scene to paint on.</p><div className="layer-actions"><button className="btn small" onClick={onDone}>Done</button></div></aside>;
+    return <aside className="editor glass paint-panel" aria-label="Paint on the lights"><PanelHead title="Paint" onHide={onHide} /><p className="empty">Pick a scene to paint on.</p></aside>;
   }
 
   const pickEffect = (lookIn: Look, name: string) => { paint.setEffect({ look: lookIn, name }); paint.setSource('effect'); paint.setTool('paint'); setPicking(false); };
@@ -88,30 +85,16 @@ export function PaintPanel({ show, editor, flow, paint, mode, onModeChange, onDo
 
   return (
     <aside className={`editor glass paint-panel ${live ? 'is-live' : ''}`} aria-label="Paint on the lights">
-      <div className="editor-sticky">
-        <div className="editor-head">
-          <div className="editor-title">
-            <span className="eyebrow">{editor.neverStored ? 'New painting' : 'Painting on'}<UnsavedNote editor={editor} /></span>
-            <h2>{scene.name}{editor.dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</h2>
-          </div>
-          <div className="history">
-            <button className="icon-btn" onClick={() => editor.undo()} disabled={!editor.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
-            <button className="icon-btn" onClick={() => editor.redo()} disabled={!editor.canRedo} aria-label="Redo" title="Redo (⇧⌘Z)"><UndoIcon flip /></button>
-            <button className="btn small done-btn" onClick={onDone} title="Back to the scene's layers (Esc)">Done</button>
-          </div>
-        </div>
+      <PanelHead eyebrow={<>{paint.tool === 'erase' ? 'Eraser' : 'Brush'} · {editor.neverStored ? 'new painting' : 'painting on'}<UnsavedNote editor={editor} /></>}
+        title={<h2>{scene.name}{editor.dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</h2>} onHide={onHide}>
         <div className="mode-row">
-          <div className="segmented mode" role="radiogroup" aria-label="Edit mode">
-            <button role="radio" aria-checked={!live} className={!live ? 'active' : ''} onClick={() => onModeChange('blind')}>Blind</button>
-            <button role="radio" aria-checked={live} className={live ? 'active live' : ''} onClick={() => onModeChange('live')}><span className="live-dot" aria-hidden /> Live</button>
-          </div>
-          <p className="mode-hint">{modeHint(show, editor, live, 'paint')}</p>
+          {editor.neverStored && <p className="canvas-note">A blank canvas: paint, then Save as new.</p>}
           <div className="segmented tools-seg" role="radiogroup" aria-label="Paint tool">
             {TOOLS.map(([t, label, hint]) => <button key={t} role="radio" aria-checked={paint.tool === t} className={paint.tool === t ? 'active' : ''} title={hint} onClick={() => paint.setTool(t)}>{label}</button>)}
           </div>
+          <p className="mode-hint">{modeHint(show, editor, live, 'paint')}</p>
         </div>
-        <SaveBar editor={editor} flow={flow} />
-      </div>
+      </PanelHead>
 
       <div className="section-head"><h3>Paint with</h3></div>
       <div className="mode-row">
@@ -185,7 +168,7 @@ export function PaintPanel({ show, editor, flow, paint, mode, onModeChange, onDo
         <button className="btn small ghost danger-quiet" disabled={painted.length === 0} title="Remove everything painted (the scene's other layers stay; Undo brings the paint back)"
           onClick={() => { if (confirmClear(editor.scene.name, live, 'painting')) editor.edit(clearPaint(editor.scene)); }}>Clear painting</button>
       </div>
-      <p className="mode-hint paint-foot">Painting starts from a blank scene with every light off. When you like it, Save as new… stores it as a scene. Each paint is a layer: press Done to reorder it or fine-tune it with the other layers. Hold Option/Alt to erase.</p>
+      <p className="mode-hint paint-foot">Painting starts from a blank scene with every light off. When you like it, Save as new… stores it as a scene. Each paint is a layer: pick the Move tool (V) to reorder it or fine-tune it with the other layers. Hold Option/Alt to erase.</p>
     </aside>
   );
 }

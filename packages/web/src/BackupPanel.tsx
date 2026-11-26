@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import type { Show } from './useShow';
+import { PanelHead } from './PanelHead';
 
 interface BackupInfo { file: string; bytes: number; modified: number }
 
@@ -12,7 +13,7 @@ const label = (file: string) => {
 };
 
 /** Download all scenes, presets, playlists, layout and settings as one file, restore one, or roll back to a daily backup. */
-export function BackupPanel({ show, onClose }: { show: Show; onClose: () => void }) {
+export function BackupPanel({ show, onHide }: { show: Show; onHide?: () => void }) {
   const [backups, setBackups] = useState<BackupInfo[] | null>(null);
   const [busy, setBusy] = useState(false);
   const file = useRef<HTMLInputElement>(null);
@@ -35,11 +36,8 @@ export function BackupPanel({ show, onClose }: { show: Show; onClose: () => void
   };
 
   return (
-    <div className="house-panel glass backup-panel" role="dialog" aria-label="Backups">
-      <div className="panel-head">
-        <h2>Backups</h2>
-        <button className="btn small ghost" onClick={onClose}>Done</button>
-      </div>
+    <aside className="editor glass backup-panel" aria-label="Backups">
+      <PanelHead eyebrow="Backups" title="Backups" onHide={onHide} />
       <div className="house-body">
         <p className="hint">One file holds your scenes, presets, playlists, schedule, layout and settings (house scans are kept separately on the server).</p>
         <div className="row wrap">
@@ -59,6 +57,6 @@ export function BackupPanel({ show, onClose }: { show: Show; onClose: () => void
           {backups?.length === 0 && <li className="empty">The first daily backup is made within a minute of the server starting.</li>}
         </ul>
       </div>
-    </div>
+    </aside>
   );
 }
