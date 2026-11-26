@@ -44,13 +44,11 @@ interface Props {
   onHide?: () => void;
 }
 
-const TOOLS: [PaintTool, string, string][] = [['orbit', 'Move', 'Drag to turn the view'], ['paint', 'Paint', 'Drag over lights to paint them'], ['erase', 'Erase', 'Drag over lights to wipe paint off']];
-
 /** Paint colours and effects onto the lights with a brush. What's painted is part of the scene. */
 export function PaintPanel({ show, editor, paint, mode, onHide }: Props) {
   const scene = editor.scene;
   const [picking, setPicking] = useState(false);
-  const { brush, look } = paint;
+  const { look } = paint;
   const live = mode === 'live';
   const painted = scene.layers.filter(isPainted).reverse();
   const current = look ? paintLayerFor(scene, look) : null;
@@ -89,9 +87,6 @@ export function PaintPanel({ show, editor, paint, mode, onHide }: Props) {
         title={<h2>{scene.name}{editor.dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</h2>} onHide={onHide}>
         <div className="mode-row">
           {editor.neverStored && <p className="canvas-note">A blank canvas: paint, then Save as new.</p>}
-          <div className="segmented tools-seg" role="radiogroup" aria-label="Paint tool">
-            {TOOLS.map(([t, label, hint]) => <button key={t} role="radio" aria-checked={paint.tool === t} className={paint.tool === t ? 'active' : ''} title={hint} onClick={() => paint.setTool(t)}>{label}</button>)}
-          </div>
           <p className="mode-hint">{modeHint(show, editor, live, 'paint')}</p>
         </div>
       </PanelHead>
@@ -145,11 +140,6 @@ export function PaintPanel({ show, editor, paint, mode, onHide }: Props) {
         </>
       )}
 
-      <div className="section-head"><h3>Brush</h3><span className="hint-inline">[ and ] change the size</span></div>
-      <Slider label="Size" min={6} max={160} step={1} value={brush.size} format={(v) => `${Math.round(v)} px`} onChange={(v) => paint.setBrush({ ...brush, size: v })} onEnd={() => {}} />
-      <Slider label="Soft edge" min={0} max={1} step={0.01} value={brush.softness} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => paint.setBrush({ ...brush, softness: v })} onEnd={() => {}} />
-      <Slider label="Strength" min={0.05} max={1} step={0.01} value={brush.strength} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => paint.setBrush({ ...brush, strength: v })} onEnd={() => {}} />
-
       <div className="section-head"><h3>Painted in this scene</h3><span className="hint-inline">newest strokes on top</span></div>
       <ul className="group-list paint-list">
         {painted.map((l) => (
@@ -164,12 +154,38 @@ export function PaintPanel({ show, editor, paint, mode, onHide }: Props) {
         ))}
         {painted.length === 0 && <li className="empty">Nothing painted yet. Drag over the lights in the view.</li>}
       </ul>
-      <div className="layer-actions">
-        <button className="btn small ghost danger-quiet" disabled={painted.length === 0} title="Remove everything painted (the scene's other layers stay; Undo brings the paint back)"
-          onClick={() => { if (confirmClear(editor.scene.name, live, 'painting')) editor.edit(clearPaint(editor.scene)); }}>Clear painting</button>
-      </div>
-      <p className="mode-hint paint-foot">Painting starts from a blank scene with every light off. When you like it, Save as new… stores it as a scene. Each paint is a layer: pick the Move tool (V) to reorder it or fine-tune it with the other layers. Hold Option/Alt to erase.</p>
+      <p className="mode-hint paint-foot">Painting starts from a blank scene with every light off. When you like it, Save as new… stores it as a scene. Each paint is a layer: pick the Move tool (V) to reorder it or fine-tune it with the other layers. The brush’s size and softness are in its pop-out by the Brush tool.</p>
     </aside>
+  );
+}
+
+/** The Brush's settings (its pop-out from the rail): size, soft edge and strength. */
+export function BrushTools({ paint }: { paint: PaintState }) {
+  const { brush } = paint;
+  return (
+    <div className="brush-tools">
+      <Slider label="Size" min={6} max={160} step={1} value={brush.size} format={(v) => `${Math.round(v)} px`} onChange={(v) => paint.setBrush({ ...brush, size: v })} onEnd={() => {}} />
+      <Slider label="Soft edge" min={0} max={1} step={0.01} value={brush.softness} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => paint.setBrush({ ...brush, softness: v })} onEnd={() => {}} />
+      <Slider label="Strength" min={0.05} max={1} step={0.01} value={brush.strength} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => paint.setBrush({ ...brush, strength: v })} onEnd={() => {}} />
+      <p className="mode-hint">[ and ] change the size. Hold Option/Alt to erase.</p>
+    </div>
+  );
+}
+
+/** The Eraser's settings (its pop-out from the rail): size, soft edge, and clearing the whole painting. */
+export function EraserTools({ paint, editor, mode }: { paint: PaintState; editor: WorkingCopy; mode: EditMode }) {
+  const { brush } = paint;
+  const painted = editor.scene.layers.some(isPainted);
+  return (
+    <div className="brush-tools">
+      <Slider label="Size" min={6} max={160} step={1} value={brush.size} format={(v) => `${Math.round(v)} px`} onChange={(v) => paint.setBrush({ ...brush, size: v })} onEnd={() => {}} />
+      <Slider label="Soft edge" min={0} max={1} step={0.01} value={brush.softness} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => paint.setBrush({ ...brush, softness: v })} onEnd={() => {}} />
+      <p className="mode-hint">[ and ] change the size.</p>
+      <div className="layer-actions">
+        <button className="btn small ghost danger-quiet" disabled={!painted} title="Remove everything painted (the scene's other layers stay; Undo brings the paint back)"
+          onClick={() => { if (confirmClear(editor.scene.name, mode === 'live', 'painting')) editor.edit(clearPaint(editor.scene)); }}>Clear painting</button>
+      </div>
+    </div>
   );
 }
 

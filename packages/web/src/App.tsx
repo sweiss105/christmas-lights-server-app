@@ -6,8 +6,9 @@ import { useDialog } from './Dialog';
 import { useSceneFlow } from './sceneFlow';
 import { appendPoint, setPoint } from './layoutOps';
 import { LayoutPanel } from './LayoutPanel';
-import { SelectPanel } from './SelectPanel';
-import { PaintPanel, usePaint } from './PaintPanel';
+import { SelectTools } from './SelectPanel';
+import { BrushTools, EraserTools, PaintPanel, usePaint } from './PaintPanel';
+import { ToolPopout, usePopoutsOpen } from './ToolPopout';
 import { PaintOverlay } from './PaintOverlay';
 import { isPaintingScene } from './paint';
 import { SelectionOverlay, type SelectTool } from './SelectionOverlay';
@@ -32,6 +33,9 @@ import type { WorkingCopy } from './workingCopy';
 import type { SceneFlow } from './sceneFlow';
 
 interface RailTool<T extends string> { id: T; label: string; short: string; key?: string; icon: ToolIconName }
+
+/** Create's tools with settings: each has a pop-out by its rail button. Move has none. */
+const POPOUT_TOOLS: ReadonlySet<string> = new Set<CreateTool>(['select', 'brush', 'erase']);
 
 const CREATE_RAIL: { title: string; tools: RailTool<CreateTool>[] }[] = [
   { title: 'View', tools: [{ id: 'move', label: 'Move the view', short: 'Move', key: 'V', icon: 'move' }] },
@@ -91,8 +95,11 @@ export function App() {
   const selecting = creating && tool === 'select';
   const layoutMode = page === 'setup' && setupTool === 'strings' && !route.capture;
   const reviewing = page === 'setup' && setupTool === 'map' && !route.capture;
-  /** The rail shows Brush or Eraser lit, following the paint panel's own tool switch. */
+  /** The rail shows Brush or Eraser lit, following the paint tool (Option/Alt-free: the tool picked). */
   const railTool: CreateTool = painting ? (paint.tool === 'erase' ? 'erase' : 'brush') : tool;
+  const popouts = usePopoutsOpen();
+  /** The tool whose settings pop-out is open, if any. */
+  const popTool = creating && POPOUT_TOOLS.has(railTool) && popouts.isOpen(railTool) ? railTool : null;
 
   /**
    * Change Create's tool. Brush and Eraser carry on with the open scene when it's a painting (new and
@@ -100,14 +107,25 @@ export function App() {
    * and back without losing the canvas. On an ordinary effects scene they start a new blank canvas
    * (asking first about unsaved edits).
    */
-  const pickTool = async (want: CreateTool) => {
+  const pickTool = async (want: CreateTool): Promise<boolean> => {
     const isPaint = (t: CreateTool) => t === 'brush' || t === 'erase';
-    if (isPaint(want) && !isPaint(tool) && !isPaintingScene(editor)) { if (!(await flow.startNew('Painting'))) return; }
+    if (isPaint(want) && !isPaint(tool) && !isPaintingScene(editor)) { if (!(await flow.startNew('Painting'))) return false; }
     if (want === 'brush') paint.setTool('paint');
     if (want === 'erase') paint.setTool('erase');
     setDrawing(false);
     setTool(want);
+    return true;
   };
+  /**
+   * A click on a rail button: another tool is picked with its settings pop-out open; the tool already
+   * picked opens or closes its pop-out (remembered on this device; V M B E keep the remembered state).
+   */
+  const clickTool = async (want: CreateTool) => {
+    if (want === railTool && creating) { if (POPOUT_TOOLS.has(want)) popouts.setOpen(want, !popouts.isOpen(want)); return; }
+    if ((await pickTool(want)) && POPOUT_TOOLS.has(want)) popouts.setOpen(want, true);
+  };
+  const popToolRef = useRef(popTool);
+  popToolRef.current = popTool;
   const pickToolRef = useRef(pickTool);
   pickToolRef.current = pickTool;
 
@@ -119,7 +137,13 @@ export function App() {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || dialogOpen()) return;
       const t = e.target as HTMLElement | null;
       if (typingTarget(t)) return;
-      if (e.key === 'Escape') { if (tool !== 'move') void pickToolRef.current('move'); return; }
+      // Esc closes an open pop-out first; the next Esc goes back to Move.
+      if (e.key === 'Escape') {
+        const open = popToolRef.current;
+        if (open) { popouts.setOpen(open, false); document.querySelector<HTMLElement>(`.rail-btn[data-tool="${open}"]`)?.focus(); }
+        else if (tool !== 'move') void pickToolRef.current('move');
+        return;
+      }
       if (e.key === ' ' && mode === 'blind') {
         // Space on a focused button presses it; anywhere else it's "hold to see the porch".
         if (t?.closest('button, a, select, [role="radio"], [role="switch"], input')) return;
@@ -211,7 +235,8 @@ export function App() {
 
   if (page === 'watch') return <WatchPage show={show} preset={preset} onCamera={pickCamera} onExit={() => toPage('control')} layout={shownLayout} />;
 
-  const appClass = ['app', `page-${page}`, mode === 'live' && creating ? 'live-armed' : '', phone ? 'phone' : 'desk', panel.shown ? '' : 'panel-hidden'].filter(Boolean).join(' ');
+  const appClass = ['app', `page-${page}`, mode === 'live' && creating ? 'live-armed' : '', phone ? 'phone' : 'desk', panel.shown ? '' : 'panel-hidden', popTool ? 'has-pop' : ''].filter(Boolean).join(' ');
+  const closePop = () => { if (popTool) popouts.setOpen(popTool, false); };
 
   return (
     <div className={appClass} style={{ ['--inset-l' as string]: `${railInset}px`, ['--inset-r' as string]: `${panelInset}px` }}>
@@ -245,15 +270,24 @@ export function App() {
           : <ShowBar show={show} phone={phone} onFullScreen={fullScreen} onBackups={() => toSetup('backups')} />}
       </header>
 
-      {creating && <Rail label="Tools" sections={CREATE_RAIL} value={railTool} onPick={(t) => void pickTool(t)} />}
+      {creating && <Rail label="Tools" sections={CREATE_RAIL} value={railTool} onPick={(t) => void clickTool(t)} expanded={(t) => (POPOUT_TOOLS.has(t) ? popTool === t : undefined)} />}
+      {popTool === 'select' && (
+        <ToolPopout id="select" title="Select" subtitle={`${selection.size} selected`} phone={phone} onClose={closePop}>
+          <SelectTools show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
+            mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} />
+        </ToolPopout>
+      )}
+      {popTool === 'brush' && (
+        <ToolPopout id="brush" title="Brush" phone={phone} onClose={closePop}><BrushTools paint={paint} /></ToolPopout>
+      )}
+      {popTool === 'erase' && (
+        <ToolPopout id="erase" title="Eraser" phone={phone} onClose={closePop}><EraserTools paint={paint} editor={editor} mode={mode} /></ToolPopout>
+      )}
       {page === 'setup' && <Rail label="Setup tools" sections={SETUP_RAIL} value={setupTool} onPick={toSetup} />}
 
       {panel.shown && (
         creating ? (
-          selecting
-            ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
-                mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} onHide={hidePanel} />
-            : painting
+          painting
             ? <PaintPanel show={show} editor={editor} paint={paint} mode={mode} onHide={hidePanel} />
             : <EditorPanel show={show} editor={editor} flow={flow} mode={mode} onHide={hidePanel} />
         ) : page === 'control' ? (
@@ -426,15 +460,20 @@ function PhoneModeRow({ show, editor, flow, mode, onMode, selected }: { show: Sh
 // ---- the tool rail ----------------------------------------------------------------------------------
 
 /** Tools with section headers, down the left side (a strip along the bottom on a phone). */
-function Rail<T extends string>({ label, sections, value, onPick }: { label: string; sections: { title: string; tools: RailTool<T>[] }[]; value: T; onPick: (t: T) => void }) {
+function Rail<T extends string>({ label, sections, value, onPick, expanded }: {
+  label: string; sections: { title: string; tools: RailTool<T>[] }[]; value: T; onPick: (t: T) => void;
+  /** Whether a tool's settings pop-out is open (undefined: the tool has none). */
+  expanded?: (t: T) => boolean | undefined;
+}) {
   return (
     <nav className="rail glass" aria-label={label}>
       {sections.map((sec) => (
         <div key={sec.title} className="rail-section" role="group" aria-label={sec.title}>
           <span className="rail-title" aria-hidden>{sec.title}</span>
           {sec.tools.map((t) => (
-            <button key={t.id} className={`rail-btn ${t.id === value ? 'active' : ''}`} aria-pressed={t.id === value} aria-label={t.short}
-              title={`${t.label}${t.key ? ` (${t.key})` : ''}`} onClick={() => onPick(t.id)}>
+            <button key={t.id} className={`rail-btn ${t.id === value ? 'active' : ''}`} aria-pressed={t.id === value} aria-label={t.short} data-tool={t.id}
+              aria-expanded={expanded?.(t.id)} aria-controls={expanded?.(t.id) ? `tool-pop-${t.id}` : undefined}
+              title={`${t.label}${t.key ? ` (${t.key})` : ''}${expanded?.(t.id) !== undefined ? ' · click again for its settings' : ''}`} onClick={() => onPick(t.id)}>
               <ToolIcon name={t.icon} />
               <span className="rail-short" aria-hidden>{t.short}</span>
             </button>

@@ -158,33 +158,94 @@ try {
   await openScene('Candy cane'); // blank: nothing to ask
   check(await shows(page.getByRole('heading', { name: 'Candy cane' })), 'a blank new scene is left without asking');
 
-  // The tool rail switches the contextual panel; V M B E do the same, Esc goes back to Move.
+  // The tool rail picks a tool and opens its settings in a pop-out beside the rail button; the right panel
+  // keeps the layers. Clicking the tool again, its ×, or Esc closes the pop-out; a second Esc goes back to Move.
   const rail = page.getByRole('navigation', { name: 'Tools' });
   const editPanel = page.getByRole('complementary', { name: 'Editing Candy cane' });
-  const selectPanel = page.getByRole('complementary', { name: 'Select lights' });
-  await rail.getByRole('button', { name: 'Select', exact: true }).click();
-  check(await shows(selectPanel) && !(await editPanel.isVisible()) && await rail.getByRole('button', { name: 'Select' }).getAttribute('aria-pressed') === 'true', 'the rail’s Select tool shows the Select panel');
+  const selectButton = rail.getByRole('button', { name: 'Select', exact: true });
+  const selectPop = page.getByRole('dialog', { name: 'Select settings' });
+  await selectButton.click();
+  check(await shows(selectPop) && await selectPop.getByRole('radio', { name: 'Lasso' }).isVisible() && await selectPop.getByRole('radio', { name: 'Remove' }).isVisible()
+    && await selectButton.getAttribute('aria-pressed') === 'true' && await selectButton.getAttribute('aria-expanded') === 'true', 'the rail’s Select tool opens its pop-out with the selection tools');
+  await page.waitForTimeout(250); // the pop-out slides in
+  const railBox = await rail.boundingBox();
+  const selBtnBox = await selectButton.boundingBox();
+  const popBox = await selectPop.boundingBox();
+  check(!!popBox && popBox.x >= railBox.x + railBox.width && popBox.x < railBox.x + railBox.width + 30 && Math.abs(popBox.y - selBtnBox.y) < 4, 'the Select pop-out sits beside the rail, level with its button');
+  check(await editPanel.isVisible() && await page.locator('.layer-list').isVisible(), 'the right panel keeps the Edit panel (layers) while selecting');
+  // A box selection on the 3D view, with the pop-out open.
+  await page.mouse.move(popBox.x + popBox.width + 20, 160);
+  await page.mouse.down();
+  await page.mouse.move(910, 780, { steps: 10 });
+  await page.mouse.up();
+  const selectedCount = async () => Number((await selectPop.locator('.tool-pop-sub').textContent()).match(/\d+/)[0]);
+  check(await selectedCount() > 0 && await selectPop.isVisible(), `a box selection works with the pop-out open (${await selectedCount()} selected)`);
+  await selectPop.getByRole('button', { name: 'None', exact: true }).click();
+  // Drag the pop-out by its header: it stays where it was put, on this device; a double-click puts it back.
+  const head = selectPop.locator('.tool-pop-head');
+  const hb = await head.boundingBox();
+  await page.mouse.move(hb.x + 90, hb.y + hb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + 490, hb.y + hb.height / 2 + 140, { steps: 8 });
+  await page.mouse.up();
+  const moved = await selectPop.boundingBox();
+  check(Math.abs(moved.x - (popBox.x + 400)) < 3 && Math.abs(moved.y - (popBox.y + 140)) < 3 && await selectedCount() === 0, 'dragging the pop-out’s header moves it (and selects nothing)');
+  await page.reload({ waitUntil: 'networkidle' });
+  await selectButton.waitFor();
+  if (await selectButton.getAttribute('aria-pressed') !== 'true') await selectButton.click();
+  await shows(selectPop);
+  await page.waitForTimeout(250);
+  const after = await selectPop.boundingBox();
+  check(Math.abs(after.x - moved.x) < 3 && Math.abs(after.y - moved.y) < 3, 'the moved pop-out is still there after a reload');
+  await selectPop.locator('.tool-pop-head').dblclick({ position: { x: 90, y: 12 } });
+  await page.waitForTimeout(100);
+  const reset = await selectPop.boundingBox();
+  check(Math.abs(reset.x - popBox.x) < 3 && Math.abs(reset.y - popBox.y) < 3, 'a double-click on its header puts the pop-out back by the rail');
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.waitForTimeout(150);
+  const small = await selectPop.boundingBox();
+  check(small.x + small.width <= 900 && small.y + small.height <= 700, 'the pop-out stays inside a smaller window');
+  await page.setViewportSize({ width: 1280, height: 860 });
+  if (!(await editPanel.isVisible())) await openScene('Candy cane'); // after the reload the editor opens what's on stage
+  check(await shows(editPanel), 'Candy cane is open again');
+  await selectButton.click();
+  check(await gone(selectPop) && await selectButton.getAttribute('aria-expanded') === 'false' && await selectButton.getAttribute('aria-pressed') === 'true', 'clicking Select again closes its pop-out');
+  await selectButton.click();
+  check(await shows(selectPop), 'and again opens it');
   await page.keyboard.press('Escape');
-  check(await shows(editPanel) && !(await selectPanel.isVisible()), 'Esc goes back to Move and the Edit panel');
-  await page.keyboard.press('m');
-  check(await shows(selectPanel), 'M picks the Select tool');
+  check(await gone(selectPop) && await selectButton.getAttribute('aria-pressed') === 'true', 'Esc closes the pop-out');
+  await page.keyboard.press('Escape');
+  check(await rail.getByRole('button', { name: 'Move' }).getAttribute('aria-pressed') === 'true' && await editPanel.isVisible(), 'a second Esc goes back to Move');
+  await selectButton.click();
+  await selectPop.getByRole('button', { name: 'Close the Select settings' }).click();
+  check(await gone(selectPop), 'the pop-out’s × closes it');
   await page.keyboard.press('v');
-  check(await shows(editPanel), 'V picks the Move tool');
+  await page.keyboard.press('m');
+  check(await selectButton.getAttribute('aria-pressed') === 'true' && !(await selectPop.isVisible()), 'M picks Select with its pop-out as it was left (closed)');
+  await selectButton.click();
+  await page.keyboard.press('v');
+  check(await rail.getByRole('button', { name: 'Move' }).getAttribute('aria-pressed') === 'true' && await page.locator('.tool-pop').count() === 0, 'V picks the Move tool, which has no pop-out');
 
   // Brush and Eraser start a new, blank scene: brush strokes become its painted layers, one undo step
   // each; the eraser wipes them. Nothing is stored until Save as new.
   const shot = (name) => (process.env.E2E_SHOTS ? page.screenshot({ path: join(process.env.E2E_SHOTS, `${name}.png`) }) : null);
   const paintItems = page.locator('.paint-list .group-item');
   const scribble = async () => {
-    await page.mouse.move(130, 240);
+    // Right of the tool pop-out (which sits beside the rail), left of the panel.
+    await page.mouse.move(440, 240);
     await page.mouse.down();
-    for (let y = 240; y <= 680; y += 40) { await page.mouse.move(900, y, { steps: 8 }); await page.mouse.move(130, y + 20, { steps: 8 }); }
+    for (let y = 240; y <= 680; y += 40) { await page.mouse.move(900, y, { steps: 8 }); await page.mouse.move(440, y + 20, { steps: 8 }); }
     await page.mouse.up();
     await page.waitForTimeout(300);
   };
   const candyBefore = JSON.stringify(await storedLayers('Candy cane'));
   await rail.getByRole('button', { name: 'Brush', exact: true }).click();
   check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })), 'the Brush tool shows the paint panel');
+  const brushPop = page.getByRole('dialog', { name: 'Brush settings' });
+  check(await shows(brushPop) && await brushPop.getByRole('slider', { name: 'Size' }).isVisible() && await brushPop.getByRole('slider', { name: 'Soft edge' }).isVisible()
+    && await brushPop.getByRole('slider', { name: 'Strength' }).isVisible(), 'the Brush opens its pop-out with size, soft edge and strength');
+  check(await page.getByRole('complementary', { name: 'Paint on the lights' }).getByRole('radiogroup', { name: 'Colour' }).isVisible() && !(await brushPop.getByRole('radiogroup', { name: 'Colour' }).isVisible()),
+    'the colours stay in the right panel');
   check(await shows(page.getByRole('heading', { name: 'Painting' })) && await paintItems.count() === 0 && await page.getByText('Nothing painted yet').isVisible(), 'the Brush starts from a blank canvas, not the current scene');
   for (let i = 0; i < 4; i++) await page.keyboard.press(']');
   await scribble();
@@ -199,12 +260,27 @@ try {
   check(await paintItems.count() === 1, 'Undo takes back one whole stroke');
   await rail.getByRole('button', { name: 'Eraser', exact: true }).click();
   check(await rail.getByRole('button', { name: 'Eraser' }).getAttribute('aria-pressed') === 'true' && await page.getByRole('heading', { name: 'Painting' }).isVisible(), 'the Eraser keeps the same painting');
+  // A hard-edged eraser (set in its pop-out) along the brush's path takes every painted light back to nothing.
+  const softEdge = page.getByRole('dialog', { name: 'Eraser settings' }).getByRole('slider', { name: 'Soft edge' });
+  await softEdge.focus();
+  await page.keyboard.press('Home');
+  check(await softEdge.inputValue() === '0', 'the Eraser’s soft edge is set in its pop-out');
   await scribble();
   await shot('paint-erased');
   check(await paintItems.count() === 0, `the Eraser wipes the paint off (${await paintItems.count()} left)`);
   await page.keyboard.press('b');
   await page.getByRole('radio', { name: 'Colour', exact: true }).click();
   await scribble();
+  // Clear painting is in the Eraser's pop-out.
+  await page.keyboard.press('e');
+  const eraserPop = page.getByRole('dialog', { name: 'Eraser settings' });
+  check(await shows(eraserPop) && await paintItems.count() === 1, 'the Eraser opens its pop-out');
+  page.once('dialog', (d) => d.accept());
+  await eraserPop.getByRole('button', { name: 'Clear painting' }).click();
+  check(await paintItems.count() === 0, 'Clear painting in the Eraser’s pop-out wipes the painting');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  check(await paintItems.count() === 1, 'Undo brings the cleared painting back');
+  await page.keyboard.press('b');
   check((await storedLayers('Painting')) === null && JSON.stringify(await storedLayers('Candy cane')) === candyBefore, 'painting stores nothing on the server');
   await page.getByRole('button', { name: 'Save as new…', exact: true }).click();
   await page.locator('.dialog input').fill('Snowy roof');
@@ -212,8 +288,9 @@ try {
   await page.waitForTimeout(600);
   const snowy = await storedLayers('Snowy roof');
   check(snowy?.length === 1 && typeof snowy[0].paint === 'string', 'Save as new stores the painting as a scene');
+  await page.keyboard.press('Escape'); // closes the Brush's pop-out
   await page.keyboard.press('Escape');
-  check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc leaves the Brush for the Edit panel of the saved painting');
+  check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc, Esc leaves the Brush for the Edit panel of the saved painting');
   await rail.getByRole('button', { name: 'Brush', exact: true }).click();
   check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })) && await page.getByRole('heading', { name: 'Snowy roof' }).isVisible(), 'Move then Brush carries on with the same painting (to turn the view mid-painting)');
   await page.keyboard.press('e');
@@ -342,7 +419,16 @@ try {
   const sb = await strip.boundingBox();
   check(await shows(phone.locator('.editor')) && !!sb && sb.width > sb.height * 3, 'on a phone Create’s tools are a strip and its panel a sheet');
   await strip.getByRole('button', { name: 'Select', exact: true }).click();
-  check(await shows(phone.getByRole('complementary', { name: 'Select lights' })), 'the phone’s tool strip switches the panel');
+  const phonePop = phone.getByRole('dialog', { name: 'Select settings' });
+  check(await shows(phonePop), 'the phone’s tool strip opens the Select pop-out');
+  await phone.waitForTimeout(300);
+  const pp = await phonePop.boundingBox();
+  const sb2 = await strip.boundingBox();
+  check(pp.y + pp.height <= sb2.y && sb2.y - (pp.y + pp.height) < 20 && pp.height < 844 * 0.3 && await phone.locator('.editor .layer-list').isVisible(),
+    'on a phone the pop-out is a compact sheet just above the strip, and the bottom sheet keeps the layers');
+  if (process.env.E2E_SHOTS) await phone.screenshot({ path: join(process.env.E2E_SHOTS, 'phone-select.png') });
+  await phone.keyboard.press('Escape');
+  check(await gone(phonePop), 'Esc closes the phone’s pop-out');
   await phone.getByRole('button', { name: 'Camera view: Angle' }).click();
   await phone.getByRole('menuitemradio', { name: /^House/ }).click();
   check(await shows(phone.getByRole('button', { name: 'Camera view: House' })), 'the phone has the camera views');
