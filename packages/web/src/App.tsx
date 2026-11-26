@@ -26,7 +26,7 @@ import { useMappingViews, useRunRoles } from './mapping/review';
 import { useShow, type Show } from './useShow';
 import { parseHash, routeHash, toolForKey, typingTarget, type CreateTool, type Page, type Route, type SetupTool } from './routes';
 import {
-  BlackoutButton, Brightness, CameraMenu, Health, HoldToPeek, ModeLight, MoreMenu, PageSwitch, ScenePicker, StagePill, StreamingSwitch,
+  BlackoutButton, Brightness, CameraMenu, Health, HoldToMove, HoldToPeek, ModeLight, MoreMenu, PageSwitch, ScenePicker, StagePill, StreamingSwitch,
 } from './chrome';
 import { FullScreenIcon, PanelIcon, RedoIcon, RevertIcon, StopIcon, ToolIcon, UndoIcon, type ToolIconName } from './icons';
 import type { WorkingCopy } from './workingCopy';
@@ -75,6 +75,9 @@ export function App() {
   const [preset, setPreset] = useState<{ name: CameraPreset; nonce: number }>({ name: 'angle', nonce: 0 });
   const pickCamera = (v: CameraPreset) => setPreset((p) => ({ name: v, nonce: p.nonce + 1 }));
   const [peek, setPeek] = useState(false);
+  /** Space held (or the round hold button on a touch screen): Move for a moment, then back to the tool picked. */
+  const [holdMove, setHoldMove] = useState(false);
+  const touch = useTouchScreen();
   const paint = usePaint();
   const [selection, setSelection] = useState<Selection>(() => new Set());
   const [selectTool, setSelectTool] = useState<SelectTool>('box');
@@ -100,6 +103,8 @@ export function App() {
   const popouts = usePopoutsOpen();
   /** The tool whose settings pop-out is open, if any. */
   const popTool = creating && POPOUT_TOOLS.has(railTool) && popouts.isOpen(railTool) ? railTool : null;
+  /** Moving the view for a moment while Space or the hold button is held; the Select/Brush/Eraser overlay steps aside. */
+  const held = creating && holdMove && tool !== 'move';
 
   /**
    * Change Create's tool. Brush and Eraser carry on with the open scene when it's a painting (new and
@@ -129,7 +134,8 @@ export function App() {
   const pickToolRef = useRef(pickTool);
   pickToolRef.current = pickTool;
 
-  // Shortcuts on Create: V M B E pick tools, Esc goes back to Move, Space held shows the porch (Blind).
+  // Shortcuts on Create: V M B E pick tools, Esc goes back to Move. Space held moves the view while Select,
+  // Brush or Eraser is picked (back to the tool on release); with Move picked it shows the porch (Blind).
   useEffect(() => {
     if (!creating) return;
     const dialogOpen = () => !!document.querySelector('[role="dialog"][aria-modal="true"]');
@@ -144,24 +150,29 @@ export function App() {
         else if (tool !== 'move') void pickToolRef.current('move');
         return;
       }
-      if (e.key === ' ' && mode === 'blind') {
-        // Space on a focused button presses it; anywhere else it's "hold to see the porch".
-        if (t?.closest('button, a, select, [role="radio"], [role="switch"], input')) return;
+      if (e.key === ' ') {
+        const lightTool = tool !== 'move';
+        if (!lightTool && mode !== 'blind') return;
+        // Space on a control reached with the keyboard presses it (the tool rail aside); after a mouse click it's the hold.
+        const control = t?.closest<HTMLElement>('button, a, [role="radio"], [role="switch"], input');
+        if (t?.closest('select') || (control && control.matches(':focus-visible') && !control.closest('.rail'))) return;
         e.preventDefault();
-        if (!e.repeat) setPeek(true);
+        control?.blur();
+        if (!e.repeat) { if (lightTool) setHoldMove(true); else setPeek(true); }
         return;
       }
       const want = toolForKey(e.key);
       if (want && !e.repeat) { e.preventDefault(); void pickToolRef.current(want); }
     };
-    const onUp = (e: KeyboardEvent) => { if (e.key === ' ') setPeek(false); };
-    const onBlur = () => setPeek(false);
+    const onUp = (e: KeyboardEvent) => { if (e.key === ' ') { setPeek(false); setHoldMove(false); } };
+    const onBlur = () => { setPeek(false); setHoldMove(false); };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onUp);
     window.addEventListener('blur', onBlur);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onUp); window.removeEventListener('blur', onBlur); };
   }, [creating, tool, mode]);
   useEffect(() => { if (!creating || mode === 'live') setPeek(false); }, [creating, mode]);
+  useEffect(() => { if (!creating || tool === 'move') setHoldMove(false); }, [creating, tool]);
   // Esc stops drawing points in Strings.
   useEffect(() => {
     if (!layoutMode || !drawing) return;
@@ -193,6 +204,8 @@ export function App() {
   const panelInset = useInset('.editor', 'right', ready && !phone && page !== 'watch', relayout);
   const topInset = useInset(phone ? '.topbar, .phone-mode, .porch-card' : '.topbar, .porch-card', 'top', ready && page !== 'watch', relayout);
   const bottomInset = useInset(phone ? '.editor, .rail, .view-tools, .panel-show' : '.view-tools, .health', 'bottom', ready && page !== 'watch', relayout);
+  // The round hold-to-move button sits above whatever is at the bottom of the view (on a phone, an open pop-out too).
+  const holdInset = useInset(phone ? '.editor, .rail, .view-tools, .tool-pop' : '.view-tools, .health', 'bottom', ready && creating, `${relayout}.${popTool}`);
 
   // Camera mapping: the filming screen (#map, or #map-demo with a simulated camera).
   const [mapDemo] = useState(() => route.demo);
@@ -235,14 +248,14 @@ export function App() {
 
   if (page === 'watch') return <WatchPage show={show} preset={preset} onCamera={pickCamera} onExit={() => toPage('control')} layout={shownLayout} />;
 
-  const appClass = ['app', `page-${page}`, mode === 'live' && creating ? 'live-armed' : '', phone ? 'phone' : 'desk', panel.shown ? '' : 'panel-hidden', popTool ? 'has-pop' : ''].filter(Boolean).join(' ');
+  const appClass = ['app', `page-${page}`, mode === 'live' && creating ? 'live-armed' : '', phone ? 'phone' : 'desk', panel.shown ? '' : 'panel-hidden', popTool ? 'has-pop' : '', held ? 'holding-move' : ''].filter(Boolean).join(' ');
   const closePop = () => { if (popTool) popouts.setOpen(popTool, false); };
 
   return (
-    <div className={appClass} style={{ ['--inset-l' as string]: `${railInset}px`, ['--inset-r' as string]: `${panelInset}px` }}>
+    <div className={appClass} style={{ ['--inset-l' as string]: `${railInset}px`, ['--inset-r' as string]: `${panelInset}px`, ['--hold-b' as string]: `${holdInset}px` }}>
       <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset}
         leftInset={railInset} rightInset={panelInset} topInset={topInset} bottomInset={bottomInset} house={show.house}
-        selection={selecting && !peek ? selection : null} onProjector={(selecting || painting) ? onProjector : undefined}
+        selection={selecting && !peek && !held ? selection : null} onProjector={(selecting || painting) ? onProjector : undefined}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
           onAddPoint: (p) => { if (selectedRun) layoutDraft.edit(appendPoint(layoutDraft.value, selectedRun, p)); },
@@ -254,10 +267,10 @@ export function App() {
         } : null} />
 
       {/* The drawing layers cover the 3D view only: panels come after them, so they stay clickable. */}
-      {selecting && !peek && projector && (
+      {selecting && !peek && !held && projector && (
         <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} layoutConfig={layout} selection={selection} onChange={setSelection} />
       )}
-      {painting && !peek && projector && editor.scene.name && (
+      {painting && !peek && !held && projector && editor.scene.name && (
         <PaintOverlay tool={paint.tool} brush={paint.brush} look={paint.look} tint={paint.source === 'color' ? paint.color : null} project={projector.fn} editor={editor} count={layoutPixels} />
       )}
 
@@ -313,8 +326,11 @@ export function App() {
         <CameraMenu value={preset.name} onPick={pickCamera} />
       </div>
 
+      {creating && tool !== 'move' && (touch || phone) && <HoldToMove holding={held} onHold={setHoldMove} back={TOOL_NAMES[railTool]} />}
+
       {peek
         ? <div className="caption peek-label" role="status">Showing the porch while you hold</div>
+        : held ? <div className="caption peek-label move-label" role="status">Moving the view · let go for the {TOOL_NAMES[railTool]}</div>
         : <Caption page={page} show={show} selected={selected} editor={editor} mode={mode} tool={tool} paintTool={paint.tool} hasLook={!!paint.look}
             selectTool={selectTool} selectionSize={selection.size} setupTool={setupTool} drawing={drawing} showMapped={mapReview.showMapped} />}
       {!phone && <Health show={show} />}
@@ -592,6 +608,22 @@ function useRoute(): [Route, (r: Route, replace?: boolean) => void] {
 }
 
 /** True on phone-sized screens, where the panel becomes a bottom sheet and the rail a strip. */
+/** What a Create tool is called in "let go for the …". */
+const TOOL_NAMES: Record<CreateTool, string> = { move: 'Move tool', select: 'Select tool', brush: 'Brush', erase: 'Eraser' };
+
+/** True on a device with a touch screen (phone, tablet), where there's no Space bar to hold. */
+function useTouchScreen(): boolean {
+  const query = '(any-pointer: coarse)';
+  const [touch, setTouch] = useState(() => typeof matchMedia !== 'undefined' && matchMedia(query).matches);
+  useEffect(() => {
+    const m = matchMedia(query);
+    const on = () => setTouch(m.matches);
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, []);
+  return touch;
+}
+
 function usePhone(): boolean {
   const query = '(max-width: 760px)';
   const [phone, setPhone] = useState(() => typeof matchMedia !== 'undefined' && matchMedia(query).matches);

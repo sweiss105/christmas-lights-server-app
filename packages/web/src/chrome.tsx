@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 're
 import { createPortal } from 'react-dom';
 import { EFFECTS, paletteColors, resolveParams, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
-import { CameraViewIcon, ChevronDown, MoreIcon, PeekIcon, SearchIcon } from './icons';
+import { CameraViewIcon, ChevronDown, MoreIcon, PeekIcon, SearchIcon, ToolIcon } from './icons';
 import { latestWins } from './latest';
 import type { CameraPreset } from './Preview';
 import { modeLight, type Page } from './routes';
@@ -236,7 +236,7 @@ export function HoldToPeek({ peeking, onPeek }: { peeking: boolean; onPeek: (on:
     <button
       className={`view-btn peek-btn ${peeking ? 'on' : ''}`}
       aria-pressed={peeking}
-      title="Hold to see what's on the porch now (Space on a keyboard)"
+      title="Hold to see what's on the porch now (Space on a keyboard, with the Move tool)"
       onPointerDown={(e) => { e.preventDefault(); (e.target as Element).setPointerCapture?.(e.pointerId); onPeek(true); }}
       onPointerUp={off} onPointerCancel={off} onLostPointerCapture={off}
       onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); onPeek(true); } }}
@@ -245,6 +245,30 @@ export function HoldToPeek({ peeking, onPeek }: { peeking: boolean; onPeek: (on:
       onContextMenu={(e) => e.preventDefault()}
     >
       <PeekIcon />Hold to see the porch
+    </button>
+  );
+}
+
+/**
+ * The round hold-to-move button for touch screens (Space does this on a keyboard): while it's held the
+ * view moves like the Move tool (drag with another finger); letting go goes back to Select, Brush or Eraser.
+ */
+export function HoldToMove({ holding, onHold, back }: { holding: boolean; onHold: (on: boolean) => void; back: string }) {
+  const off = () => onHold(false);
+  return (
+    <button
+      className={`hold-move glass ${holding ? 'on' : ''}`}
+      aria-pressed={holding}
+      aria-label="Hold to move the view"
+      title={`Hold to move the view; let go for the ${back} (Space on a keyboard)`}
+      onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture?.(e.pointerId); onHold(true); }}
+      onPointerUp={off} onPointerCancel={off} onLostPointerCapture={off}
+      onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); e.stopPropagation(); onHold(true); } }}
+      onKeyUp={(e) => { if (e.key === ' ' || e.key === 'Enter') off(); }}
+      onBlur={off}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <ToolIcon name="move" />
     </button>
   );
 }
