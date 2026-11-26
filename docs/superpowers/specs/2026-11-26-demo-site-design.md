@@ -5,7 +5,7 @@ Status: design, awaiting the owner's approval (2026-11-26).
 ## Intent
 
 A public demo of the whole lights app, so anyone (friends, neighbours, people the owner shows it to) can open
-`https://demoxmas.weiss-audio.com`, look around all three pages, play scenes and playlists, and try edits live,
+`https://demoxmas.weiss-audio.com`, look around the Control and Create pages, play scenes and playlists, and try edits live,
 without signing in. The demo house has more lights than the real porch, to show what the app can do with a bigger
 display: spirals round the mailbox, a spiral along the handrail of the big cement stairs, and lights in the bushes.
 These extra strings exist only in the demo.
@@ -15,7 +15,7 @@ does not change how it is reached.
 
 ## Goals
 
-- Every page of the app (Control, Create, Setup) works in the demo, starting from the owner's current show: all
+- The Control and Create pages work in the demo (Setup is left out entirely), starting from the owner's current show: all
   scenes, playlists, presets, saved palettes, the house model, and the real porch strings.
 - Extra demo-only strings, placed on the scanned house model's own parts:
   - **Mailbox:** a spiral up the mailbox post, then a spiral round the mailbox box along its length.
@@ -37,7 +37,7 @@ does not change how it is reached.
 - Any change to how `xmas.weiss-audio.com` is reached or to its Access rules.
 - Lights on the hedge down the right side of the lawn (the owner asked for the bushes; the hedge can be added the
   same way later).
-- Camera mapping, WLED controller pages, backups and Home Assistant in the demo (see "Setup page in the demo").
+- Anything from the Setup page in the demo: Strings, House, Map, WLED, Backups and Home (the owner's decision).
 - Making the extra strings real (they have no controller).
 
 ## Anti-goals (a failure even if the demo works)
@@ -162,7 +162,7 @@ fresh from the snapshot.
 | `setOutput` | Brightness and the streaming switch change in the tab only. |
 | `identify` | `{ run: null, streaming: false }`, no effect. |
 | `schedule` | `{ enabled: false }`. |
-| Everything that stores, renames or deletes (`saveScene`, `renameScene`, `deleteScene`, presets, palettes, playlists, `saveLayout`, house edits, `saveSchedule`, backups, restore, mapping, `discoverControllers`, `login`) | Refused with `ApiError(403, "This is a demo: saving is turned off.")` (wording the builder's to polish), so anything the UI forgets to disable fails with a clear message rather than silently. `backups` and `mappingViews` answer empty lists so their pages render. |
+| Everything that stores, renames or deletes (`saveScene`, `renameScene`, `deleteScene`, presets, palettes, playlists, `saveLayout`, house edits, `saveSchedule`, backups, restore, mapping, `discoverControllers`, `login`) | Refused with `ApiError(403, "This is a demo: saving is turned off.")` (wording the builder's to polish), so anything the UI forgets to disable fails with a clear message rather than silently. Setup-only reads (`backups`, `mappingViews`) are refused too, since no demo page asks for them. |
 
 Crossfades: the stand-in records the transition the way the server reports it; whatever the browser preview does
 with a Go on the real site, it does the same in the demo. No new fade rendering.
@@ -182,9 +182,11 @@ does with it.
   is still refused by the stand-in.
 - Unsaved edits: the "unsaved changes" prompts offer only Discard and Cancel in the demo (no Save choices), and
   closing the tab doesn't warn.
-- **Setup page in the demo:** **Strings** and **House** open read-only so visitors can see how the strings and the
-  model are placed (their Save buttons disabled). **Map**, **WLED**, **Backups** and **Home** show one line instead:
-  "This part works with the real lights, so it isn't in the demo."
+- **No Setup page (owner's decision).** The demo has only Control and Create: the page switcher doesn't offer
+  Setup, and any Setup address (`#/setup…`, `#map`) opens Control instead. Nothing from Setup (Strings, House, Map,
+  WLED, Backups, Home) appears anywhere in the demo, including links to it from other pages (e.g. a "set up the
+  house" hint on Control). The extra strings are still visible as lights in the 3D view; they just can't be
+  inspected or edited as strings.
 - Everything else is the real app: Control, Create (Move, Select, Brush, Eraser), Blind/Live/Go, playlists.
 
 ### 7. The demo server and container
@@ -244,6 +246,7 @@ does with it.
 - Public, with no login, on its own hostname `demoxmas.weiss-audio.com`; the real site's access unchanged.
 - Visitors can look and try, but not save (Save and Delete off).
 - Strictly no saving, not even for the length of a visit: the Select tool's group buttons are off too.
+- No Setup page at all in the demo: only Control and Create.
 - Built as a browser-side demo (approach 2).
 
 ## My calls (owner to check)
@@ -251,7 +254,6 @@ does with it.
 - Each visitor's actions stay in their own tab (needed for a public demo where nothing is saved).
 - The `porch` group widens in the demo so the existing scenes light the extra strings.
 - The demo follows the real show automatically (snapshot rebuilt when the show file changes).
-- Setup's Strings and House are viewable read-only; Map, WLED, Backups and Home are left out.
 - Home coordinates, the schedule, controller addresses, Home Assistant, mapping and backups are not published.
 - No hedge lights.
 - Nothing is deployed from the branch: test outside Docker, PR, then deploy from `main` after the merge.
