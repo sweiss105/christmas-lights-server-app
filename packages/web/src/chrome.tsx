@@ -1,12 +1,13 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DEMO } from './demo/flag';
 import { createPortal } from 'react-dom';
-import { EFFECTS, paletteColors, resolveParams, type SceneConfig } from '@xmas/engine';
+import { EFFECTS, paletteColors, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
 import { CameraViewIcon, ChevronDown, MoreIcon, PeekIcon, SearchIcon, ToolIcon } from './icons';
 import { latestWins } from './latest';
 import type { CameraPreset } from './Preview';
 import { modeLight, type Page } from './routes';
+import { onSceneColors, sceneColorsSoon } from './sceneColors';
 import type { EditMode } from './useSceneEditor';
 import type { Show } from './useShow';
 
@@ -303,8 +304,22 @@ export function Health({ show }: { show: Show }) {
 
 // ---- scenes ---------------------------------------------------------------------------------------
 
-/** A small strip of the colours a scene uses, so scenes can be told apart at a glance. */
-export function Swatch({ scene }: { scene: SceneConfig }) {
+/**
+ * A small strip of the colours a scene shows, so scenes can be told apart at a glance: measured by
+ * running the scene on the layout (see sceneColors), else read from its colour settings.
+ */
+export function Swatch({ scene, layout }: { scene: SceneConfig; layout: LayoutConfig | null }) {
+  const [, redraw] = useState(0);
+  useEffect(() => onSceneColors(() => redraw((n) => n + 1)), []);
+  const measured = layout ? sceneColorsSoon(scene, layout) : null;
+  // Not measured yet: a plain chip rather than a guess that's about to change.
+  if (measured === undefined) return <span className="swatch" style={{ background: '#2a3142' }} aria-hidden />;
+  if (measured && measured.length) {
+    // Equal bands with hard edges, most-used colour first.
+    const n = measured.length;
+    const bg = n === 1 ? measured[0] : `linear-gradient(90deg, ${measured.map((c, i) => `${c} ${Math.round((i / n) * 100)}% ${Math.round(((i + 1) / n) * 100)}%`).join(', ')})`;
+    return <span className="swatch" style={{ background: bg }} aria-hidden />;
+  }
   const colors: string[] = [];
   for (const l of scene.layers) {
     const def = EFFECTS[l.effect];
@@ -361,7 +376,7 @@ export function ScenePicker({ show, name, unsaved, onOpen, onNew }: { show: Show
               <li key={s.name}>
                 <button className={`scene-row ${s.name === name ? 'selected' : ''}`} aria-current={s.name === name}
                   onClick={() => { close(); setQ(''); onOpen(s.name); }}>
-                  <Swatch scene={s} /><span className="scene-name">{s.name}</span>
+                  <Swatch scene={s} layout={show.layout} /><span className="scene-name">{s.name}</span>
                 </button>
               </li>
             ))}
