@@ -311,8 +311,9 @@ export async function createApp(opts: AppOptions): Promise<App> {
     for (const e of entries) {
       if (!e || typeof e.scene !== 'string' || !state.scenes[e.scene]) throw new HttpError(400, `unknown scene "${e?.scene}"`);
       if (!Number.isFinite(e.seconds) || e.seconds < 1 || e.seconds > 86_400) throw new HttpError(400, 'each scene plays for 1 second to 24 hours');
+      if (e.fade !== undefined && e.fade !== null && (typeof e.fade !== 'number' || !Number.isFinite(e.fade) || e.fade < 0 || e.fade > 60)) throw new HttpError(400, 'a scene\'s fade must be 0..60 seconds');
     }
-    const pl: PlaylistConfig = { name, entries: entries.map((e) => ({ scene: e.scene, seconds: e.seconds })), loop: req.body?.loop !== false, ...(req.body?.shuffle === true && { shuffle: true }) };
+    const pl: PlaylistConfig = { name, entries: entries.map((e) => ({ scene: e.scene, seconds: e.seconds, ...(typeof e.fade === 'number' && { fade: e.fade }) })), loop: req.body?.loop !== false, ...(req.body?.shuffle === true && { shuffle: true }) };
     state.playlists = { ...(state.playlists ?? {}), [name]: pl };
     await persist();
     return pl;
@@ -346,7 +347,9 @@ export async function createApp(opts: AppOptions): Promise<App> {
     if (!st?.scene || st.scene === state.activeScene) return;
     const scene = state.scenes[st.scene];
     if (!scene) return; // deleted since; skip
-    try { engine.setScene(scene, { fade: fadeSeconds() }); } catch { return; }
+    // Each entry can set its own fade in (like a WLED playlist step's transition); else the app's.
+    const fade = state.playlists?.[st.name]?.entries[st.index]?.fade;
+    try { engine.setScene(scene, { fade: fade ?? fadeSeconds() }); } catch { return; }
     state.activeScene = scene.name;
     await persist();
   };

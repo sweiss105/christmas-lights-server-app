@@ -3,7 +3,12 @@
  * given, so they're testable and survive restarts (a playlist's position comes from when it started).
  */
 
-export interface PlaylistEntry { scene: string; seconds: number }
+export interface PlaylistEntry {
+  scene: string;
+  seconds: number;
+  /** Seconds to crossfade into this scene (0..60, like a WLED playlist step's transition); absent = the app's fade. */
+  fade?: number;
+}
 export interface PlaylistConfig {
   name: string;
   entries: PlaylistEntry[];

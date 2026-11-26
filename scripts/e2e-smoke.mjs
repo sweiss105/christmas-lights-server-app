@@ -115,6 +115,15 @@ try {
   check(!(await page.getByRole('complementary', { name: 'Layout editor' }).isVisible()), 'Esc leaves Layout');
   await page.getByRole('tab', { name: /^Playlists/ }).click();
   check(await shows(page.getByRole('button', { name: '+ New playlist' })), 'the Playlists tab opens');
+  // Per-scene fades: "Fade all" sets every scene, one scene can then differ, and Save keeps both.
+  await page.getByRole('button', { name: '+ New playlist' }).click();
+  await page.getByRole('button', { name: '+ Add scene' }).click();
+  await page.getByLabel('Seconds to fade into every scene', { exact: true }).fill('2');
+  await page.getByLabel('Seconds to fade into scene 1', { exact: true }).fill('0.7');
+  await page.getByRole('button', { name: 'Save playlist' }).click();
+  await shows(page.getByRole('button', { name: '+ New playlist' }));
+  const savedFades = (await (await fetch(`${base}/api/playlists`)).json()).find((p) => p.name === 'Evening')?.entries.map((e) => e.fade);
+  check(JSON.stringify(savedFades) === '[0.7,2]', `the playlist editor saves each scene's fade (got ${JSON.stringify(savedFades)})`);
   await page.getByRole('tab', { name: /^Schedule/ }).click();
   check(await shows(page.getByText('Run the show every night')), 'the Schedule tab opens');
   await page.getByRole('button', { name: 'Backups', exact: true }).click();

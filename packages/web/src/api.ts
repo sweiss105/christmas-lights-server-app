@@ -40,7 +40,12 @@ export interface ControllerHealth {
   warning?: string;
 }
 
-export interface PlaylistEntry { scene: string; seconds: number }
+export interface PlaylistEntry {
+  scene: string;
+  seconds: number;
+  /** Seconds to crossfade into this scene (0..60); absent = the app's fade. */
+  fade?: number;
+}
 export interface Playlist { name: string; entries: PlaylistEntry[]; loop: boolean; /** Random order, new each time round. */ shuffle?: boolean }
 export type OnAt = { kind: 'sunset'; offsetMinutes?: number } | { kind: 'time'; time: string };
 export type OffAt = { kind: 'time'; time: string } | { kind: 'sunrise'; offsetMinutes?: number };

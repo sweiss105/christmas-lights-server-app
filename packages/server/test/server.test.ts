@@ -238,12 +238,56 @@ describe('playlists and the nightly schedule', () => {
     expect((await app.server.inject('/api/status')).json().playlist).toBe(null);
   });
 
+  /** Note the scene and fade of every scene change the engine is asked for. */
+  const recordFades = (app: App) => {
+    const calls: [string, number | undefined][] = [];
+    const eng = app.engine();
+    const orig = eng.setScene.bind(eng);
+    eng.setScene = (scene, opts) => { calls.push([scene.name, opts?.fade]); return orig(scene, opts); };
+    return calls;
+  };
+
+  it('fades into each playlist entry over its own fade, or the app’s fade when it has none', async () => {
+    const { app, advance } = await clockApp({ output: { brightness: 1, gamma: 1, fps: 40, enabled: false, transition: 3 } });
+    const put = await app.server.inject({ method: 'PUT', url: '/api/playlists/Evening', payload: { entries: [{ scene: 'Blue', seconds: 60, fade: 0.7 }, { scene: 'Red', seconds: 30 }], loop: true } });
+    expect(put.json().entries).toEqual([{ scene: 'Blue', seconds: 60, fade: 0.7 }, { scene: 'Red', seconds: 30 }]);
+    expect((await app.server.inject('/api/playlists')).json()[0].entries[0]).toEqual({ scene: 'Blue', seconds: 60, fade: 0.7 });
+    const calls = recordFades(app);
+    await app.server.inject({ method: 'POST', url: '/api/playlists/Evening/play' }); // starting uses the first entry's fade
+    await advance(61_000); // into Red: no fade of its own
+    await advance(30_000); // looped back into Blue
+    expect(calls).toEqual([['Blue', 0.7], ['Red', 3], ['Blue', 0.7]]);
+  });
+
+  it('a fade of 0 cuts, even when the app fades', async () => {
+    const { app, advance } = await clockApp({ output: { brightness: 1, gamma: 1, fps: 40, enabled: false, transition: 2 } });
+    await app.server.inject({ method: 'PUT', url: '/api/playlists/Cut', payload: { entries: [{ scene: 'Blue', seconds: 60, fade: 0 }] } });
+    await pixel(app);
+    await app.server.inject({ method: 'POST', url: '/api/playlists/Cut/play' });
+    await advance(0);
+    expect(await pixel(app)).toEqual([0, 0, 255]);
+  });
+
+  it('a shuffled playlist still uses the fade of whichever entry comes up', async () => {
+    const { app, advance } = await clockApp();
+    const entries = [{ scene: 'Blue', seconds: 10, fade: 1.5 }, { scene: 'Red', seconds: 10, fade: 4 }, { scene: 'Blue', seconds: 10 }];
+    await app.server.inject({ method: 'PUT', url: '/api/playlists/Mix', payload: { entries, shuffle: true } });
+    const calls = recordFades(app);
+    await app.server.inject({ method: 'POST', url: '/api/playlists/Mix/play' });
+    for (let k = 0; k < 12; k++) await advance(10_000);
+    expect(calls.length).toBeGreaterThan(2);
+    for (const [scene, fade] of calls) expect(scene === 'Red' ? [4] : [1.5, 0]).toContain(fade);
+  });
+
   it('validates playlists', async () => {
     const { app } = await clockApp();
     const bad = (payload: unknown) => app.server.inject({ method: 'PUT', url: '/api/playlists/X', payload });
     expect((await bad({ entries: [] })).statusCode).toBe(400);
     expect((await bad({ entries: [{ scene: 'Nope', seconds: 10 }] })).statusCode).toBe(400);
     expect((await bad({ entries: [{ scene: 'Red', seconds: 0 }] })).statusCode).toBe(400);
+    for (const fade of [-1, 61, '2', true]) expect((await bad({ entries: [{ scene: 'Red', seconds: 10, fade }] })).statusCode).toBe(400);
+    expect((await bad({ entries: [{ scene: 'Red', seconds: 10, fade: 60 }, { scene: 'Red', seconds: 10, fade: 0 }, { scene: 'Red', seconds: 10, fade: null }] })).json().entries)
+      .toEqual([{ scene: 'Red', seconds: 10, fade: 60 }, { scene: 'Red', seconds: 10, fade: 0 }, { scene: 'Red', seconds: 10 }]);
     expect((await app.server.inject({ method: 'POST', url: '/api/playlists/Nope/play' })).statusCode).toBe(404);
   });
 
@@ -289,12 +333,14 @@ describe('backup and restore', () => {
   it('downloads everything as one file and restores it, saving the current state first', async () => {
     const { app, statePath } = await makeApp();
     await app.server.inject({ method: 'PUT', url: '/api/presets/Look', payload: { effect: 'solid' } });
+    await app.server.inject({ method: 'PUT', url: '/api/playlists/Fades', payload: { entries: [{ scene: 'Red', seconds: 60, fade: 0.7 }] } });
     const backup = await app.server.inject('/api/backup');
     expect(backup.statusCode).toBe(200);
     expect(backup.headers['content-disposition']).toMatch(/attachment; filename="xmas-lights-backup-\d{4}-\d{2}-\d{2}\.json"/);
     const data = backup.json();
     expect(data.scenes.Red).toBeTruthy();
     expect(data.presets.Look).toBeTruthy();
+    expect(data.playlists.Fades.entries[0].fade).toBe(0.7);
     // Change things, then restore the backup.
     await app.server.inject({ method: 'PUT', url: '/api/scenes/Green', payload: { layers: [{ id: 'l', effect: 'solid', params: { color: '#00ff00' } }] } });
     await app.server.inject({ method: 'DELETE', url: '/api/presets/Look' });
@@ -303,6 +349,7 @@ describe('backup and restore', () => {
     expect(r.json().savedFirst).toMatch(/^before-restore-/);
     expect((await app.server.inject('/api/scenes')).json().scenes.map((x: { name: string }) => x.name)).toEqual(['Red']);
     expect((await app.server.inject('/api/presets')).json()).toHaveLength(1);
+    expect((await app.server.inject('/api/playlists')).json()[0].entries[0].fade).toBe(0.7); // a playlist's fades come back too
     expect(JSON.parse(await readFile(statePath, 'utf8')).scenes.Green).toBeUndefined();
     // The automatic copy made before restoring still has Green, and can itself be restored.
     const list = (await app.server.inject('/api/backups')).json();
