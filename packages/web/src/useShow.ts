@@ -74,9 +74,10 @@ export function useShow(): Show {
           if (!first && s.rev.by !== CLIENT_ID) onOutsideChange.current();
         }
       }
-      // Fetch the running scene only when what's on stage changes.
-      const key = `${s.stage.scene}|${s.stage.dirty}`;
-      if (key !== stageKey.current) {
+      // Fetch the running scene only when what's on stage changes (every poll while a Live preview
+      // of unsaved edits is on, as each edit changes it).
+      const key = `${s.stage.scene}|${s.stage.dirty}|${s.stage.preview ?? ''}`;
+      if (key !== stageKey.current || s.stage.preview) {
         stageKey.current = key;
         setStage(await api.stage());
       }

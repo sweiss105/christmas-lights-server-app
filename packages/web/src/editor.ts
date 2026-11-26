@@ -67,12 +67,19 @@ export class History<T> {
     this.set(value);
   }
 
+  /** Change every entry (the working value and its history) without adding an undo step, e.g. a rename. */
+  protected rewrite(fn: (v: T) => T): void {
+    this.past = this.past.map(fn);
+    this.future = this.future.map(fn);
+    this.set(fn(this.current));
+  }
+
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
 
-  private set(value: T) {
+  protected set(value: T) {
     this.current = value;
     this.version++;
     for (const fn of this.listeners) fn();

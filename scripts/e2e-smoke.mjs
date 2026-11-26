@@ -77,6 +77,55 @@ try {
   await page.getByRole('button', { name: '+ Add layer', exact: true }).click();
   check(await shows(page.getByRole('dialog', { name: 'Add a layer' })), 'the layer picker opens');
   await page.keyboard.press('Escape'); // close the layer picker
+
+  // Edits change a working copy in the browser; the stored scene changes only on Save.
+  const storedLayers = async (name) => {
+    const res = await fetch(`${base}/api/scenes/${encodeURIComponent(name)}`);
+    return res.ok ? (await res.json()).layers : null;
+  };
+  const sceneList = page.getByRole('listbox', { name: 'Scenes' });
+  const addLayer = async () => {
+    await page.getByRole('button', { name: '+ Add layer', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Add a layer' }).getByRole('option', { name: /^Rainbow/ }).first().click();
+  };
+  const answer = async (label) => {
+    const dialog = page.locator('.dialog');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+    await dialog.getByRole('button', { name: label, exact: true }).click();
+  };
+  const unsavedNote = page.getByText('· Unsaved changes');
+  const auroraBefore = (await storedLayers('Aurora')).length;
+  await addLayer();
+  await page.waitForTimeout(600);
+  check((await storedLayers('Aurora')).length === auroraBefore, 'an edit in Blind leaves the stored scene alone');
+  check(await shows(unsavedNote) && await sceneList.getByRole('option', { name: 'Aurora' }).locator('.unsaved-dot').isVisible(), 'unsaved changes show in the editor and the scene list');
+  await page.getByRole('button', { name: 'Revert', exact: true }).click();
+  await answer('Revert');
+  await page.waitForTimeout(300);
+  check(!(await unsavedNote.isVisible()) && await page.locator('.layer-list .layer-row').count() === auroraBefore, 'Revert throws the edits away');
+  await addLayer();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForTimeout(600);
+  check((await storedLayers('Aurora')).length === auroraBefore + 1 && !(await unsavedNote.isVisible()), 'Save stores the edits');
+  await addLayer();
+  await page.getByRole('button', { name: 'Save as new…', exact: true }).click();
+  await page.locator('.dialog input').fill('Aurora plus');
+  await answer('Save');
+  await page.waitForTimeout(600);
+  check((await storedLayers('Aurora plus'))?.length === auroraBefore + 2 && (await storedLayers('Aurora')).length === auroraBefore + 1, 'Save as new stores a new scene and leaves the original');
+  check(await shows(page.getByRole('heading', { name: 'Aurora plus' })), 'the editor shows the new scene after Save as new');
+  await addLayer();
+  await sceneList.getByRole('option', { name: 'Candy cane' }).click();
+  check(await shows(page.getByRole('dialog', { name: 'Unsaved changes' })), 'opening another scene with unsaved edits asks first');
+  await answer('Cancel');
+  check(await shows(page.getByRole('heading', { name: 'Aurora plus' })), 'Cancel stays on the scene with its edits');
+  await sceneList.getByRole('option', { name: 'Candy cane' }).click();
+  await answer('Discard');
+  check(await shows(page.getByRole('heading', { name: 'Candy cane' })) && (await storedLayers('Aurora plus')).length === auroraBefore + 2, 'Discard drops the edits and opens the other scene');
+  await page.getByRole('button', { name: '+ New', exact: true }).click();
+  check(await shows(page.getByRole('heading', { name: 'New scene' })) && await page.locator('.layer-list .layer-row').count() === 0, 'New starts a blank scene');
+  check((await storedLayers('New scene')) === null, 'a new scene is not stored until it is saved');
+  await sceneList.getByRole('option', { name: 'Candy cane' }).click(); // blank: nothing to ask
   // Select mode: there must be ways back to the editor (Done, Esc, or picking a scene).
   const editorBack = () => shows(page.getByRole('heading', { name: 'Candy cane' }));
   await page.getByRole('button', { name: 'Select', exact: true }).click();
@@ -85,38 +134,55 @@ try {
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Candy cane' }).click();
   check(await editorBack() && !(await page.getByRole('complementary', { name: 'Select lights' }).isVisible()), 'picking a scene leaves Select for the editor');
-  // Paint mode: brush strokes become painted layers of the scene, one undo step each; Erase wipes them.
+  // Paint mode starts a new, blank scene: brush strokes become its painted layers, one undo step each;
+  // Erase wipes them. Nothing is stored until Save as new.
   const shot = (name) => (process.env.E2E_SHOTS ? page.screenshot({ path: join(process.env.E2E_SHOTS, `${name}.png`) }) : null);
-  const paintedLayers = async () => (await (await fetch(`${base}/api/scenes/${encodeURIComponent('Candy cane')}`)).json()).layers.filter((l) => typeof l.paint === 'string');
+  const paintItems = page.locator('.paint-list .group-item');
   const scribble = async () => {
     await page.mouse.move(330, 240);
     await page.mouse.down();
     for (let y = 240; y <= 680; y += 40) { await page.mouse.move(900, y, { steps: 6 }); await page.mouse.move(330, y + 20, { steps: 6 }); }
     await page.mouse.up();
-    await page.waitForTimeout(600); // the save
+    await page.waitForTimeout(300);
   };
+  const candyBefore = JSON.stringify(await storedLayers('Candy cane'));
   await page.getByRole('button', { name: 'Paint', exact: true }).click();
   check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })), 'the Paint panel opens');
+  check(await shows(page.getByRole('heading', { name: 'Painting' })) && await paintItems.count() === 0 && await page.getByText('Nothing painted yet').isVisible(), 'Paint starts from a blank canvas, not the current scene');
   for (let i = 0; i < 4; i++) await page.keyboard.press(']');
   await scribble();
   await shot('paint-colour');
-  let painted = await paintedLayers();
-  check(painted.length === 1 && painted[0].effect === 'solid' && painted[0].paint.length > 0, 'a brush stroke adds a painted layer to the scene');
+  check(await paintItems.count() === 1, 'a brush stroke adds a painted layer');
   await page.getByRole('radio', { name: 'Effect', exact: true }).click();
   await page.getByRole('dialog', { name: 'Add a layer' }).getByRole('option', { name: /^Rainbow/ }).first().click();
   await scribble();
   await shot('paint-effect');
-  painted = await paintedLayers();
-  check(painted.at(-1).effect !== 'solid' && painted.at(-1).paint.length > 0, 'painting an effect puts it on top of the colour');
+  check(await paintItems.count() === 2, 'painting an effect adds a second painted layer');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await page.waitForTimeout(600);
-  painted = await paintedLayers();
-  check(painted.length === 1 && painted[0].effect === 'solid', 'Undo takes back one whole stroke');
+  check(await paintItems.count() === 1, 'Undo takes back one whole stroke');
   await page.getByRole('radio', { name: 'Erase', exact: true }).click();
   await scribble();
-  check((await paintedLayers()).length === 0, 'Erase wipes the paint off');
+  check(await paintItems.count() === 0, 'Erase wipes the paint off');
+  await page.getByRole('radio', { name: 'Paint', exact: true }).click();
+  await page.getByRole('radio', { name: 'Colour', exact: true }).click();
+  await scribble();
+  check((await storedLayers('Painting')) === null && JSON.stringify(await storedLayers('Candy cane')) === candyBefore, 'painting stores nothing on the server');
+  await page.getByRole('button', { name: 'Save as new…', exact: true }).click();
+  await page.locator('.dialog input').fill('Snowy roof');
+  await answer('Save');
+  await page.waitForTimeout(600);
+  const snowy = await storedLayers('Snowy roof');
+  check(snowy?.length === 1 && typeof snowy[0].paint === 'string', 'Save as new stores the painting as a scene');
   await page.keyboard.press('Escape');
-  check(await editorBack() && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc leaves Paint for the editor');
+  check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc leaves Paint for the editor');
+  await page.getByRole('button', { name: 'Paint', exact: true }).click();
+  await scribble();
+  await page.keyboard.press('Escape');
+  check(await shows(page.getByRole('dialog', { name: 'Unsaved changes' })), 'leaving Paint with an unsaved painting asks');
+  await answer('Discard');
+  check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && (await storedLayers('Painting')) === null, 'Discard drops the painting and goes back to the scene before');
+  await sceneList.getByRole('option', { name: 'Candy cane' }).click();
+  await editorBack();
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await page.locator('.preview-canvas').click({ position: { x: 640, y: 700 } });
   await page.keyboard.press('Escape');
@@ -157,10 +223,14 @@ try {
   await page.waitForTimeout(800);
   check(await shows(page.getByRole('button', { name: 'Palette: Party (edited)' })), 'changing a colour makes an edited copy of the palette');
   check(!shotBefore.equals(await canvas.screenshot()), 'the preview shows the edited palette');
+  check((await savedLayer()).params.palette === 'Party', 'the palette edit is not stored before Save');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForTimeout(600);
   const edited = await savedLayer();
   check(edited.params.palette === 'Party (edited)' && edited.params.paletteStops?.[0]?.[1] === '#00ff00', 'the edited colours are saved with the layer');
-  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.waitForTimeout(600);
   const undone = await savedLayer();
   check(undone.params.palette === 'Party' && undone.params.paletteStops === undefined, 'Undo puts the original palette back');

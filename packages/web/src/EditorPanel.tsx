@@ -1,6 +1,8 @@
 import { cloneElement, useEffect, useId, useMemo, useState } from 'react';
 import { BLEND_MODES, EFFECTS, buildLayout, resolveParams, type BlendMode, type LayerConfig, type ParamSpec } from '@xmas/engine';
 import { addLayer, addLayerFromLook, applyLook, clearScene, confirmClear, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, setParams, updateLayer, type SceneEditor } from './editor';
+import type { SceneFlow } from './sceneFlow';
+import type { WorkingCopy } from './workingCopy';
 import { api, type Preset } from './api';
 import { LayerPicker } from './LayerPicker';
 import { paintedCount } from './paint';
@@ -10,10 +12,10 @@ import type { Show } from './useShow';
 
 interface Props {
   show: Show;
-  editor: SceneEditor;
+  editor: WorkingCopy;
+  flow: SceneFlow;
   mode: EditMode;
   onModeChange: (m: EditMode) => void;
-  onRename: (newName: string) => Promise<boolean>;
 }
 
 /** Short names for the layer list. */
@@ -21,7 +23,7 @@ const BLEND_SHORT: Partial<Record<BlendMode, string>> = { mask: 'Mask', 'mask-in
 const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', add: 'Add', multiply: 'Multiply', screen: 'Screen', max: 'Brightest', mask: 'Mask: show below where bright', 'mask-invert': 'Mask: hide below where bright' };
 
 /** Right-hand panel: the selected scene's layers and the selected layer's settings. */
-export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Props) {
+export function EditorPanel({ show, editor, flow, mode, onModeChange }: Props) {
   const scene = editor.scene;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -34,7 +36,6 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
   const layout = show.layout;
   const groups = useMemo(() => groupOptions(layout), [layout]);
   const layer = scene.layers.find((l) => l.id === selectedId) ?? null;
-  const onStage = show.status?.stage.scene === scene.name;
 
   if (!scene.name) return <aside className="editor glass" aria-label="Scene editor"><p className="empty">Pick a scene to edit it.</p></aside>;
 
@@ -44,8 +45,8 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
       <div className="editor-sticky">
       <div className="editor-head">
         <div className="editor-title">
-          <span className="eyebrow">Editing</span>
-          <SceneTitle name={scene.name} onRename={onRename} />
+          <span className="eyebrow">{editor.neverStored ? 'New scene' : 'Editing'}<UnsavedNote editor={editor} /></span>
+          <SceneTitle name={scene.name} unsaved={editor.dirty} onRename={flow.rename} />
         </div>
         <div className="history">
           <button className="icon-btn" onClick={() => editor.undo()} disabled={!editor.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
@@ -60,12 +61,9 @@ export function EditorPanel({ show, editor, mode, onModeChange, onRename }: Prop
             <span className="live-dot" aria-hidden /> Live
           </button>
         </div>
-        <p className="mode-hint">
-          {!live ? 'Edits are saved but stay off the porch until you press Go.'
-            : onStage ? (show.status?.output.enabled ? 'Every edit goes to the porch now.' : 'Live, but streaming is off: the porch is on its WLED playlist.')
-            : 'Live only affects the scene on stage. This one isn’t on stage.'}
-        </p>
+        <p className="mode-hint">{modeHint(show, editor, live, 'edit')}</p>
       </div>
+      <SaveBar editor={editor} flow={flow} />
       </div>
 
       <div className="section-head">
@@ -316,8 +314,35 @@ function PresetBar({ show, layer, onApply }: { show: Show; layer: LayerConfig; o
   );
 }
 
+/** What Blind and Live do with the scene being edited, in a line under the switch. */
+export function modeHint(show: Show, editor: WorkingCopy, live: boolean, what: 'edit' | 'paint'): string {
+  if (!live) return `${what === 'paint' ? 'Your painting stays' : 'Edits stay'} in this browser until you save. The porch doesn’t change.`;
+  if (!show.status?.output.enabled) return 'Live, but streaming is off: the porch is on its WLED playlist.';
+  return what === 'paint' ? 'The porch shows every stroke as you paint. Nothing is stored until you save.' : 'The porch shows every edit now. Nothing is stored until you save.';
+}
+
+/** "Unsaved changes" after the panel's eyebrow, while there are some. */
+export function UnsavedNote({ editor }: { editor: WorkingCopy }) {
+  return <span className="eyebrow-unsaved" role="status">{editor.dirty ? (editor.neverStored ? ' · Not saved' : ' · Unsaved changes') : ''}</span>;
+}
+
+/** Save, Save as new and Revert. */
+export function SaveBar({ editor, flow }: { editor: WorkingCopy; flow: SceneFlow }) {
+  const dirty = editor.dirty;
+  return (
+    <div className="save-row" role="group" aria-label="Save">
+      <div className="save-buttons">
+        <button className="btn small primary" disabled={!dirty} onClick={() => void flow.save()} title={editor.neverStored ? 'Store this new scene (asks for a name)' : 'Store the changes over the saved scene'}>Save</button>
+        <button className="btn small ghost" disabled={!dirty} onClick={() => void flow.saveAsNew()} title="Store a copy under a new name; the saved scene stays as it was">Save as new…</button>
+        <button className="btn small ghost" disabled={!dirty || (editor.neverStored && editor.scene.layers.length === 0)} onClick={() => void flow.revert()}
+          title={editor.neverStored ? 'Clear it back to a blank scene' : 'Throw the changes away and go back to the saved scene'}>Revert</button>
+      </div>
+    </div>
+  );
+}
+
 /** The scene name; tap it to rename. Enter saves, Escape cancels. */
-function SceneTitle({ name, onRename }: { name: string; onRename: (n: string) => Promise<boolean> }) {
+function SceneTitle({ name, unsaved, onRename }: { name: string; unsaved: boolean; onRename: (n: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   useEffect(() => { setDraft(name); setEditing(false); }, [name]);
@@ -327,7 +352,7 @@ function SceneTitle({ name, onRename }: { name: string; onRename: (n: string) =>
     if (!(await onRename(n))) setDraft(name);
     setEditing(false);
   };
-  if (!editing) return <h2><button className="title-btn" onClick={() => setEditing(true)} title="Rename">{name}</button></h2>;
+  if (!editing) return <h2><button className="title-btn" onClick={() => setEditing(true)} title="Rename">{name}</button>{unsaved && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</h2>;
   return (
     <input
       className="title-input" autoFocus value={draft} maxLength={60} aria-label="Scene name"
