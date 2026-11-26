@@ -134,3 +134,20 @@ function centroid(points: V3[]): V3 {
   const n = Math.max(1, points.length);
   return [s[0] / n, s[1] / n, s[2] / n];
 }
+
+/**
+ * What the camera frames: the picked view (picking it again frames it again), where the lights are
+ * and which house parts are loaded. A reloaded copy of the same layout gives the same key, so a
+ * refresh (e.g. after Go) doesn't count as a change.
+ */
+export function framingKey(lights: { count: number; bounds: Box }, view: { name: string; nonce: number }, houseKey: string): string {
+  return [view.name, view.nonce, lights.count, ...lights.bounds.min, ...lights.bounds.max, houseKey].join('|');
+}
+
+/**
+ * Whether to frame the view again. A new framing always does. Otherwise (only the panels or the
+ * window changed) an untouched view re-centres, but a view the user has moved stays where they put it.
+ */
+export function shouldReframe(lastKey: string | null, key: string, userMoved: boolean): boolean {
+  return key !== lastKey || !userMoved;
+}

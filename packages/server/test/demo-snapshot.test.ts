@@ -82,7 +82,7 @@ describe('demo snapshot', () => {
   it('winds the stair-rail lights round the handrail', () => {
     const px = groupPixels(snap, 'run:stair-rail');
     expect(px.length).toBe(250);
-    for (const p of px) expect(toSegment(p, [2.26, 0.77, 3.3], [2.26, -0.66, 6.05])).toBeLessThan(0.06);
+    for (const p of px) expect(toSegment(p, [2.258, 0.753, 3.29], [2.258, -0.673, 6.04])).toBeLessThan(0.06);
   });
 
   it('drapes the bush lights over the bush', () => {
@@ -113,6 +113,14 @@ describe('demo snapshot', () => {
     expect(front).toBeGreaterThanOrEqual(5);
   });
 
+  it('keeps coil lights out of the things they wind round and above the lawn', () => {
+    // The handrail's centre line (it is about 4 cm thick), from the scan.
+    for (const p of groupPixels(snap, 'run:stair-rail')) expect(toSegment(p, [2.258, 0.753, 3.29], [2.258, -0.673, 6.04])).toBeGreaterThan(0.025);
+    // The lawn is about 0.16 m high round the trunk's base and -0.16 m at the mailbox post.
+    expect(Math.min(...groupPixels(snap, 'run:tree-trunk').map((p) => p[1]))).toBeGreaterThan(0.16);
+    expect(Math.min(...groupPixels(snap, 'run:mailbox-post').map((p) => p[1]))).toBeGreaterThan(-0.155);
+  });
+
   it('coils the tree-trunk lights round the trunk from the ground up to where the branches start', () => {
     const px = groupPixels(snap, 'run:tree-trunk');
     expect(px.length).toBe(300);
@@ -129,7 +137,7 @@ describe('demo snapshot', () => {
       expect(Math.abs(Math.hypot(p[0] - x!, p[2] - z!) - r!)).toBeLessThan(0.08);
     }
     const ys = px.map((p) => p[1]);
-    expect(Math.min(...ys)).toBeLessThan(0.15);
+    expect(Math.min(...ys)).toBeLessThan(0.25);
     expect(Math.max(...ys)).toBeGreaterThan(3.1);
     expect(Math.max(...ys)).toBeLessThan(3.4);
   });

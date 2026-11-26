@@ -7,7 +7,7 @@ import { runHue } from './layoutColors';
 import type { ServerClock } from './clock';
 import type { House } from './api';
 import { HouseModel } from './HouseModel';
-import { fitPoints, viewPoints, VIEW_ANGLES, type Box, type HouseBounds, type View } from './cameraFit';
+import { fitPoints, framingKey, shouldReframe, viewPoints, VIEW_ANGLES, type Box, type HouseBounds, type View } from './cameraFit';
 import { clusterLights, glowColors } from './glow';
 import { createGlowUniforms, type GlowUniforms } from './glowMaterial';
 
@@ -198,6 +198,9 @@ function diagnosticColors(layout: Layout, config: LayoutConfig, selected: string
   });
 }
 
+/** The lights draw after every house surface (which keep the default 0), so the house can hide them only from behind. */
+const LIGHTS_RENDER_ORDER = 10;
+
 /** How bright the spill is at strength 1 (the house setting), tuned by eye on a night view. */
 const GLOW_GAIN = 1.07; // two-thirds of the first tuning (1.6), at the owner's request
 
@@ -259,7 +262,9 @@ function Pixels({ layout, scene, clock, glow, glowStrength, diagnostic }: {
     if (glowStrength > 0) glowColors(colors, clusters, glow.uGlowCol.value); // O(pixels), no allocation
   });
 
-  return <points geometry={geometry} material={material} frustumCulled={false} />;
+  // Drawn after the house (renderOrder): the lights don't write depth, so a surface drawn later would
+  // paint over every light just in front of it, leaving coils lit only along their edges.
+  return <points geometry={geometry} material={material} frustumCulled={false} renderOrder={LIGHTS_RENDER_ORDER} />;
 }
 
 function center(layout: Layout): Vec3 {
@@ -307,9 +312,27 @@ function Camera({ layout, preset, insets, house }: { layout: Layout; preset: { n
   houseRef.current = house;
   const houseKey = house?.key ?? '';
   const { left, right, top, bottom } = insets;
+  // The layout is a new object after every reload; frame on what it holds, not on which copy it is.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const key = framingKey(layout, preset, houseKey);
+  /** The framing last applied, and whether the user has moved the view since (then panel changes leave it alone). */
+  const lastKey = useRef<string | null>(null);
+  const userMoved = useRef(false);
+  useEffect(() => {
+    const controls = ref.current;
+    if (!controls) return;
+    const moved = () => { userMoved.current = true; };
+    controls.addEventListener('controlstart', moved);
+    return () => controls.removeEventListener('controlstart', moved);
+  }, []);
   useEffect(() => {
     const controls = ref.current;
     if (!controls || width <= 0 || height <= 0) return;
+    if (!shouldReframe(lastKey.current, key, userMoved.current)) return;
+    lastKey.current = key;
+    userMoved.current = false;
+    const layout = layoutRef.current;
     const v = VIEW_ANGLES[preset.name];
     const points = viewPoints(preset.name, layoutBox(layout), houseRef.current);
     const margin = houseRef.current ? v.houseMargin : v.margin;
@@ -322,7 +345,7 @@ function Camera({ layout, preset, insets, house }: { layout: Layout; preset: { n
     const animate = !first.current && !reducedMotion();
     void controls.setLookAt(...fit.position, ...fit.target, animate);
     first.current = false;
-  }, [layout, preset, houseKey, left, right, top, bottom, width, height, camera]);
+  }, [key, left, right, top, bottom, width, height, camera]); // eslint-disable-line react-hooks/exhaustive-deps -- preset and layout are in key
   return (
     <CameraControls
       ref={ref}
