@@ -101,6 +101,18 @@ describe('demo snapshot', () => {
     expect(near / px.length).toBeGreaterThan(0.8);
   });
 
+  it('publishes only known fields of controllers, runs, groups and house parts, so a private field added later stays out', () => {
+    const show = fixtureShow();
+    Object.assign(show.layout.controllers[0]!, { password: 'hunter2' });
+    Object.assign(show.layout.runs[0]!, { secretNote: 'hunter2' });
+    Object.assign(show.layout.groups!.porch!, { owner: 'hunter2' });
+    Object.assign(show.house!.parts![0]!, { scannedAt: 'hunter2' });
+    const text = JSON.stringify(buildDemoSnapshot(show, realExtras()));
+    expect(text).not.toContain('hunter2');
+    expect(text).not.toContain('fallbackPreset');
+    expect(buildDemoSnapshot(show, realExtras()).layout.runs[1]!.coil).toEqual({ radius: 0.045, pitch: 0.27, skip: [3] });
+  });
+
   it('refuses extras that break the layout', () => {
     const extras = realExtras();
     extras.runs[0] = { ...extras.runs[0]!, coil: { radius: 2, pitch: 0.1 } }; // wider than any coil can be

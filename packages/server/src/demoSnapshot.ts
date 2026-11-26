@@ -3,7 +3,7 @@
  * controller addresses, Home Assistant, backups, mapping) and no field added to the show file later
  * is published by accident. The demo-only strings are added on a controller that doesn't exist.
  */
-import { buildLayout, type DemoExtras, type DemoSnapshot, type RunConfig, type Vec3 } from '@xmas/engine';
+import { buildLayout, type ControllerConfig, type DemoExtras, type DemoSnapshot, type GroupConfig, type RunConfig, type Vec3 } from '@xmas/engine';
 import type { ShowState } from './store.js';
 
 const NOWHERE = 'demo.invalid';
@@ -46,6 +46,16 @@ export function domePositions(min: Vec3, max: Vec3, count: number): Vec3[] {
   return out;
 }
 
+/** Only the named fields that are present: nested parts of the show are allow-listed too. */
+function pick<T extends object, K extends keyof T>(o: T, keys: readonly K[]): Pick<T, K> {
+  const out = {} as Pick<T, K>;
+  for (const k of keys) if (o[k] !== undefined) out[k] = o[k];
+  return out;
+}
+const controllerOf = (c: ControllerConfig): ControllerConfig => ({ ...pick(c, ['id', 'name', 'pixelCount']), host: NOWHERE });
+const runOf = (r: RunConfig): RunConfig => pick(r, ['id', 'name', 'controller', 'start', 'count', 'points', 'positions', 'coil']);
+const groupOf = (g: GroupConfig): GroupConfig => pick(g, ['runs', 'pixels', 'feather']);
+
 export function buildDemoSnapshot(show: ShowState, extras: DemoExtras): DemoSnapshot {
   let start = 0;
   const extraRuns: RunConfig[] = extras.runs.map(({ dome, ...r }) => {
@@ -53,14 +63,14 @@ export function buildDemoSnapshot(show: ShowState, extras: DemoExtras): DemoSnap
     start += r.count;
     return run;
   });
-  const realGroups = show.layout.groups ?? {};
+  const realGroups = Object.fromEntries(Object.entries(show.layout.groups ?? {}).map(([k, g]) => [k, groupOf(g)]));
   const realPorch = realGroups.porch ?? { runs: [] };
   const layout = {
     controllers: [
-      ...show.layout.controllers.map((c) => ({ ...c, host: NOWHERE })),
+      ...show.layout.controllers.map(controllerOf),
       { id: 'demo', name: 'Demo strings (not real)', host: NOWHERE, pixelCount: start },
     ],
-    runs: [...show.layout.runs, ...extraRuns],
+    runs: [...show.layout.runs.map(runOf), ...extraRuns],
     groups: {
       ...realGroups,
       'porch-real': realPorch,
