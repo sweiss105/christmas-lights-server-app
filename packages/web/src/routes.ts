@@ -1,3 +1,4 @@
+import { DEMO } from './demo/flag';
 import type { EditMode } from './useSceneEditor';
 
 /**
@@ -26,9 +27,13 @@ export interface Route {
 /** The page the app opens on: Control, where nothing can be edited by accident. */
 export const HOME: Route = { page: 'control', setupTool: 'strings', capture: false, demo: false };
 
-/** Where an address points. Unknown addresses open Control; the old #map and #map-demo open the filming screen. */
-export function parseHash(hash: string): Route {
+/**
+ * Where an address points. Unknown addresses open Control; the old #map and #map-demo open the filming
+ * screen. The public demo has no Setup, so there every Setup address opens Control.
+ */
+export function parseHash(hash: string, demo = DEMO): Route {
   const h = hash.replace(/^#/, '');
+  if (demo && (h === 'map' || h === 'map-demo' || /^\/?setup(\/|$)/.test(h))) return HOME;
   if (h === 'map' || h === 'map-demo') return { page: 'setup', setupTool: 'map', capture: true, demo: h === 'map-demo' };
   const [page, tool] = h.replace(/^\//, '').split('/');
   switch (page) {

@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 // The engine is imported from TypeScript source ("source" export condition), so the browser
 // preview runs exactly the code that drives the porch.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   resolve: { conditions: ['source'] },
   server: {
@@ -12,7 +12,8 @@ export default defineConfig({
     proxy: { '/api': process.env.XMAS_API ?? 'http://127.0.0.1:8090' },
   },
   build: {
-    outDir: 'dist',
+    // The public demo (vite build --mode demo) is built next to the real UI, never over it.
+    outDir: mode === 'demo' ? 'dist-demo' : 'dist',
     emptyOutDir: true,
     chunkSizeWarningLimit: 1500,
     // Big libraries that rarely change get their own files, so a deploy only re-downloads the app code.
@@ -29,4 +30,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

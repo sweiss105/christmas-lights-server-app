@@ -954,3 +954,14 @@ h1, h2 { margin: 0; }
   .popover { animation: none; }
   .rail-btn:active { transform: none; }
 }
+
+/* ---- public demo: a ribbon at the top, everything else moved down under it ---- */
+:root { --demo-h: 0px; }
+:root.demo-site { --demo-h: 30px; }
+@media (max-width: 560px) { :root.demo-site { --demo-h: 44px; } }
+.demo-ribbon {
+  position: fixed; z-index: 50; top: 0; left: 0; right: 0; height: var(--demo-h);
+  display: flex; align-items: center; justify-content: center; padding: 0 var(--gap); text-align: center;
+  font-size: 0.8rem; font-weight: 600; line-height: 1.25; color: var(--accent-ink); background: var(--accent);
+}
+.demo-site .app, .demo-site .loading { top: var(--demo-h); }

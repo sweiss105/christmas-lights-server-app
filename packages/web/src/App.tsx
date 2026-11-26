@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { DEMO } from './demo/flag';
 import { buildLayout, type LayoutConfig } from '@xmas/engine';
 import { api } from './api';
 import { History, type SceneEditor } from './editor';
@@ -396,7 +397,7 @@ function CreateBar({ show, editor, flow, mode, onMode, selected, phone, onFullSc
             <StreamingSwitch show={show} />
             <div className="more-row"><StagePill show={show} />{phone && <BlackoutButton show={show} />}</div>
             <button className="menu-item" onClick={() => { close(); onFullScreen(); }}><FullScreenIcon /> Full-screen display</button>
-            <button className="menu-item" onClick={() => { close(); onBackups(); }}>Backups…</button>
+            {!DEMO && <button className="menu-item" onClick={() => { close(); onBackups(); }}>Backups…</button>}
           </>
         )}
       </MoreMenu>
@@ -420,7 +421,7 @@ function ShowBar({ show, phone, onFullScreen, onBackups }: { show: Show; phone: 
           <>
             {phone && <><StagePill show={show} /><Brightness show={show} /><StreamingSwitch show={show} /></>}
             <button className="menu-item" onClick={() => { close(); onFullScreen(); }}><FullScreenIcon /> Full-screen display</button>
-            <button className="menu-item" onClick={() => { close(); onBackups(); }}>Backups…</button>
+            {!DEMO && <button className="menu-item" onClick={() => { close(); onBackups(); }}>Backups…</button>}
           </>
         )}
       </MoreMenu>
@@ -769,7 +770,7 @@ function Loading({ show }: { show: Show }) {
   return (
     <div className="loading">
       <div className="loading-dot" aria-hidden />
-      <p>{show.error ? `Can't reach the lights server: ${show.error}` : 'Connecting to the lights…'}</p>
+      <p>{show.error ? (DEMO ? show.error : `Can't reach the lights server: ${show.error}`) : 'Connecting to the lights…'}</p>
     </div>
   );
 }

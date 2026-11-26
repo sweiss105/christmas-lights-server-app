@@ -66,3 +66,18 @@ describe('scene search', () => {
     expect(filterScenes(scenes, 'nothing')).toEqual([]);
   });
 });
+
+describe('page addresses in the demo', () => {
+  it('sends every Setup address to Control, since the demo has no Setup', () => {
+    for (const h of ['#/setup', '#/setup/house', '#map', '#map-demo']) expect(parseHash(h, true), h).toEqual(HOME);
+  });
+
+  it('still opens Create and Watch', () => {
+    expect(parseHash('#/create', true).page).toBe('create');
+    expect(parseHash('#/watch', true).page).toBe('watch');
+  });
+
+  it('leaves the real site alone', () => {
+    expect(parseHash('#/setup/house', false).page).toBe('setup');
+  });
+});
