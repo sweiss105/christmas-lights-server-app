@@ -724,6 +724,35 @@ h1, h2 { margin: 0; }
 .rail-btn.active { background: var(--accent); color: var(--accent-ink); }
 .rail-short { font-size: 0.68rem; font-weight: 650; }
 
+/* A tool's settings pop-out, beside its rail button (a sheet above the tool strip on a phone). Dragged by its header. */
+.tool-pop {
+  position: absolute; z-index: 6; width: 320px; max-width: calc(100vw - 16px); display: flex; flex-direction: column;
+  border-radius: 14px; overflow: hidden; background: var(--glass-strong); animation: pop-in 140ms ease-out;
+}
+@keyframes pop-in { from { opacity: 0; transform: translateX(-6px); } }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(6px); } }
+.tool-pop-head {
+  display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 8px; border-bottom: 1px solid var(--edge);
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; flex: none;
+}
+.tool-pop.dragging { box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6); }
+.tool-pop.dragging .tool-pop-head { cursor: grabbing; }
+.tool-pop-grip { color: var(--text-3); display: grid; place-items: center; padding: 0 2px; }
+.tool-pop-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.tool-pop-title h2 { font-size: 0.86rem; font-weight: 700; letter-spacing: -0.005em; }
+.tool-pop-sub { font-size: 0.78rem; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tool-pop-close { color: var(--text-2); flex: none; }
+.tool-pop-body { overflow-y: auto; overscroll-behavior: contain; padding-bottom: 10px; min-height: 0; }
+.tool-pop .mode-row { padding: 10px 10px 4px; }
+.tool-pop .mode-hint { min-height: 0; margin-top: 6px; }
+.tool-pop .section-head { padding: 10px 12px 4px; }
+.tool-pop .rule-row { padding: 3px 12px; }
+.tool-pop .layer-actions { padding: 6px 10px 2px; }
+.tool-pop .field { padding-left: 12px; padding-right: 12px; }
+.tool-pop .brush-tools { padding-top: 6px; }
+.tool-pop .brush-tools .mode-hint { margin: 4px 12px 0; }
+@media (prefers-reduced-motion: reduce) { .tool-pop { animation: none; } }
+
 /* The contextual panel (right). Every panel is an .editor; its top row says what it is. */
 .panel-top { position: sticky; top: 0; z-index: 2; background: #121620; border-bottom: 1px solid var(--edge); border-radius: var(--radius) var(--radius) 0 0; }
 .panel-top-row { display: flex; align-items: flex-start; gap: 8px; padding: 12px 10px 8px 16px; }
@@ -858,6 +887,20 @@ h1, h2 { margin: 0; }
   .rail-title { display: none; }
   .rail-btn { width: auto; min-width: 52px; min-height: 44px; padding: 0 8px; flex-direction: row; gap: 6px; flex: none; }
   .app.panel-hidden .rail { bottom: var(--gap); }
+  .tool-pop {
+    left: var(--gap); right: var(--gap); width: auto; max-width: none; top: auto; max-height: min(26vh, 220px);
+    bottom: calc(var(--sheet-h) + var(--strip-h) + var(--gap) * 3); animation-name: sheet-in;
+  }
+  /* With a pop-out open the bottom sheet is shorter, so some of the 3D view stays in sight. */
+  .app.has-pop.page-create { --sheet-h: min(28vh, 240px); }
+  .app.panel-hidden .tool-pop { bottom: calc(var(--strip-h) + var(--gap) * 2); }
+  .tool-pop-head { cursor: default; padding-left: 12px; }
+  /* Tighter sliders and no keyboard hints, so the Brush's three sliders fit without scrolling. */
+  .tool-pop .field { gap: 0; padding-top: 2px; padding-bottom: 2px; }
+  .tool-pop .brush-tools { padding-top: 2px; }
+  .tool-pop .brush-tools .mode-hint { display: none; }
+  /* The camera menu sits where the pop-out opens: it comes back when the pop-out closes. */
+  .app.has-pop.page-create .view-tools { visibility: hidden; }
   .view-tools { bottom: calc(var(--sheet-h) + var(--gap) * 2); left: 50%; }
   .page-create .view-tools, .page-setup .view-tools { bottom: calc(var(--sheet-h) + var(--strip-h) + var(--gap) * 3); }
   .app.panel-hidden .view-tools { bottom: var(--gap); }

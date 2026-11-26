@@ -15,7 +15,8 @@ const P16 = ({ d, size = 16 }: { d: string; size?: number }) => (
 export const TOOL_ICONS = {
   move: 'M10 2v16M2 10h16M10 2l-2.5 2.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5',
   select: 'M3 3h4M13 3h4v4M17 13v4h-4M7 17H3v-4M3 7V3',
-  brush: 'M13 3l4 4-8 8H5v-4zM4 17c0-1.5 1-2 2-2',
+  /** A paintbrush: rounded handle, ferrule, and the bristles drawn to a tip (bottom left). */
+  brush: 'M12.85 8.85 17.65 4.05a1.2 1.2 0 0 0-1.7-1.7L11.15 7.15M13.27 9.27l-2 2-2.54-2.54 2-2zM11.27 11.27C10.5 14.5 7 17 3 17c0-4 2.5-7.5 5.73-8.27',
   erase: 'M8 17h9M4 13l7-8 6 6-6 6H8z',
   strings: 'M3 15c3-8 11-8 14 0M3 15h2M15 15h2M10 7v2',
   house: 'M3 10l7-6 7 6M5 9v8h10V9M8 17v-4h4v4',
@@ -48,6 +49,12 @@ export const RevertIcon = () => <P16 d="M3 8a5 5 0 1 0 1.6-3.7M3 2.5v2.8h2.8" />
 export const UndoIcon = () => <P16 d="M6 4 3 7l3 3M3 7h6.5a3.5 3.5 0 0 1 0 7H8" />;
 export const RedoIcon = () => <P16 d="m10 4 3 3-3 3M13 7H6.5a3.5 3.5 0 0 0 0 7H8" />;
 export const SearchIcon = () => <P16 d="M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9M10.5 10.5 14 14" size={14} />;
+/** Six dots: the handle that drags a pop-out. */
+export const GripIcon = () => (
+  <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden>
+    <circle cx="3" cy="3" r="1.2" /><circle cx="7" cy="3" r="1.2" /><circle cx="3" cy="7" r="1.2" /><circle cx="7" cy="7" r="1.2" /><circle cx="3" cy="11" r="1.2" /><circle cx="7" cy="11" r="1.2" />
+  </svg>
+);
 export const CloseIcon = () => <P16 d="M4 4l8 8M12 4l-8 8" size={14} />;
 export const StopIcon = () => <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden><rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor" /></svg>;
 export const PlayIcon = () => <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden><path d="M3 2v8l7-4z" fill="currentColor" /></svg>;
