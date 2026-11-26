@@ -317,9 +317,6 @@ function PresetBar({ show, layer, onApply }: { show: Show; layer: LayerConfig; o
 /** What Blind and Live do with the scene being edited, in a line under the switch. */
 export function modeHint(show: Show, editor: WorkingCopy, live: boolean, what: 'edit' | 'paint'): string {
   if (!live) return `${what === 'paint' ? 'Your painting stays' : 'Edits stay'} in this browser until you save. The porch doesn’t change.`;
-  const st = show.status?.stage;
-  const onPorch = !!st && (st.preview ?? st.scene) === editor.name;
-  if (!onPorch && !editor.neverStored) return 'Live shows the scene on stage. This one isn’t on stage: press Go to put it there.';
   if (!show.status?.output.enabled) return 'Live, but streaming is off: the porch is on its WLED playlist.';
   return what === 'paint' ? 'The porch shows every stroke as you paint. Nothing is stored until you save.' : 'The porch shows every edit now. Nothing is stored until you save.';
 }

@@ -56,14 +56,15 @@ export function useSceneEditor(show: Show, sceneName: string | null, mode: EditM
   useEffect(() => {
     if (mode !== 'live') { lastLive.current = null; return; }
     if (!wc.open || !stage) return;
+    // Owner's choice (2026-11-26): Live always puts what you're editing on the porch, whichever scene
+    // was on stage. (A blank new scene waits until it has something in it, rather than blacking out.)
+    if (wc.neverStored && !wc.worthKeeping) return;
     const onPorch = (stage.preview ?? stage.scene) === wc.name;
-    if (!onPorch && !(wc.neverStored && wc.worthKeeping)) return;
     const key = `${wc.name}\n${JSON.stringify(wc.scene.layers)}`;
     if (key === lastLive.current) return;
     lastLive.current = key;
-    // Unedited: the porch already shows the stored scene, unless Blind-saved edits are waiting there
-    // (then arming Live sends them, as it always has).
-    if (!wc.dirty && !(stage.dirty && stage.scene === wc.name && !stage.preview)) return;
+    // Already on the porch and unedited: nothing to send, unless Blind-saved edits are waiting there.
+    if (onPorch && !wc.dirty && !(stage.dirty && stage.scene === wc.name && !stage.preview)) return;
     sendLive(wc.scene);
   }, [mode, wc, wc.version, stage, sendLive]);
 
