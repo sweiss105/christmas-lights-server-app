@@ -146,10 +146,12 @@ The lights show white at master brightness × `level`, through the normal output
 2. Every camera frame goes straight to a Web Worker, so only a few seconds of frames are held at once. Frames come from `requestVideoFrameCallback`, scaled to 1280 px wide.
 3. The worker slides the preamble along the picture's brightness to find the true start. The clock only has to be within ±0.8 s.
 4. Frames near a pattern change are skipped (blur, rolling shutter).
-5. The reference frame minus the background frame gives bright spots (blobs). Their weighted centres are the light positions.
-6. For each blob and bit, the decoder compares the bit frame with its inverse at that spot. This cancels auto-exposure drift and needs no global threshold.
-7. A blob is dropped if any bit is unclear (margin under 0.3), its parity is wrong or its code isn't in use. Two merged lights or a reflection are dropped, rather than becoming a wrong light.
-8. What was found (pixel → position in the picture) is saved per spot on the server, in `/api/mapping/views` (the file `mapping-views.json` next to the state file). Positions can be solved again at any time without filming again.
+5. The reference frame minus the background frame gives bright spots. Specks smaller than a light (under 3 pixels at 640 px wide, more in a bigger picture) and spots bigger than 1/600 of the picture (glare) are left out. Only the spots' pixels are kept from each bit frame.
+6. For each pixel and bit, the decoder compares the bit frame with its inverse, relative to that pixel's on/off swing. This cancels auto-exposure drift and needs no global threshold.
+7. A spot that reads one code is one light; it's read again from its summed pixels, and its weighted centre is the light's position. A spot whose pixels show two or more codes is lights touching: each code's pixels are read again as a light of their own (the mixed pixels between them count towards the nearest one's centre). A reflection mixes several lights' codes, so its pixels read nothing clear and it's ignored.
+8. A light is dropped if any bit is unclear (margin under 0.3), its parity is wrong or its code isn't in use. Exception: a single bit whose two frames show no difference at all is restored from the parity. On the first night the lights twice missed a pattern change (probably a Wi-Fi hiccup), which lost a whole pass; codes have even parity, so two lights mixed together always leave two or more bits unclear and are still dropped.
+9. The same code in two places (a light and its reflection): the one with a clearly brighter peak, or clearly more light, wins; otherwise both are dropped.
+10. What was found (pixel → position in the picture) is saved per spot on the server, in `/api/mapping/views` (the file `mapping-views.json` next to the state file). Positions can be solved again at any time without filming again.
 
 **3. Solving.** This runs in the browser (`pose.ts`, `triangulate.ts`, `solve.ts`), with no extra dependencies.
 
@@ -254,7 +256,7 @@ The lights show white at master brightness × `level`, through the normal output
 - how bright the blobs are at 50%;
 - whether the 1× view takes in the whole porch.
 
-Each saved spot keeps its decoder stats (`blobs`, `decoded`, `unclear`, `badParity`, `syncScore`, `offsetMs`). They help tune `minMargin`, the hold time and K afterwards.
+Each saved spot keeps its decoder stats (`blobs`, `decoded`, `split` (spots that were lights touching), `repaired` (lights with a bit restored from the parity), `faint` (dim spots and specks with no code: reflections, glints), `unclear`, `tooBig`, `duplicates`, `badParity`, `syncScore`, `offsetMs`). They help tune `minMargin`, the hold time and K afterwards.
 
 ## Paint mode (built 2026-11-24, branch `paint-mode`; not yet tried on the real porch)
 

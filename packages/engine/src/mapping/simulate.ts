@@ -49,6 +49,11 @@ export interface SimOptions {
   shakePx?: number;
   /** Auto-exposure drift: brightness varies by up to this share. */
   gainDrift?: number;
+  /**
+   * A shiny floor or rail: every light also shows mirrored about picture row `y` (share of the
+   * height), with `strength` times its light, spread over `blurPx`.
+   */
+  reflection?: { y: number; strength: number; blurPx: number };
   seed?: number;
 }
 
@@ -104,8 +109,22 @@ export function* simulateFrames(o: SimOptions): Generator<{ t: number; lum: Uint
     bg[y * w + x] = v;
   }
 
-  const R = Math.ceil(blur * 3);
   const acc = new Float32Array(w * h);
+  /** Add a blurred spot of light centred at (px, py). */
+  const splat = (px: number, py: number, amp: number, sigma: number) => {
+    const R = Math.ceil(sigma * 3);
+    const x0 = Math.floor(px), y0 = Math.floor(py);
+    for (let dy = -R; dy <= R; dy++) {
+      const yy = y0 + dy;
+      for (let dx = -R; dx <= R; dx++) {
+        const xx = x0 + dx;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        // Picture pixel (xx, yy) covers xx..xx+1, so its centre is half a pixel in.
+        const ex = xx + 0.5 - px, ey = yy + 0.5 - py;
+        acc[yy * w + xx]! += amp * Math.exp(-(ex * ex + ey * ey) / (2 * sigma * sigma));
+      }
+    }
+  };
   /** Share of the exposure window [a, b] during which pixel i is lit. */
   const litShare = (i: number, a: number, b: number) => {
     let on = 0;
@@ -134,17 +153,9 @@ export function* simulateFrames(o: SimOptions): Generator<{ t: number; lum: Uint
       const share = litShare(i, end - exposure, end);
       if (share <= 0) continue;
       const amp = peak * share * gain;
-      const x0 = Math.floor(px), y0 = Math.floor(py);
-      for (let dy = -R; dy <= R; dy++) {
-        const yy = y0 + dy;
-        for (let dx = -R; dx <= R; dx++) {
-          const xx = x0 + dx;
-          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-          // Picture pixel (xx, yy) covers xx..xx+1, so its centre is half a pixel in.
-          const ex = xx + 0.5 - px, ey = yy + 0.5 - py;
-          acc[yy * w + xx]! += amp * Math.exp(-(ex * ex + ey * ey) / (2 * blur * blur));
-        }
-      }
+      splat(px, py, amp, blur);
+      // The same total light, spread wider.
+      if (o.reflection) splat(px, 2 * o.reflection.y * h - py, amp * o.reflection.strength * (blur / o.reflection.blurPx) ** 2, o.reflection.blurPx);
     }
     const lum = new Uint8Array(w * h);
     for (let j = 0; j < lum.length; j++) {

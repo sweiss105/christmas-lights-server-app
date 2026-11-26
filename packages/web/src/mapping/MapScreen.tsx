@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildLayout } from '@xmas/engine';
-import { planMapping, solveMapping, type DecodeResult, type MappingPlan } from '@xmas/engine/mapping';
+import { planMapping, solveMapping, type DecodeResult, type DecodeStats, type MappingPlan } from '@xmas/engine/mapping';
 import { api } from '../api';
 import type { Show } from '../useShow';
 import { demoViews, openCamera, paintIdle, runView, simulatedSource, stopCamera, videoSource, type ViewRun } from './capture';
@@ -276,6 +276,7 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
         {phase.kind === 'done' && (<>
           <h2 className="map-head">Found {phase.result.detections.length} lights</h2>
           <p className="map-guide">{placedText(placement.get(phase.placed ?? ''))}{guidance(views.views.length)}</p>
+          {decodeNote(phase.result.stats) && <p className="hint">{decodeNote(phase.result.stats)}.</p>}
           {phase.upload && <p className="hint">{phase.upload}.</p>}
           <div className="map-row two">
             <button className="btn go" onClick={() => setPhase({ kind: 'idle' })}>Next spot</button>
@@ -298,6 +299,15 @@ export function MapScreen({ show, demo, views, roles, onClose, onReview }: Props
 function cameraKey(track: MediaStreamTrack): string {
   const z = (track.getSettings?.() as { zoom?: number }).zoom;
   return `${track.label || 'camera'}@${z ?? 1}`;
+}
+
+/** What else the decoder saw, besides the lights it read (stats from older builds may lack fields). */
+function decodeNote(s: Partial<DecodeStats>): string {
+  const parts: string[] = [];
+  if (s.split) parts.push(`${s.split} spot${s.split === 1 ? ' was' : 's were'} lights touching, read one by one`);
+  if (s.faint) parts.push(`${s.faint} reflection${s.faint === 1 ? '' : 's'} or glint${s.faint === 1 ? '' : 's'} ignored`);
+  if (s.unclear) parts.push(`${s.unclear} spot${s.unclear === 1 ? '' : 's'} couldn’t be read`);
+  return parts.join(' · ');
 }
 
 function placedText(p: { ok: boolean; text: string } | undefined): string {

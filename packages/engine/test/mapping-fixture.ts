@@ -4,7 +4,7 @@
  * positions are only roughly known (a stair handrail and a bush), which mapping should find.
  */
 import { buildLayout, type LayoutConfig, type Vec3 } from '../src/index.js';
-import { MappingDecoder, planMapping, rng, simulateFrames, slotMasks, trueProjection, type SimView } from '../src/mapping/index.js';
+import { MappingDecoder, planMapping, rng, simulateFrames, slotMasks, trueProjection, type MappingPlan, type SimOptions, type SimView } from '../src/mapping/index.js';
 
 const coil = { radius: 0.03, pitch: 0.27 };
 
@@ -52,15 +52,19 @@ export const spots = [
   { eye: [5.5, -0.8, 10.5] as Vec3, target: [0.4, 0.2, 3] as Vec3 },
 ];
 
-/** Film one view with the synthetic camera and decode it. */
-export function filmAndDecode(view: SimView, opts: { seed?: number; k?: number; passes?: number; holdMs?: number; clockErrorMs?: number; dropRate?: number } = {}) {
+/**
+ * Film one view with the synthetic camera and decode it. `sim` overrides camera settings; `editMasks`
+ * changes what the lights show (e.g. a slot the lights missed).
+ */
+export function filmAndDecode(view: SimView, opts: { seed?: number; k?: number; passes?: number; holdMs?: number; clockErrorMs?: number; dropRate?: number; sim?: Partial<SimOptions>; editMasks?: (masks: Uint8Array[], plan: MappingPlan) => void } = {}) {
   const layout = buildLayout(roughLayout);
   const plan = planMapping(layout, { k: opts.k ?? 10, passes: opts.passes ?? 2, holdMs: opts.holdMs ?? 250 });
   const masks = slotMasks(layout, plan);
+  opts.editMasks?.(masks, plan);
   const truth = truePositions();
   const startMs = 10_000 + 123.4; // when slot 0 truly starts on the phone's clock (lead-in, latency...)
   const decoder = new MappingDecoder(plan, { width: view.width, height: view.height, startGuessMs: startMs + (opts.clockErrorMs ?? 180) });
-  for (const f of simulateFrames({ positions: truth, masks, holdMs: plan.params.holdMs, view, startMs, fromMs: startMs - 1500, toMs: startMs + plan.durationMs + 300, seed: opts.seed ?? 3, dropRate: opts.dropRate })) decoder.push(f.t, f.lum);
+  for (const f of simulateFrames({ positions: truth, masks, holdMs: plan.params.holdMs, view, startMs, fromMs: startMs - 1500, toMs: startMs + plan.durationMs + 300, seed: opts.seed ?? 3, dropRate: opts.dropRate, ...opts.sim })) decoder.push(f.t, f.lum);
   return { result: decoder.finish(), plan, truth, proj: trueProjection(truth, view) };
 }
 
