@@ -182,10 +182,14 @@ Defaults: `k` 10, 2 passes, hold 250 ms, level **25%** (full brightness bloomed)
 
 - Frames go to a Web Worker, scaled to 1280 px wide; if decoding falls behind, frames are skipped rather than piled up.
 - Frames near a pattern change are skipped (blur, rolling shutter).
-- Reference minus background gives bright spots; for each spot and bit, the bit frame is compared with its inverse there, which cancels auto-exposure drift.
-- A spot is dropped if any bit is unclear (margin under 0.3), the parity is wrong or the code isn't in use, rather than becoming a wrong light.
+- Reference minus background gives bright spots. Specks smaller than a light (under 3 px at 640 px wide, more in a bigger picture) and spots bigger than 1/600 of the picture (glare) are left out. Only the spots' pixels are kept from each bit frame.
+- For each pixel and bit, the bit frame is compared with its inverse, relative to that pixel's on/off swing, which cancels auto-exposure drift.
+- A spot that reads one code is one light (read again from its summed pixels; its weighted centre is the position). A spot whose pixels show two or more codes is lights touching: each code's pixels become a light of their own. A reflection mixes several lights' codes, reads nothing clear and is ignored.
+- A light is dropped if any bit is unclear (margin under 0.3), the parity is wrong or the code isn't in use, rather than becoming a wrong light. Exception: a single bit whose two frames show no difference at all is restored from the parity (on the first night the lights twice missed a pattern change, losing a whole pass). Codes have even parity, so two lights mixed together still leave two or more bits unclear and are dropped.
+- The same code in two places (a light and its reflection): a clearly brighter peak (1.5×) or clearly more light (2.5×) wins; otherwise both are dropped.
+- On the first night's footage this reads about twice as many lights as the first decoder (Spot 1: 43 → 79, Spot 4: 33 → 68), with the same share checking out (87–90%).
 - Camera settings (`cameraControl.ts`): pick the camera, the wide zoom, 30 or 60 fps, and lock what Safari allows at Start. The screen reports what the camera accepted.
-- Each spot's findings, its camera and decoder stats (`blobs`, `decoded`, `unclear`, `badParity`, `syncScore`, `offsetMs`) are saved in `/api/mapping/views`. Optionally the footage too, in `/api/mapping/recordings`. Spots can be solved again without filming again.
+- Each spot's findings, its camera and decoder stats (`blobs`, `decoded`, `split` (lights touching), `repaired` (a bit restored from the parity), `faint` (dim spots and specks: reflections, glints), `unclear`, `tooBig`, `duplicates`, `badParity`, `syncScore`, `offsetMs`) are saved in `/api/mapping/views`. Optionally the footage too, in `/api/mapping/recordings`. Spots can be solved again without filming again.
 
 **3. Solving** (in the browser: `pose.ts`, `triangulate.ts`, `solve.ts`; no extra dependencies).
 

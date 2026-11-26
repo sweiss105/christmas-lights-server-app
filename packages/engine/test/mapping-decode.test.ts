@@ -65,3 +65,47 @@ describe('decoding a filmed view', () => {
     expect(result.error).toBeTruthy();
   }, 60_000);
 });
+
+/** Lights in view, lights read, and how many of those are wrong (far from their pixel's true picture position). */
+function score({ result, plan, proj }: ReturnType<typeof filmAndDecode>) {
+  const lit = plan.passes.reduce((a, p) => a + p.pixels.filter((px) => !Number.isNaN(proj[px * 2]!)).length, 0);
+  const d = result.detections;
+  const wrong = d.filter((x) => Math.hypot(x.x - proj[x.pixel * 2]!, x.y - proj[x.pixel * 2 + 1]!) > 3).length;
+  return { lit, read: d.length, wrong };
+}
+
+describe('what made the first night hard', () => {
+  it('separates lights that touch, reading each from its own pixels', () => {
+    // Out of focus: neighbouring lights blur into one spot.
+    const view: SimView = { ...spots[1]!, hfovDeg: 68, width: 960, height: 540 };
+    const film = filmAndDecode(view, { passes: 1, sim: { blurPx: 2.2 } });
+    const { lit, read, wrong } = score(film);
+    expect(film.result.stats.split).toBeGreaterThan(2);
+    expect(read).toBeGreaterThan(lit * 0.7);
+    expect(wrong).toBeLessThanOrEqual(Math.ceil(read * 0.01));
+  }, 60_000);
+
+  it('ignores reflections on a shiny floor', () => {
+    const view: SimView = { ...spots[1]!, hfovDeg: 68, width: 960, height: 540 };
+    const film = filmAndDecode(view, { passes: 1, sim: { reflection: { y: 0.62, strength: 0.5, blurPx: 3 } } });
+    const { lit, read, wrong } = score(film);
+    expect(read).toBeGreaterThan(lit * 0.75);
+    expect(wrong).toBe(0); // no reflection taken for a light
+  }, 60_000);
+
+  it('restores a bit whose change the lights missed, from the parity', () => {
+    // A Wi-Fi hiccup: the lights kept showing a bit's pattern through its inverse's slot.
+    const view: SimView = { ...spots[1]!, hfovDeg: 68, width: 960, height: 540 };
+    const film = filmAndDecode(view, {
+      passes: 1,
+      editMasks: (masks, plan) => {
+        const slot = (kind: string) => plan.slots.findIndex((s) => s.kind === kind && s.pass === 0 && s.bit === 3);
+        masks[slot('bit-inv')] = masks[slot('bit')]!;
+      },
+    });
+    const { lit, read, wrong } = score(film);
+    expect(read).toBeGreaterThan(lit * 0.75);
+    expect(film.result.stats.repaired).toBeGreaterThan(read * 0.9);
+    expect(wrong).toBeLessThanOrEqual(Math.ceil(read * 0.01));
+  }, 60_000);
+});

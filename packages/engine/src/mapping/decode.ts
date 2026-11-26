@@ -10,12 +10,18 @@
  *    (from the server clock) is needed beforehand.
  * 2. Slots. Each frame is assigned to the slot it shows; frames near a slot change (blurred or caught
  *    half-way by the rolling shutter) are skipped.
- * 3. Blobs. Per pass, the reference frame minus the background frame shows where that pass's lights
- *    are. Bright connected spots are blobs; their weighted centres are the light positions.
- * 4. Codes. For each blob and code bit, the bit frame and its inverse are compared at that spot. The
- *    brighter one gives the bit, and how much brighter (relative to the blob's full on/off swing) is
- *    the margin. A blob whose bits aren't all clear, whose parity is wrong, or whose code isn't used
- *    is dropped, so a merged pair of lights or a reflection doesn't produce a wrong pixel.
+ * 3. Spots. Per pass, the reference frame minus the background frame shows where that pass's lights
+ *    are. Pixels that rise clearly are grouped into connected spots. From then on only those pixels
+ *    are kept from each bit frame.
+ * 4. Codes, pixel by pixel. Each spot pixel compares every bit frame with its inverse, relative to
+ *    its own on/off swing. A spot that is one light reads one code (from its summed pixels, as
+ *    before). A spot that is several lights touching shows a different code in each part, so each
+ *    code's pixels become a light of their own, checked again on their sums. A reflection on the
+ *    floor or rail mixes several lights' codes, so its pixels read no clear code and it is ignored.
+ * 5. Checks. A light is kept only if all its bits are clear, its parity is right and its code is in
+ *    use. Codes have even parity, so any two differ in at least two bits: one bit whose two frames
+ *    showed no difference at all (the lights missed that change) can be restored from the parity,
+ *    while two lights mixed together always leave at least two bits unclear.
  */
 import { decodeWord, PREAMBLE_SLOTS, slotLevels, type MappingPlan } from './sequence.js';
 
@@ -28,9 +34,9 @@ export interface DecoderOptions {
   searchMs?: number;
   /** Smallest bit margin (0..1) to accept a code. */
   minMargin?: number;
-  /** Smallest brightness rise (0..255) for a blob. */
+  /** Smallest brightness rise (0..255) for a spot. */
   minRise?: number;
-  /** Largest blob in picture pixels; bigger ones are glare, not single lights. */
+  /** Largest spot in picture pixels; bigger ones are glare, not a few lights. */
   maxBlobArea?: number;
 }
 
@@ -39,7 +45,7 @@ export interface Detection {
   /** Weighted centre in picture pixels. */
   x: number;
   y: number;
-  /** Summed brightness rise over the blob. */
+  /** Summed brightness rise over the light's pixels. */
   strength: number;
   /** Weakest bit margin, 0..1. */
   margin: number;
@@ -52,11 +58,22 @@ export interface DecodeStats {
   framesUsed: number;
   syncScore: number;
   offsetMs: number;
+  /** Bright spots examined (all passes). */
   blobs: number;
+  /** Lights read (after duplicates). */
   decoded: number;
+  /** Spots that were two or more lights touching, each read on its own. */
+  split: number;
+  /** Lights read with one bit restored from the parity (the lights missed that change). */
+  repaired: number;
+  /** Dim spots with no readable code: reflections and glints, ignored. */
+  faint: number;
+  /** Brighter spots with no readable code (lights blurred together, reflections). */
   unclear: number;
   badParity: number;
   badCode: number;
+  /** Spots too big to be lights (glare). */
+  tooBig: number;
   duplicates: number;
   missingSlots: number;
 }
@@ -72,15 +89,32 @@ export interface DecodeResult {
   thumbnail?: { width: number; height: number; data: Uint8Array; /** Decoder pixels per thumbnail pixel. */ scale: number };
 }
 
-interface Blob { idx: Int32Array; cx: number; cy: number; area: number; on: number; off: number }
+/** A pass's bright spots: their pixels, grouped by spot, with each pixel's reference brightness. */
+export interface Spots {
+  /** Picture index of each spot pixel; spot s owns px[start[s]] .. px[start[s + 1] - 1]. */
+  px: Int32Array;
+  start: Int32Array;
+  on: Float32Array;
+  off: Float32Array;
+  /** The rise threshold used. */
+  thr: number;
+  /** Spots dropped for being too big. */
+  tooBig: number;
+  /** Specks smaller than a light, left out. */
+  specks: number;
+  /** Pixels showing one code needed to read that part of a spot as a light of its own. */
+  minPart: number;
+}
 
 interface PassState {
   off: Float32Array | null; offN: number;
   on: Float32Array | null; onN: number;
-  blobs: Blob[] | null;
-  /** Per slot index: per-frame sums over each blob. */
-  samples: Map<number, Float32Array[]>;
+  spots: Spots | null;
+  /** Per slot index: the spot pixels' values in each frame. */
+  samples: Map<number, Uint8Array[]>;
 }
+
+interface Found extends Detection { peak: number; repaired: boolean }
 
 const CELL = 8;
 
@@ -107,8 +141,9 @@ export class MappingDecoder {
     this.hold = plan.params.holdMs;
     this.search = o.searchMs ?? 800;
     this.levels = slotLevels(plan);
-    this.opts = { minMargin: o.minMargin ?? 0.3, minRise: o.minRise ?? 18, maxBlobArea: o.maxBlobArea ?? Math.max(60, (o.width * o.height) / 2500) };
-    this.passes = plan.passes.map(() => ({ off: null, offN: 0, on: null, onN: 0, blobs: null, samples: new Map() }));
+    // A spot may hold a few touching lights (each read on its own), so the limit is generous: 1/600 of the picture.
+    this.opts = { minMargin: o.minMargin ?? 0.3, minRise: o.minRise ?? 18, maxBlobArea: o.maxBlobArea ?? Math.max(240, (o.width * o.height) / 600) };
+    this.passes = plan.passes.map(() => ({ off: null, offN: 0, on: null, onN: 0, spots: null, samples: new Map() }));
   }
 
   get synced() { return this.start !== null; }
@@ -160,87 +195,219 @@ export class MappingDecoder {
       if (key === 'off') ps.offN++; else { ps.onN++; if (!this.thumb && s.pass === 0) this.thumb = thumbnail(lum, this.w, this.h); }
       return;
     }
-    if (!ps.blobs) this.findBlobs(ps);
-    const blobs = ps.blobs!;
-    const v = new Float32Array(blobs.length);
-    blobs.forEach((b, j) => { let sum = 0; for (const i of b.idx) sum += lum[i]!; v[j] = sum; });
+    if (!ps.spots) this.findSpots(ps);
+    const px = ps.spots!.px;
+    const v = new Uint8Array(px.length);
+    for (let k = 0; k < px.length; k++) v[k] = lum[px[k]!]!;
     let list = ps.samples.get(slot);
     if (!list) ps.samples.set(slot, (list = []));
     list.push(v);
   }
 
-  private findBlobs(ps: PassState) {
-    if (!ps.on || !ps.off || !ps.onN || !ps.offN) { ps.blobs = []; return; }
+  private findSpots(ps: PassState) {
+    if (!ps.on || !ps.off || !ps.onN || !ps.offN) { ps.spots = emptySpots(); return; }
     const on = ps.on, off = ps.off;
     for (let i = 0; i < on.length; i++) { on[i]! /= ps.onN; off[i]! /= ps.offN; }
-    ps.blobs = detectBlobs(on, off, this.w, this.h, this.opts.minRise, this.opts.maxBlobArea);
+    ps.spots = findSpots(on, off, this.w, this.h, this.opts.minRise, this.opts.maxBlobArea);
     ps.on = ps.off = null; // done with the full pictures
   }
 
   finish(): DecodeResult {
     if (this.start === null && this.signal.length) this.sync();
-    const stats: DecodeStats = { frames: this.frames, framesUsed: this.used, syncScore: round(this.syncScore, 3), offsetMs: this.start === null ? 0 : round(this.start - this.o.startGuessMs, 1), blobs: 0, decoded: 0, unclear: 0, badParity: 0, badCode: 0, duplicates: 0, missingSlots: 0 };
+    const stats: DecodeStats = {
+      frames: this.frames, framesUsed: this.used, syncScore: round(this.syncScore, 3), offsetMs: this.start === null ? 0 : round(this.start - this.o.startGuessMs, 1),
+      blobs: 0, decoded: 0, split: 0, repaired: 0, faint: 0, unclear: 0, badParity: 0, badCode: 0, tooBig: 0, duplicates: 0, missingSlots: 0,
+    };
     if (this.start === null) return { ok: false, error: 'no frames from the sequence were recorded', startMs: null, detections: [], stats };
-    const found: Detection[] = [];
+    const found: Found[] = [];
     const bits = this.plan.bits;
     this.plan.passes.forEach((pass, p) => {
       const ps = this.passes[p]!;
-      if (!ps.blobs) this.findBlobs(ps);
-      const blobs = ps.blobs!;
-      stats.blobs += blobs.length;
+      if (!ps.spots) this.findSpots(ps);
+      const sp = ps.spots!;
+      stats.tooBig += sp.tooBig; stats.faint += sp.specks;
       // Slot index of each bit frame and its inverse.
       const slotOf = (kind: 'bit' | 'bit-inv', bit: number) => this.plan.slots.findIndex((s) => s.kind === kind && s.pass === p && s.bit === bit);
-      const med: (Float32Array | null)[][] = [];
+      const frames: [Float32Array | null, Float32Array | null][] = [];
       for (let b = 0; b <= bits; b++) {
         const a = medianOf(ps.samples.get(slotOf('bit', b))), c = medianOf(ps.samples.get(slotOf('bit-inv', b)));
         if (!a) stats.missingSlots++;
         if (!c) stats.missingSlots++;
-        med.push([a, c]);
+        frames.push([a, c]);
       }
-      blobs.forEach((blob, j) => {
-        const swing = blob.on - blob.off;
-        let word = 0, margin = 1;
-        for (let b = 0; b <= bits; b++) {
-          const [a, c] = med[b]!;
-          let m: number, one: boolean;
-          if (a && c) { one = a[j]! > c[j]!; m = Math.abs(a[j]! - c[j]!) / swing; }
-          else if (a || c) { // one frame of the pair missing: compare with half-way between on and off
-            const v = (a ?? c)![j]!, mid = (blob.on + blob.off) / 2;
-            one = a ? v > mid : v < mid; m = (2 * Math.abs(v - mid)) / swing;
-          } else { m = 0; one = false; }
-          margin = Math.min(margin, m);
-          if (one) word |= 1 << b;
-        }
-        if (margin < this.opts.minMargin) { stats.unclear++; return; }
-        const code = decodeWord(word, bits);
-        if (code === null) { stats.badParity++; return; }
-        if (code < 1 || code > pass.pixels.length) { stats.badCode++; return; }
-        found.push({ pixel: pass.pixels[code - 1]!, x: round(blob.cx, 2), y: round(blob.cy, 2), strength: Math.round(swing), margin: round(Math.min(1, margin), 3), area: blob.area, pass: p });
-      });
+      ps.samples.clear();
+      const r = readSpots(sp, frames, bits, pass.pixels.length, this.w, this.opts.minMargin);
+      for (const d of r.found) found.push({ ...d, pixel: pass.pixels[d.pixel - 1]!, pass: p });
+      stats.blobs += r.spots; stats.split += r.split; stats.faint += r.faint; stats.unclear += r.unclear; stats.badParity += r.badParity; stats.badCode += r.badCode;
     });
-    // The same code twice: keep a clearly stronger one (a reflection is dimmer), else drop both.
-    const byPixel = new Map<number, Detection[]>();
-    for (const d of found) { const l = byPixel.get(d.pixel); if (l) l.push(d); else byPixel.set(d.pixel, [d]); }
-    const detections: Detection[] = [];
-    for (const list of byPixel.values()) {
-      if (list.length === 1) { detections.push(list[0]!); continue; }
-      list.sort((a, b) => b.strength - a.strength);
-      const top = list[0]!;
-      // One light split in two (a flat, saturated top): merge the pieces.
-      if (list.every((d) => Math.hypot(d.x - top.x, d.y - top.y) < 6)) {
-        const sw = list.reduce((a, d) => a + d.strength, 0);
-        detections.push({ ...top, x: round(list.reduce((a, d) => a + d.x * d.strength, 0) / sw, 2), y: round(list.reduce((a, d) => a + d.y * d.strength, 0) / sw, 2), strength: sw, area: list.reduce((a, d) => a + d.area, 0), margin: Math.min(...list.map((d) => d.margin)) });
-        continue;
-      }
-      stats.duplicates += list.length - 1;
-      if (top.strength >= 2.5 * list[1]!.strength) detections.push(top);
-      else stats.duplicates++;
-    }
-    detections.sort((a, b) => a.pixel - b.pixel);
-    stats.decoded = detections.length;
-    const error = this.failed ?? (detections.length === 0 ? 'no lights could be read in this view' : undefined);
-    return { ok: !this.failed && detections.length > 0, ...(error && { error }), startMs: this.start, detections, stats, thumbnail: this.thumb };
+    const detections = resolveDuplicates(found, stats);
+    stats.repaired = detections.filter((d) => d.repaired).length;
+    const out: Detection[] = detections.map((d) => ({ pixel: d.pixel, x: round(d.x, 2), y: round(d.y, 2), strength: Math.round(d.strength), margin: round(Math.min(1, d.margin), 3), area: d.area, pass: d.pass }));
+    out.sort((a, b) => a.pixel - b.pixel);
+    stats.decoded = out.length;
+    const error = this.failed ?? (out.length === 0 ? 'no lights could be read in this view' : undefined);
+    return { ok: !this.failed && out.length > 0, ...(error && { error }), startMs: this.start, detections: out, stats, thumbnail: this.thumb };
   }
+}
+
+/**
+ * The same code found twice: one light split in two (close together) is merged; otherwise one is a
+ * reflection, which is dimmer and more spread out, so a clearly brighter peak (or clearly more light
+ * overall) wins. If neither is clear, all are dropped.
+ */
+function resolveDuplicates(found: Found[], stats: DecodeStats): Found[] {
+  const byPixel = new Map<number, Found[]>();
+  for (const d of found) { const l = byPixel.get(d.pixel); if (l) l.push(d); else byPixel.set(d.pixel, [d]); }
+  const out: Found[] = [];
+  for (const list of byPixel.values()) {
+    if (list.length === 1) { out.push(list[0]!); continue; }
+    list.sort((a, b) => b.strength - a.strength);
+    const top = list[0]!;
+    if (list.every((d) => Math.hypot(d.x - top.x, d.y - top.y) < 6)) {
+      const sw = list.reduce((a, d) => a + d.strength, 0);
+      out.push({ ...top, x: list.reduce((a, d) => a + d.x * d.strength, 0) / sw, y: list.reduce((a, d) => a + d.y * d.strength, 0) / sw, strength: sw, area: list.reduce((a, d) => a + d.area, 0), margin: Math.min(...list.map((d) => d.margin)), peak: Math.max(...list.map((d) => d.peak)) });
+      continue;
+    }
+    stats.duplicates += list.length - 1;
+    const byStrength = top.strength >= 2.5 * list[1]!.strength ? top : null;
+    const peaks = [...list].sort((a, b) => b.peak - a.peak);
+    const byPeak = peaks[0]!.peak >= 1.5 * peaks[1]!.peak ? peaks[0]! : null;
+    const pick = byStrength && byPeak && byStrength !== byPeak ? null : byStrength ?? byPeak;
+    if (pick) out.push(pick); else stats.duplicates++;
+  }
+  return out;
+}
+
+/** A word read from bit frames: the weakest clear bit's margin, and whether one bit was restored from the parity. */
+interface Reading { word: number; margin: number; repaired: boolean }
+
+/**
+ * Read a code from summed values: on/off levels and, per bit, the bit frame (a) and its inverse (c),
+ * either of which may be missing (NaN). A bit whose two frames barely differ (under half the smallest
+ * margin) is taken as lost; one lost bit is restored from the parity, two or more make it unclear.
+ */
+function readWord(on: number, off: number, a: Float64Array, c: Float64Array, bits: number, minMargin: number): Reading {
+  const swing = on - off;
+  if (!(swing > 0)) return { word: 0, margin: 0, repaired: false };
+  let word = 0, margin = 1, lost = -1, nLost = 0;
+  for (let b = 0; b <= bits; b++) {
+    const va = a[b]!, vc = c[b]!;
+    let d: number;
+    if (va === va && vc === vc) d = (va - vc) / swing; // (NaN marks a missing frame)
+    else if (va === va) d = (2 * (va - (on + off) / 2)) / swing; // one frame of the pair missing: compare with half-way
+    else if (vc === vc) d = (2 * ((on + off) / 2 - vc)) / swing;
+    else { nLost++; lost = b; continue; }
+    if (Math.abs(d) < minMargin / 2) { nLost++; lost = b; continue; }
+    margin = Math.min(margin, Math.abs(d));
+    if (d > 0) word |= 1 << b;
+  }
+  if (nLost > 1) return { word, margin: 0, repaired: false };
+  if (nLost === 1) {
+    let par = 0;
+    for (let x = word; x; x &= x - 1) par ^= 1;
+    if (par) word |= 1 << lost; // even parity over all bits
+  }
+  return { word, margin, repaired: nLost === 1 };
+}
+
+/**
+ * Read every spot of a pass. Returns lights with `pixel` set to their code (1-based place in the
+ * pass) and counts of what couldn't be read.
+ */
+export function readSpots(sp: Spots, frames: [Float32Array | null, Float32Array | null][], bits: number, codes: number, w: number, minMargin: number) {
+  const out = { found: [] as Omit<Found, 'pass'>[], spots: 0, split: 0, faint: 0, unclear: 0, badParity: 0, badCode: 0 };
+  const n = sp.px.length;
+  const thr = sp.thr;
+  // Each spot pixel's own code (0: unclear or not in use).
+  const code = new Int32Array(n);
+  const va = new Float64Array(bits + 1), vc = new Float64Array(bits + 1);
+  for (let k = 0; k < n; k++) {
+    for (let b = 0; b <= bits; b++) { const [fa, fc] = frames[b]!; va[b] = fa ? fa[k]! : NaN; vc[b] = fc ? fc[k]! : NaN; }
+    const r = readWord(sp.on[k]!, sp.off[k]!, va, vc, bits, minMargin);
+    if (r.margin < minMargin) continue;
+    const c = decodeWord(r.word, bits);
+    if (c !== null && c >= 1 && c <= codes) code[k] = c;
+  }
+
+  /** Read a set of spot pixels as one light. */
+  const readPart = (ks: ArrayLike<number>) => {
+    let on = 0, off = 0;
+    for (let b = 0; b <= bits; b++) { va[b] = frames[b]![0] ? 0 : NaN; vc[b] = frames[b]![1] ? 0 : NaN; }
+    for (let j = 0; j < ks.length; j++) {
+      const k = ks[j]!;
+      on += sp.on[k]!; off += sp.off[k]!;
+      for (let b = 0; b <= bits; b++) {
+        const [fa, fc] = frames[b]!;
+        if (fa) va[b]! += fa[k]!;
+        if (fc) vc[b]! += fc[k]!;
+      }
+    }
+    const r = readWord(on, off, va, vc, bits, minMargin);
+    const c = r.margin >= minMargin ? decodeWord(r.word, bits) : null;
+    return { r, c, strength: on - off };
+  };
+  /** Add a light; its centre is weighted over `centre` (by default all its pixels). */
+  const light = (ks: number[], c: number, r: Reading, strength: number, centre = ks) => {
+    let sw = 0, sx = 0, sy = 0, peak = 0;
+    for (const k of ks) peak = Math.max(peak, sp.on[k]! - sp.off[k]!);
+    for (const k of centre) {
+      const i = sp.px[k]!;
+      const wt = sp.on[k]! - sp.off[k]! - thr * 0.5;
+      sw += wt; sx += wt * (i % w); sy += wt * Math.floor(i / w);
+    }
+    // +0.5: a pixel's centre is half a pixel in from its corner.
+    out.found.push({ pixel: c, x: sx / sw + 0.5, y: sy / sw + 0.5, strength, margin: r.margin, area: ks.length, peak, repaired: r.repaired });
+  };
+
+  for (let s = 0; s + 1 < sp.start.length; s++) {
+    const k0 = sp.start[s]!, k1 = sp.start[s + 1]!;
+    out.spots++;
+    const ks = Array.from({ length: k1 - k0 }, (_, j) => k0 + j);
+    // Codes seen in this spot, with how many pixels show each.
+    const counts = new Map<number, number>();
+    for (const k of ks) if (code[k]) counts.set(code[k]!, (counts.get(code[k]!) ?? 0) + 1);
+    const parts = [...counts].filter(([, m]) => m >= sp.minPart).map(([c]) => c);
+    const whole = readPart(ks);
+    // One light (the usual case): read from all its pixels.
+    if (parts.length <= 1 && whole.c !== null && whole.c >= 1 && whole.c <= codes && (parts.length === 0 || parts[0] === whole.c)) {
+      light(ks, whole.c, whole.r, whole.strength);
+      continue;
+    }
+    // Several lights touching: each code's pixels are a light, checked again on their sums. Its own
+    // pixels stop short of the mixed ones between the lights, which would pull its centre away from
+    // its neighbour, so for the centre each mixed pixel goes to the nearest light.
+    const split: { mine: number[]; c: number; part: ReturnType<typeof readPart>; x: number; y: number }[] = [];
+    for (const c of parts) {
+      const mine = ks.filter((k) => code[k] === c);
+      const part = readPart(mine);
+      if (part.c !== c) continue;
+      let sw = 0, sx = 0, sy = 0;
+      for (const k of mine) { const wt = sp.on[k]! - sp.off[k]!, i = sp.px[k]!; sw += wt; sx += wt * (i % w); sy += wt * Math.floor(i / w); }
+      split.push({ mine, c, part, x: sx / sw, y: sy / sw });
+    }
+    const centres = split.map((l) => [...l.mine]);
+    if (split.length > 1) for (const k of ks) {
+      if (code[k]) continue;
+      const x = sp.px[k]! % w, y = Math.floor(sp.px[k]! / w);
+      let best = 0, bd = Infinity;
+      split.forEach((l, j) => { const d = (l.x - x) ** 2 + (l.y - y) ** 2; if (d < bd) { bd = d; best = j; } });
+      centres[best]!.push(k);
+    }
+    split.forEach((l, j) => light(l.mine, l.c, l.part.r, l.part.strength, centres[j]));
+    const lights = split.length;
+    if (lights > 1) out.split++;
+    if (lights > 0) continue;
+    let peak = 0;
+    for (const k of ks) peak = Math.max(peak, sp.on[k]! - sp.off[k]!);
+    if (whole.r.margin >= minMargin) { if (whole.c === null) out.badParity++; else out.badCode++; }
+    else if (peak < 1.5 * thr) out.faint++;
+    else out.unclear++;
+  }
+  return out;
+}
+
+function emptySpots(): Spots {
+  return { px: new Int32Array(0), start: new Int32Array(1), on: new Float32Array(0), off: new Float32Array(0), thr: 0, tooBig: 0, specks: 0, minPart: 2 };
 }
 
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
@@ -301,98 +468,69 @@ export function findStart(signal: { t: number; s: number }[], levels: number[], 
   return { start, score: best };
 }
 
-function medianOf(list: Float32Array[] | undefined): Float32Array | null {
+
+/** Per spot pixel, the median over a slot's frames. */
+function medianOf(list: Uint8Array[] | undefined): Float32Array | null {
   if (!list?.length) return null;
-  if (list.length === 1) return list[0]!;
-  const n = list[0]!.length, out = new Float32Array(n), tmp = new Array<number>(list.length);
+  const n = list[0]!.length, out = new Float32Array(n);
+  if (list.length === 1) { out.set(list[0]!); return out; }
+  const len = list.length, tmp = new Uint8Array(len), m = len >> 1;
   for (let j = 0; j < n; j++) {
-    for (let k = 0; k < list.length; k++) tmp[k] = list[k]![j]!;
-    tmp.sort((a, b) => a - b);
-    const m = tmp.length >> 1;
-    out[j] = tmp.length % 2 ? tmp[m]! : (tmp[m - 1]! + tmp[m]!) / 2;
+    // Insertion sort: a slot has only a handful of frames.
+    for (let k = 0; k < len; k++) {
+      const v = list[k]![j]!;
+      let q = k;
+      while (q > 0 && tmp[q - 1]! > v) { tmp[q] = tmp[q - 1]!; q--; }
+      tmp[q] = v;
+    }
+    out[j] = len % 2 ? tmp[m]! : (tmp[m - 1]! + tmp[m]!) / 2;
   }
   return out;
 }
 
 /**
- * Bright spots in on − off. Pixels rising more than a threshold (from the brightest lights, but at
- * least `minRise`) are grouped 8-connected; a group with several separate peaks (two lights touching)
- * is split between them. Each blob keeps its pixels (for reading bits) and its weighted centre.
+ * Bright spots in on − off: pixels rising more than a threshold (from the brightest lights, but at
+ * least `minRise`), grouped 8-connected. Spots bigger than `maxArea` are glare, and specks smaller
+ * than a light are noise or glints: both are left out (and counted).
  */
-export function detectBlobs(on: Float32Array, off: Float32Array, w: number, h: number, minRise: number, maxArea: number) {
+export function findSpots(on: Float32Array, off: Float32Array, w: number, h: number, minRise: number, maxArea: number): Spots {
   const n = w * h;
-  const diff = new Float32Array(n);
   const hist = new Uint32Array(256);
-  for (let i = 0; i < n; i++) { const d = on[i]! - off[i]!; diff[i] = d; hist[Math.max(0, Math.min(255, Math.round(d)))]!++; }
+  for (let i = 0; i < n; i++) hist[Math.max(0, Math.min(255, Math.round(on[i]! - off[i]!)))]!++;
   // The 99.9th percentile of the rise stands for a typical light's peak (lights are a small part of the picture).
   let acc = 0, p999 = 255;
   for (let v = 255; v >= 0; v--) { acc += hist[v]!; if (acc >= n * 0.001) { p999 = v; break; } }
   const thr = Math.max(minRise, 0.3 * p999);
-  const label = new Int32Array(n).fill(-1);
-  const blobs: Blob[] = [];
+  // A light covers a few pixels, more in a bigger picture: smaller specks are noise or glints.
+  const scale = Math.max(1, w / 640);
+  const minSpot = Math.round(3 * scale), minPart = Math.round(2 * scale);
+  const seen = new Uint8Array(n);
+  const px: number[] = [], start: number[] = [0];
   const stack: number[] = [];
+  let tooBig = 0, specks = 0;
   for (let i0 = 0; i0 < n; i0++) {
-    if (label[i0] !== -1 || diff[i0]! <= thr) continue;
-    const comp: number[] = [];
-    label[i0] = -2; stack.push(i0);
+    if (seen[i0] || on[i0]! - off[i0]! <= thr) continue;
+    const first = px.length;
+    seen[i0] = 1; stack.push(i0);
     while (stack.length) {
       const i = stack.pop()!;
-      comp.push(i);
-      const x = i % w, y = (i / w) | 0;
+      px.push(i);
+      const x = i % w, y = (i - x) / w;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const xx = x + dx, yy = y + dy;
         if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
         const j = yy * w + xx;
-        if (label[j] === -1 && diff[j]! > thr) { label[j] = -2; stack.push(j); }
+        if (!seen[j] && on[j]! - off[j]! > thr) { seen[j] = 1; stack.push(j); }
       }
     }
-    if (comp.length > maxArea) continue;
-    for (const part of splitPeaks(comp, diff, w)) {
-      let sw = 0, sx = 0, sy = 0, sOn = 0, sOff = 0;
-      for (const i of part) {
-        const wt = diff[i]! - thr * 0.5;
-        sw += wt; sx += wt * (i % w); sy += wt * ((i / w) | 0);
-        sOn += on[i]!; sOff += off[i]!;
-      }
-      if (sw <= 0) continue;
-      // +0.5: a pixel's centre is half a pixel in from its corner.
-      blobs.push({ idx: Int32Array.from(part), cx: sx / sw + 0.5, cy: sy / sw + 0.5, area: part.length, on: sOn, off: sOff });
-    }
+    if (px.length - first > maxArea) { px.length = first; tooBig++; continue; }
+    if (px.length - first < minSpot) { px.length = first; specks++; continue; }
+    start.push(px.length);
   }
-  return blobs;
-}
-
-/** Split a group of pixels between its separate peaks (local maxima at least 3 px apart). */
-function splitPeaks(comp: number[], diff: Float32Array, w: number): number[][] {
-  if (comp.length < 6) return [comp];
-  const inComp = new Set(comp);
-  let top = 0;
-  for (const i of comp) top = Math.max(top, diff[i]!);
-  const peaks: number[] = [];
-  for (const i of comp) {
-    const v = diff[i]!;
-    if (v < 0.6 * top) continue;
-    let isMax = true;
-    const x = i % w;
-    for (let dy = -2; dy <= 2 && isMax; dy++) for (let dx = -2; dx <= 2; dx++) {
-      if (!dx && !dy) continue;
-      if (x + dx < 0 || x + dx >= w) continue;
-      const j = i + dy * w + dx;
-      if (inComp.has(j) && (diff[j]! > v || (diff[j]! === v && j < i))) { isMax = false; break; }
-    }
-    if (isMax) peaks.push(i);
-  }
-  // Saturated lights have flat tops; peaks too close together are one light.
-  const kept: number[] = [];
-  for (const p of peaks) if (kept.every((q) => Math.hypot((p % w) - (q % w), ((p / w) | 0) - ((q / w) | 0)) >= 3)) kept.push(p);
-  if (kept.length < 2) return [comp];
-  const parts: number[][] = kept.map(() => []);
-  for (const i of comp) {
-    let best = 0, bd = Infinity;
-    kept.forEach((p, k) => { const d = Math.hypot((i % w) - (p % w), ((i / w) | 0) - ((p / w) | 0)); if (d < bd) { bd = d; best = k; } });
-    parts[best]!.push(i);
-  }
-  return parts;
+  const pxa = Int32Array.from(px);
+  const onv = new Float32Array(pxa.length), offv = new Float32Array(pxa.length);
+  for (let k = 0; k < pxa.length; k++) { onv[k] = on[pxa[k]!]!; offv[k] = off[pxa[k]!]!; }
+  return { px: pxa, start: Int32Array.from(start), on: onv, off: offv, thr, tooBig, specks, minPart };
 }
 
 /** Downscale to at most 320 px wide for showing the view. */
