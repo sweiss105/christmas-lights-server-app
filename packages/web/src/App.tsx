@@ -164,7 +164,7 @@ export function App() {
   const relayout = `${page}.${tool}.${setupTool}.${panel.shown}.${phone}.${controlTab}`;
   const railInset = useInset('.rail', 'left', ready && !phone && page !== 'watch', relayout);
   const panelInset = useInset('.editor', 'right', ready && !phone && page !== 'watch', relayout);
-  const topInset = useInset(phone ? '.topbar, .phone-mode, .porch-card' : '.topbar', 'top', ready && page !== 'watch', relayout);
+  const topInset = useInset(phone ? '.topbar, .phone-mode, .porch-card' : '.topbar, .porch-card', 'top', ready && page !== 'watch', relayout);
   const bottomInset = useInset(phone ? '.editor, .rail, .view-tools, .panel-show' : '.view-tools, .health', 'bottom', ready && page !== 'watch', relayout);
 
   // Camera mapping: the filming screen (#map, or #map-demo with a simulated camera).
