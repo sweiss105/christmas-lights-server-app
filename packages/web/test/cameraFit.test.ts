@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { corners, fitPoints, viewPoints, viewRegion, type Box, type V3 } from '../src/cameraFit';
+import { corners, fitPoints, framingKey, shouldReframe, viewPoints, viewRegion, type Box, type V3 } from '../src/cameraFit';
 
 /** Where a point lands on screen (-1..1 when it is within tanX/tanY) for a camera looking at `target`. */
 function project(p: V3, fit: { position: V3; target: V3 }, tanX: number, tanY: number) {
@@ -74,3 +74,29 @@ function sub(a: V3, b: V3): V3 { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 function dot(a: V3, b: V3) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 function cross(a: V3, b: V3): V3 { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
 function norm(a: V3): V3 { const l = Math.hypot(...a); return [a[0] / l, a[1] / l, a[2] / l]; }
+
+describe('keeping the view where the user put it', () => {
+  const lights = { count: 10, bounds: { min: [0, 0, 0] as V3, max: [4, 2, 1] as V3 } };
+  const angle = { name: 'angle' as const, nonce: 1 };
+
+  it('treats a reloaded copy of the same lights as the same framing', () => {
+    expect(framingKey(structuredClone(lights), angle, 'house@1')).toBe(framingKey(lights, angle, 'house@1'));
+  });
+
+  it('changes the framing when the view is picked again, the lights move, or the house changes', () => {
+    const k = framingKey(lights, angle, 'house@1');
+    expect(framingKey(lights, { ...angle, nonce: 2 }, 'house@1')).not.toBe(k);
+    expect(framingKey({ ...lights, bounds: { min: [0, 0, 0], max: [5, 2, 1] } }, angle, 'house@1')).not.toBe(k);
+    expect(framingKey(lights, angle, 'house@2')).not.toBe(k);
+  });
+
+  it('leaves a moved view alone when only the panels or the window change (e.g. after Go)', () => {
+    expect(shouldReframe('k', 'k', true)).toBe(false);
+  });
+
+  it('still re-centres an untouched view when the panels change, and always frames a new view', () => {
+    expect(shouldReframe('k', 'k', false)).toBe(true);
+    expect(shouldReframe('k', 'k2', true)).toBe(true);
+    expect(shouldReframe(null, 'k', false)).toBe(true);
+  });
+});
