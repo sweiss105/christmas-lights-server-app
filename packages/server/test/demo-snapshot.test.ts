@@ -30,7 +30,7 @@ describe('demo snapshot', () => {
 
   it('points every controller nowhere and adds the demo controller for the extra strings', () => {
     expect(snap.layout.controllers.every((c) => c.host === 'demo.invalid')).toBe(true);
-    expect(snap.layout.controllers.find((c) => c.id === 'demo')?.pixelCount).toBe(1200);
+    expect(snap.layout.controllers.find((c) => c.id === 'demo')?.pixelCount).toBe(1300);
   });
 
   it('copies scenes, playlists, presets and palettes as they are', () => {
@@ -47,8 +47,8 @@ describe('demo snapshot', () => {
     expect(Object.keys(snap.layout.groups!)).toEqual(expect.arrayContaining(['mailbox', 'stair-rail', 'bushes', 'tree', 'demo-extras']));
   });
 
-  it('builds a valid layout with the real lights plus 1200 demo lights', () => {
-    expect(buildLayout(snap.layout).count).toBe(1101 + 1200);
+  it('builds a valid layout with the real lights plus 1300 demo lights', () => {
+    expect(buildLayout(snap.layout).count).toBe(1101 + 1300);
   });
 
   it('opens on the stored stage, or nothing when the porch is blacked out', () => {
@@ -86,19 +86,28 @@ describe('demo snapshot', () => {
   });
 
   it('drapes the bush lights over the bush', () => {
-    const px = groupPixels(snap, 'run:bush-c');
+    const px = groupPixels(snap, 'run:bush-d');
     expect(px.length).toBe(200);
-    const min = [-2.4 - 0.05, -0.1 - 0.05, -0.02 - 0.05], max = [-0.38 + 0.05, 1.54 + 0.05, 1.32 + 0.05];
+    const min = [-0.98 - 0.05, -0.1 - 0.05, -0.02 - 0.05], max = [0.83 + 0.05, 1.44 + 0.05, 1.3 + 0.05];
     for (const p of px) for (let k = 0; k < 3; k++) { expect(p[k]).toBeGreaterThanOrEqual(min[k]!); expect(p[k]).toBeLessThanOrEqual(max[k]!); }
   });
 
+  it('lights the middle of the front of both big bushes by the porch, not just their ends', () => {
+    // The scan's front row: big bushes at x -3.62..-1.85 and -0.98..0.83, both with their front at z 1.3, a smaller one between.
+    const lights = [...groupPixels(snap, 'bushes')];
+    for (const [from, to] of [[-3.0, -2.45], [-0.35, 0.2]] as const) {
+      const front = lights.filter((p) => p[0] > from && p[0] < to && p[2] > 1.25 && p[1] > 0.3 && p[1] < 1.3);
+      expect(front.length, `front of the bush between x ${from} and ${to}`).toBeGreaterThanOrEqual(8);
+    }
+  });
+
   it('runs the bush lights up and down the bush in a zig-zag, many times across its front', () => {
-    const px = groupPixels(snap, 'run:bush-c');
-    const mid = (-0.1 + 1.54) / 2;
+    const px = groupPixels(snap, 'run:bush-d');
+    const mid = (-0.1 + 1.44) / 2;
     // Every time the string passes half height it's going up or down; count the passes on the front half.
     let passes = 0, front = 0;
     for (let i = 1; i < px.length; i++) {
-      if ((px[i - 1]![1] < mid) !== (px[i]![1] < mid)) { passes++; if (px[i]![2] > (-0.02 + 1.32) / 2 + 0.3) front++; }
+      if ((px[i - 1]![1] < mid) !== (px[i]![1] < mid)) { passes++; if (px[i]![2] > (-0.02 + 1.3) / 2 + 0.3) front++; }
     }
     expect(passes).toBeGreaterThanOrEqual(14);
     expect(front).toBeGreaterThanOrEqual(5);
@@ -126,8 +135,8 @@ describe('demo snapshot', () => {
   });
 
   it('keeps the bush lights near the outside of the bush (its scan is a rounded box), not buried in it', () => {
-    const px = groupPixels(snap, 'run:bush-c');
-    const min = [-2.4, -0.1, -0.02], max = [-0.38, 1.54, 1.32];
+    const px = groupPixels(snap, 'run:bush-d');
+    const min = [-0.98, -0.1, -0.02], max = [0.83, 1.44, 1.3];
     // Distance in from the nearest side or the top (the bottom is the ground).
     const depth = (p: Vec3) => Math.min(p[0] - min[0]!, max[0]! - p[0], p[2] - min[2]!, max[2]! - p[2], max[1]! - p[1]);
     const near = px.filter((p) => depth(p) < 0.15).length;
