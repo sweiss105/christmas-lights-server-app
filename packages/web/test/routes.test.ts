@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HOME, modeLight, parseHash, routeHash, toolForKey, typingTarget } from '../src/routes.js';
+import { filterScenes } from '../src/chrome.js';
 
 describe('page addresses', () => {
   it('opens on Control, also for an empty or unknown address', () => {
@@ -53,5 +54,15 @@ describe('tool shortcuts', () => {
     expect(typingTarget({ tagName: 'BUTTON' })).toBe(false);
     expect(typingTarget({ tagName: 'DIV', closest: (s: string) => (s.includes('dialog') ? {} : null) })).toBe(true);
     expect(typingTarget(null)).toBe(false);
+  });
+});
+
+describe('scene search', () => {
+  const scenes = ['Candy cane', 'Candy cane slow chase', 'Warm white', 'Christmas Chase'].map((name) => ({ name }));
+  it('keeps the order and matches every word, any case', () => {
+    expect(filterScenes(scenes, '').map((s) => s.name)).toEqual(scenes.map((s) => s.name));
+    expect(filterScenes(scenes, 'chase').map((s) => s.name)).toEqual(['Candy cane slow chase', 'Christmas Chase']);
+    expect(filterScenes(scenes, 'CANE  slow').map((s) => s.name)).toEqual(['Candy cane slow chase']);
+    expect(filterScenes(scenes, 'nothing')).toEqual([]);
   });
 });
