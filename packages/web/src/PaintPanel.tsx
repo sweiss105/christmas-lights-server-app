@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 import { EFFECTS, paletteColors, resolveParams, type LayerConfig } from '@xmas/engine';
 import { api } from './api';
-import { confirmClear, lookOf, removeLayer, type Look, type SceneEditor } from './editor';
-import { ParamControl, Slider, UndoIcon } from './EditorPanel';
+import { confirmClear, lookOf, removeLayer, type Look } from './editor';
+import { modeHint, ParamControl, SaveBar, Slider, UndoIcon, UnsavedNote } from './EditorPanel';
 import { LayerPicker } from './LayerPicker';
 import { clearPaint, colorLook, isPainted, paintedCount, paintLayerFor, retunePaint, type Brush } from './paint';
 import type { PaintTool } from './PaintOverlay';
+import type { SceneFlow } from './sceneFlow';
 import type { EditMode } from './useSceneEditor';
+import type { WorkingCopy } from './workingCopy';
 import type { Show } from './useShow';
 
 /** Ready-mixed colours: warm white first, then the Christmas ones. */
@@ -36,7 +38,8 @@ export function usePaint(): PaintState {
 
 interface Props {
   show: Show;
-  editor: SceneEditor;
+  editor: WorkingCopy;
+  flow: SceneFlow;
   paint: PaintState;
   mode: EditMode;
   onModeChange: (m: EditMode) => void;
@@ -47,12 +50,11 @@ interface Props {
 const TOOLS: [PaintTool, string, string][] = [['orbit', 'Move', 'Drag to turn the view'], ['paint', 'Paint', 'Drag over lights to paint them'], ['erase', 'Erase', 'Drag over lights to wipe paint off']];
 
 /** Paint colours and effects onto the lights with a brush. What's painted is part of the scene. */
-export function PaintPanel({ show, editor, paint, mode, onModeChange, onDone }: Props) {
+export function PaintPanel({ show, editor, flow, paint, mode, onModeChange, onDone }: Props) {
   const scene = editor.scene;
   const [picking, setPicking] = useState(false);
   const { brush, look } = paint;
   const live = mode === 'live';
-  const onStage = show.status?.stage.scene === scene.name;
   const painted = scene.layers.filter(isPainted).reverse();
   const current = look ? paintLayerFor(scene, look) : null;
 
@@ -89,8 +91,8 @@ export function PaintPanel({ show, editor, paint, mode, onModeChange, onDone }: 
       <div className="editor-sticky">
         <div className="editor-head">
           <div className="editor-title">
-            <span className="eyebrow">Painting on</span>
-            <h2>{scene.name}</h2>
+            <span className="eyebrow">{editor.neverStored ? 'New painting' : 'Painting on'}<UnsavedNote editor={editor} /></span>
+            <h2>{scene.name}{editor.dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</h2>
           </div>
           <div className="history">
             <button className="icon-btn" onClick={() => editor.undo()} disabled={!editor.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
@@ -103,15 +105,12 @@ export function PaintPanel({ show, editor, paint, mode, onModeChange, onDone }: 
             <button role="radio" aria-checked={!live} className={!live ? 'active' : ''} onClick={() => onModeChange('blind')}>Blind</button>
             <button role="radio" aria-checked={live} className={live ? 'active live' : ''} onClick={() => onModeChange('live')}><span className="live-dot" aria-hidden /> Live</button>
           </div>
-          <p className="mode-hint">
-            {!live ? 'Painting is saved in the scene but stays off the porch until you press Go.'
-              : onStage ? (show.status?.output.enabled ? 'Every stroke shows on the porch as you paint.' : 'Live, but streaming is off: the porch is on its WLED playlist.')
-              : 'Live only affects the scene on stage. Press Go on this scene to paint on the porch.'}
-          </p>
+          <p className="mode-hint">{modeHint(show, editor, live, 'paint')}</p>
           <div className="segmented tools-seg" role="radiogroup" aria-label="Paint tool">
             {TOOLS.map(([t, label, hint]) => <button key={t} role="radio" aria-checked={paint.tool === t} className={paint.tool === t ? 'active' : ''} title={hint} onClick={() => paint.setTool(t)}>{label}</button>)}
           </div>
         </div>
+        <SaveBar editor={editor} flow={flow} />
       </div>
 
       <div className="section-head"><h3>Paint with</h3></div>
@@ -186,7 +185,7 @@ export function PaintPanel({ show, editor, paint, mode, onModeChange, onDone }: 
         <button className="btn small ghost danger-quiet" disabled={painted.length === 0} title="Remove everything painted (the scene's other layers stay; Undo brings the paint back)"
           onClick={() => { if (confirmClear(editor.scene.name, live, 'painting')) editor.edit(clearPaint(editor.scene)); }}>Clear painting</button>
       </div>
-      <p className="mode-hint paint-foot">Each paint is a layer of the scene: press Done to reorder it or fine-tune it with the other layers. Hold Option/Alt to erase.</p>
+      <p className="mode-hint paint-foot">Painting starts from a blank scene with every light off. When you like it, Save as new… stores it as a scene. Each paint is a layer: press Done to reorder it or fine-tune it with the other layers. Hold Option/Alt to erase.</p>
     </aside>
   );
 }

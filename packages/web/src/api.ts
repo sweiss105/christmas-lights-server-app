@@ -62,7 +62,8 @@ export interface ScheduleStatus extends Schedule { active: boolean; nextOn: numb
 
 export interface Status {
   scene: string | null;
-  stage: { scene: string | null; dirty: boolean };
+  /** `preview` names the scene whose unsaved edits are on the porch (Live editing), when there is one. */
+  stage: { scene: string | null; dirty: boolean; preview?: string };
   playlist: { name: string; index: number; scene: string | null; nextAt: number | null } | null;
   schedule: ScheduleStatus | null;
   pixels: number;
@@ -128,6 +129,10 @@ export const api = {
   effects: () => call<EffectInfo[]>('GET', '/api/effects'),
   /** Save a scene. Blind (apply=false) leaves the porch alone; Live (apply=true) updates it if the scene is on stage. */
   saveScene: (scene: SceneConfig, apply: boolean) => call<SceneConfig>('PUT', `/api/scenes/${enc(scene.name)}?apply=${apply}`, { layers: scene.layers }),
+  /** Live editing: show a scene that isn't stored on the porch. Sending a scene's stored version ends the preview. */
+  previewStage: (scene: SceneConfig) => call<{ stage: SceneConfig; preview: string | null }>('POST', '/api/stage/preview', { name: scene.name, layers: scene.layers }),
+  /** End a Live preview: what was on stage before it comes back. */
+  endPreview: () => call<{ preview: null }>('DELETE', '/api/stage/preview'),
   /** Rename a scene; playlists, the schedule and the stage follow it. */
   renameScene: (name: string, to: string) => call<SceneConfig>('POST', `/api/scenes/${enc(name)}/rename`, { to }),
   deleteScene: (name: string) => call<{ deleted: string }>('DELETE', `/api/scenes/${enc(name)}`),

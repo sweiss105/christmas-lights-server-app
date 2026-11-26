@@ -87,9 +87,10 @@ Scenes and playlists added, renamed or deleted in the app show up in the selects
 
 Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare Access, or `http://<server>:8090` at home). It's built for desktop and tablet, with a phone layout too.
 
-- **Blind and Live, like a lighting console.** Picking a scene previews it in 3D without touching the porch. **Go** puts it on stage. Blind edits (`?apply=false`) are saved but stay off the porch until Go; the status pill shows *edited, not sent*.
+- **Edits are a working copy until you save.** Opening a scene and editing it changes a copy kept in the browser only; the stored scene changes when you press **Save** (or **Save as new…**, which leaves the original alone). **Revert** throws the edits away. A dot in the scene list and *Unsaved changes* in the editor show there's something to save; opening another scene, a tool or New asks first (Save / Save as new / Discard / Cancel), and so does closing the tab. **+ New** starts a blank scene.
+- **Blind and Live, like a lighting console.** Picking a scene previews it in 3D without touching the porch. **Go** puts the stored scene on stage (with unsaved edits it asks: Save and Go, or Go with the stored version). In Blind nothing goes to the server while you edit. In Live the porch shows your edits as you make them, for the scene on stage or a new scene, without storing them (`POST /api/stage/preview`); Save stores them, Revert puts the stored version back. Playlists, the schedule and Home Assistant only ever play stored scenes.
 - **Preview / Stage** switches the 3D view between what you're working on and what the porch is running. The preview uses the server's clock, so it animates in step with the real lights.
-- **Paint** turns the 3D view into a canvas: pick a colour or an effect (or a saved preset), then drag a brush over the lights. Size, soft edge and strength are on the brush; Erase (or holding Option/Alt) wipes paint off; each stroke is one Undo step. What you paint is saved in the scene as painted layers, so it follows Blind and Live like any other edit: with Live armed on the scene that's on stage, each stroke shows on the porch as you draw.
+- **Paint** turns the 3D view into a canvas: pick a colour or an effect (or a saved preset), then drag a brush over the lights. Size, soft edge and strength are on the brush; Erase (or holding Option/Alt) wipes paint off; each stroke is one Undo step. Paint starts a new, blank scene (every light off); **Save as new…** stores it under a name. What you paint becomes painted layers of that scene, so it follows Blind and Live like any other edit: with Live armed, each stroke shows on the porch as you draw.
 - **Streaming** hands the porch between this server and its WLED playlist. **Brightness** is the master level on the porch.
 
 ## Concepts
@@ -106,7 +107,8 @@ Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare A
 |---|---|---|
 | GET | `/api/health` | Liveness (no auth) |
 | GET | `/api/status` | Active scene, `stage {scene, dirty}`, output settings, real fps, render time, per-controller health, `homeassistant {enabled, connected}` |
-| GET | `/api/stage` | The scene the porch is running now (can differ from the saved copy while Blind edits are pending) |
+| GET | `/api/stage` | The scene the porch is running now (can differ from the saved copy while Blind edits are pending, or during a Live preview) |
+| POST/DELETE | `/api/stage/preview` | Live editing: POST a scene body (`{ name, layers }`, validated like a save) to show it on the porch without storing it; `stage.preview` in `/api/status` names it. Never saved: a restart, Go, Blackout, a playlist or the schedule puts a stored scene back. Posting a scene's stored version ends the preview; DELETE puts back what was on stage before |
 | GET | `/api/clock` | Effect time in seconds, so the browser preview renders the same frame as the porch |
 | GET | `/api/effects` | Effect catalogue with param specs |
 | GET/PUT | `/api/layout` | Read or replace the layout (validated; the active scene is dropped if it no longer fits) |

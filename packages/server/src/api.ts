@@ -73,9 +73,18 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const output = new OutputLoop(() => engine, state.output.fps);
   output.onWarn = (m) => server.log.warn(m);
   const changeListeners = new Set<() => void>();
+  /**
+   * An unsaved edit on the porch (Live editing in the web UI): `of` names the scene being edited,
+   * `base` is what was on stage before it. Kept in memory only: it is never saved, so a restart (or
+   * anything else that changes the stage: Go, Blackout, a playlist, the schedule) puts back a stored
+   * scene.
+   */
+  let preview: { of: string; base: SceneConfig } | null = null;
+  /** What's on stage as far as saving goes: never an unsaved preview. */
+  const storedStage = () => (preview ? preview.base : engine.scene);
   /** Save, recording what's on stage so a restart can bring it back exactly, then tell whoever listens. */
   const persist = async () => {
-    if (state.activeScene) { state.stage = engine.scene; state.lastScene = state.activeScene; } else delete state.stage;
+    if (state.activeScene) { state.stage = storedStage(); state.lastScene = state.activeScene; } else delete state.stage;
     try { await saveState(opts.statePath, state); } finally {
       for (const l of changeListeners) { try { l(); } catch (e) { server.log.error(e); } }
     }
@@ -136,6 +145,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const rev = { boot: randomUUID(), n: 0, by: '' };
   server.addHook('onResponse', async (req, reply) => {
     if (req.method === 'GET' || req.method === 'HEAD' || !req.url.startsWith('/api/') || reply.statusCode >= 400) return;
+    // Live previews change nothing stored; counting them would make every other tab reload on each slider move.
+    if (req.url.startsWith('/api/stage/preview')) return;
     const by = req.headers['x-client-id'];
     rev.n++;
     rev.by = typeof by === 'string' ? by.slice(0, 64) : '';
@@ -146,13 +157,14 @@ export async function createApp(opts: AppOptions): Promise<App> {
     const saved = state.activeScene ? state.scenes[state.activeScene] : undefined;
     if (!saved) return false;
     // Compare normalised forms: older saved scenes omit defaults that the running copy has filled in.
-    try { return JSON.stringify(validateScene(saved, engine.layout)) !== JSON.stringify(engine.scene); } catch { return true; }
+    try { return JSON.stringify(validateScene(saved, engine.layout)) !== JSON.stringify(storedStage()); } catch { return true; }
   };
 
   let homeAssistantStatus = () => ({ enabled: false, connected: false });
   server.get('/api/status', async () => ({
     scene: state.activeScene,
-    stage: { scene: state.activeScene, dirty: stageDirty() },
+    // `preview` names the scene whose unsaved edits the porch is showing (Live editing), if any.
+    stage: { scene: state.activeScene, dirty: stageDirty(), ...(preview && { preview: preview.of }) },
     playlist: playlistStatus(),
     schedule: scheduleStatus(),
     pixels: engine.layout.count,
@@ -162,7 +174,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     homeassistant: homeAssistantStatus(),
   }));
 
-  /** The scene the porch is running now (may differ from the saved copy while Blind edits are pending). */
+  /** The scene the porch is running now (may differ from the saved copy while Blind edits are pending, or during a Live preview). */
   server.get('/api/stage', async () => engine.scene);
 
   /** Effect time in seconds, so a browser preview can render the same frame the porch shows. */
@@ -180,11 +192,12 @@ export async function createApp(opts: AppOptions): Promise<App> {
     // Keep the current scene if it still fits the new layout (its groups may have gone).
     if (state.activeScene) {
       // Keep what's on stage (Blind edits stay pending); fall back to the saved copy if it doesn't fit.
-      try { next.setScene(engine.scene); } catch {
+      try { next.setScene(storedStage()); } catch {
         try { next.setScene(state.scenes[state.activeScene]!); } catch { state.activeScene = null; }
       }
     }
     engine = next;
+    preview = null; // an unsaved preview may no longer fit; the stored stage came across instead
     mapping.stop(); // pixel codes follow the layout, so a running sequence would no longer match it
     state.layout = req.body;
     await persist();
@@ -236,14 +249,19 @@ export async function createApp(opts: AppOptions): Promise<App> {
     const probe = new Engine(engine.layout);
     try { valid = probe.setScene({ ...req.body, name: req.params.name, layers: withSavedPalettes(req.body?.layers) }); } catch (e) { throw bad(e); }
     state.scenes[valid.name] = valid;
-    if (apply === 'true' && state.activeScene === valid.name) engine.setScene(valid); // Live edit
+    if (preview?.of === valid.name && (apply === 'true' || JSON.stringify(engine.scene) === JSON.stringify(valid))) {
+      // Saving the scene whose unsaved edits are on the porch: the stored scene is now on stage.
+      engine.setScene(valid);
+      state.activeScene = valid.name;
+      preview = null;
+    } else if (apply === 'true' && state.activeScene === valid.name && !preview) engine.setScene(valid); // Live edit
     await persist();
     return valid;
   });
 
   server.delete<{ Params: { name: string } }>('/api/scenes/:name', async (req) => {
     if (!state.scenes[req.params.name]) throw new HttpError(404, 'no such scene');
-    if (state.activeScene === req.params.name) throw new HttpError(409, 'cannot delete the active scene');
+    if (state.activeScene === req.params.name || preview?.of === req.params.name) throw new HttpError(409, 'cannot delete the active scene');
     const uses = sceneUses(req.params.name);
     if (uses.length) throw new HttpError(409, `"${req.params.name}" is used by ${uses.join(' and ')}. Take it out of there first.`);
     delete state.scenes[req.params.name];
@@ -268,7 +286,11 @@ export async function createApp(opts: AppOptions): Promise<App> {
     state.scenes = Object.fromEntries(Object.entries(state.scenes).map(([k, v]) => (k === from ? [to, renamed] : [k, v])));
     for (const pl of Object.values(state.playlists ?? {})) for (const e of pl.entries) if (e.scene === from) e.scene = to;
     if (state.schedule?.run.kind === 'scene' && state.schedule.run.name === from) state.schedule.run.name = to;
-    if (state.activeScene === from) { state.activeScene = to; engine.scene = { ...engine.scene, name: to }; }
+    if (state.activeScene === from) {
+      state.activeScene = to;
+      if (preview) preview.base = { ...preview.base, name: to }; else engine.scene = { ...engine.scene, name: to };
+    }
+    if (preview?.of === from) { preview.of = to; engine.scene = { ...engine.scene, name: to }; }
     if (state.lastScene === from) state.lastScene = to;
     await persist();
     return renamed;
@@ -278,6 +300,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     const s = Object.hasOwn(state.scenes, name) ? state.scenes[name] : undefined;
     if (!s) throw new HttpError(404, 'no such scene');
     try { engine.setScene(s, { fade: fadeSeconds() }); } catch (e) { throw bad(e); }
+    preview = null; // Go always puts the stored scene on stage
     state.activeScene = s.name;
     delete state.playing; // a manual Go takes over from a playlist
     await persist();
@@ -286,11 +309,54 @@ export async function createApp(opts: AppOptions): Promise<App> {
 
   const blackout = async () => {
     engine.setScene({ name: 'Blackout', layers: [] }, { fade: fadeSeconds() });
+    preview = null;
     state.activeScene = null;
     delete state.playing;
     await persist();
   };
   server.post('/api/blackout', async () => { await blackout(); return { active: null }; });
+
+  /**
+   * Live editing: put a scene that isn't saved on the porch (the web UI's working copy), checked like
+   * a saved scene. Nothing is stored: `state.scenes` and the saved stage stay as they are, and a
+   * restart brings back the stored stage. The first preview of a scene that isn't on stage fades in;
+   * later ones (each edit) cut, so sliders don't flicker. Sending the stored version of a scene ends
+   * the preview: that stored scene is on stage again (Revert).
+   */
+  server.post<{ Body: SceneConfig }>('/api/stage/preview', async (req) => {
+    const name = typeof req.body?.name === 'string' ? req.body.name : '';
+    if (!sceneNameOk(name)) throw new HttpError(400, `a scene name must be 1..${MAX_NAME} characters`);
+    let valid: SceneConfig;
+    try { valid = new Engine(engine.layout).setScene({ ...req.body, name, layers: withSavedPalettes(req.body?.layers) }); } catch (e) { throw bad(e); }
+    const showing = preview ? preview.of : state.activeScene;
+    const fade = showing === name ? {} : { fade: fadeSeconds() };
+    const stored = Object.hasOwn(state.scenes, name) ? state.scenes[name]! : undefined;
+    let storedValid: SceneConfig | undefined;
+    try { storedValid = stored && validateScene(stored, engine.layout); } catch { storedValid = undefined; }
+    if (storedValid && JSON.stringify(storedValid) === JSON.stringify(valid)) {
+      // The stored version: no longer a preview.
+      const unchanged = !preview && state.activeScene === name && JSON.stringify(engine.scene) === JSON.stringify(valid);
+      if (!unchanged) engine.setScene(stored!, fade);
+      preview = null;
+      state.activeScene = name;
+      await persist();
+      return { stage: engine.scene, preview: null };
+    }
+    const base = preview ? preview.base : engine.scene;
+    engine.setScene(valid, fade);
+    preview = { of: name, base };
+    return { stage: engine.scene, preview: name };
+  });
+
+  /** End a Live preview without saving: what was on stage before it comes back. */
+  server.delete('/api/stage/preview', async () => {
+    if (preview) {
+      const { base } = preview;
+      preview = null;
+      try { engine.setScene(base, { fade: fadeSeconds() }); } catch { /* keep what's showing */ }
+    }
+    return { preview: null };
+  });
 
   // ---- playlists ---------------------------------------------------------------
   const now = opts.now ?? Date.now;
@@ -350,6 +416,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     // Each entry can set its own fade in (like a WLED playlist step's transition); else the app's.
     const fade = state.playlists?.[st.name]?.entries[st.index]?.fade;
     try { engine.setScene(scene, { fade: fade ?? fadeSeconds() }); } catch { return; }
+    preview = null;
     state.activeScene = scene.name;
     await persist();
   };
@@ -417,6 +484,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
         if (s.run.kind === 'playlist' && state.playlists?.[s.run.name]) await startPlaylist(s.run.name);
         else if (s.run.kind === 'scene' && state.scenes[s.run.name]) {
           engine.setScene(state.scenes[s.run.name]!, { fade: fadeSeconds() });
+          preview = null;
           state.activeScene = s.run.name;
           delete state.playing;
         } else server.log.warn(`schedule: ${s.run.kind} "${s.run.name}" no longer exists; keeping what was on stage`);
@@ -474,6 +542,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     const staged = state.activeScene && (state.stage?.name === state.activeScene ? state.stage : state.scenes[state.activeScene]);
     if (staged) { try { next.setScene(staged); } catch { state.activeScene = null; } }
     engine = next;
+    preview = null;
     mapping.stop();
     setInWindow(undefined);
     await persist();

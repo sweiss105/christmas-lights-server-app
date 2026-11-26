@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { buildLayout, EFFECTS, paletteColors, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
-import { History, uniqueName, type SceneEditor } from './editor';
+import { History, type SceneEditor } from './editor';
+import { useDialog } from './Dialog';
+import { useSceneFlow, type SceneFlow } from './sceneFlow';
+import type { WorkingCopy } from './workingCopy';
 import { appendPoint, setPoint } from './layoutOps';
 import { LayoutPanel } from './LayoutPanel';
 import { SelectPanel } from './SelectPanel';
@@ -65,8 +68,28 @@ export function App() {
   const onProjector = useCallback((p: (() => Float32Array) | null) => setProjector(p ? { fn: p } : null), []);
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [drawing, setDrawing] = useState(false);
+  const dialog = useDialog();
+  const work = useSceneEditor(show, selected, mode, setSelected);
+  const editor = work.wc;
+  const flow = useSceneFlow(show, work, dialog.ask, setSelected);
+  type Tool = 'none' | 'select' | 'paint' | 'layout';
+  /**
+   * Change tool. Entering Select, Paint or Layout asks about unsaved scene edits first; Paint starts
+   * a new blank scene, and leaving it asks about a painting that isn't saved yet.
+   */
+  const switchTool = async (want: Tool) => {
+    const current: Tool = paintMode ? 'paint' : selectMode ? 'select' : layoutMode ? 'layout' : 'none';
+    const next = want === current ? 'none' : want;
+    if (next === current) return;
+    if (next === 'paint') { if (!(await flow.startNew('Painting'))) return; }
+    else if (next !== 'none' || (current === 'paint' && editor.neverStored)) { if (!(await flow.leave())) return; }
+    setSelectMode(next === 'select'); setPaintMode(next === 'paint'); setLayoutMode(next === 'layout'); setDrawing(false);
+    if (next === 'paint') { setView('preview'); setPhoneTab('edit'); }
+  };
+  const switchToolRef = useRef(switchTool);
+  switchToolRef.current = switchTool;
   /** Leave Select, Paint or Layout and show the scene editor again (the selection, brush and any layout draft are kept). */
-  const backToEditing = useCallback(() => { setSelectMode(false); setPaintMode(false); setLayoutMode(false); setDrawing(false); }, []);
+  const backToEditing = useCallback(() => { void switchToolRef.current('none'); }, []);
   // Esc does the same, unless it's meant for a text field or an open popup (they handle it themselves).
   useEffect(() => {
     if (!selectMode && !layoutMode && !paintMode) return;
@@ -94,7 +117,6 @@ export function App() {
   }, [paintMode, paintBrush, setPaintBrush]);
   const layoutDraft = useLayoutDraft(layout);
   const shownLayout = useLastValidLayout(layoutMode ? layoutDraft.value : layout);
-  const editor = useSceneEditor(show, selected, mode);
   const sideRight = useInset('.editor', 'right', !!layout && !!status && !phone);
   const sheetInset = useSheetInset(phone, !!layout && !!status);
   const leftInset = phone ? 0 : sideLeft;
@@ -113,7 +135,6 @@ export function App() {
   const working = editor.scene.name === selected ? editor.scene : selectedScene;
   const shownScene = view === 'stage' ? stage : working;
 
-  const sceneActions = useSceneActions(show, editor, setSelected);
 
   // Camera mapping: #map opens the filming screen (#map-demo with a simulated camera instead).
   const [mapMode, setMapModeState] = useState<'off' | 'capture' | 'review'>(() => (/^#map(-demo)?$/.test(location.hash) ? 'capture' : 'off'));
@@ -128,6 +149,7 @@ export function App() {
   const mapViews = useMappingViews(mapDemo, layoutPixels, show.reportError);
   const mapReview = useMapReview(show, mapViews, runRoles, mapMode === 'review');
   const reviewing = mapMode === 'review';
+  const openMap = async () => { if (await flow.leave()) setMapMode('capture'); };
   const openReview = useCallback(() => { setMapMode('review'); setSelectMode(false); setPaintMode(false); setLayoutMode(false); setDrawing(false); setPhoneTab('edit'); }, [setMapMode]);
 
   if (show.needsToken) return <TokenGate />;
@@ -169,25 +191,28 @@ export function App() {
 
       <TopBar show={show} mode={mode} tools={
         <div className="tools" role="toolbar" aria-label="Tools">
-          <button className={`viewbar-btn ${selectMode ? 'active' : ''}`} aria-pressed={selectMode}
-            onClick={() => { setSelectMode((m) => !m); setPaintMode(false); setLayoutMode(false); setDrawing(false); }}>Select</button>
-          <button className={`viewbar-btn ${paintMode ? 'active' : ''}`} aria-pressed={paintMode}
-            onClick={() => { setPaintMode((m) => !m); setSelectMode(false); setLayoutMode(false); setDrawing(false); setView('preview'); setPhoneTab('edit'); }}>Paint</button>
-          <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode}
-            onClick={() => { setLayoutMode((m) => !m); setSelectMode(false); setPaintMode(false); setDrawing(false); }}>Layout</button>
+          <button className={`viewbar-btn ${selectMode ? 'active' : ''}`} aria-pressed={selectMode} onClick={() => void switchTool('select')}>Select</button>
+          <button className={`viewbar-btn ${paintMode ? 'active' : ''}`} aria-pressed={paintMode} onClick={() => void switchTool('paint')}>Paint</button>
+          <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode} onClick={() => void switchTool('layout')}>Layout</button>
           <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
           <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
-          <button className={`viewbar-btn ${mapMode !== 'off' ? 'active' : ''}`} aria-pressed={mapMode !== 'off'} onClick={() => setMapMode(mapMode === 'off' ? 'capture' : 'off')}>Map</button>
+          <button className={`viewbar-btn ${mapMode !== 'off' ? 'active' : ''}`} aria-pressed={mapMode !== 'off'} onClick={() => (mapMode === 'off' ? void openMap() : setMapMode('off'))}>Map</button>
         </div>
       } mapButton={
         <>
           <button className={`icon-btn map-entry ${paintMode ? 'active' : ''}`} aria-label="Paint on the lights" aria-pressed={paintMode}
-            onClick={() => { setPaintMode((m) => !m); setSelectMode(false); setLayoutMode(false); setDrawing(false); setView('preview'); setPhoneTab('edit'); }}><BrushIcon /></button>
-          <button className="icon-btn map-entry" aria-label="Map lights with the camera" onClick={() => setMapMode('capture')}><CameraIcon /></button>
+            onClick={() => void switchTool('paint')}><BrushIcon /></button>
+          <button className="icon-btn map-entry" aria-label="Map lights with the camera" onClick={() => void openMap()}><CameraIcon /></button>
         </>
       } />
 
-      <ScenePanel show={show} mode={mode} selected={selected} actions={sceneActions} onSelect={(n) => { setSelected(n); setView('preview'); backToEditing(); }} />
+      <ScenePanel show={show} selected={selected} flow={flow} editor={editor}
+        onSelect={async (n) => {
+          // Leaving the working copy asks first (a painting that isn't saved too); Select and Layout just close.
+          if (!(await flow.open(n))) return;
+          setView('preview'); setSelectMode(false); setPaintMode(false); setLayoutMode(false); setDrawing(false);
+        }}
+        onNew={async () => { if (!(await flow.leave())) return; setPaintMode(false); setSelectMode(false); setLayoutMode(false); setDrawing(false); await flow.create(); setPhoneTab('edit'); }} />
 
       {reviewing
         ? <MapReviewPanel show={show} review={mapReview} views={mapViews} roles={runRoles} setRole={setRunRole} layoutDraft={layoutDraft}
@@ -196,10 +221,10 @@ export function App() {
         ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
             mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} onDone={backToEditing} />
         : paintMode
-        ? <PaintPanel show={show} editor={editor} paint={paint} mode={mode} onModeChange={setMode} onDone={backToEditing} />
+        ? <PaintPanel show={show} editor={editor} flow={flow} paint={paint} mode={mode} onModeChange={setMode} onDone={backToEditing} />
         : layoutMode
         ? <LayoutPanel show={show} draft={layoutDraft} onDone={backToEditing} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
-        : <EditorPanel show={show} editor={editor} mode={mode} onModeChange={setMode} onRename={(n) => sceneActions.rename(n)} />}
+        : <EditorPanel show={show} editor={editor} flow={flow} mode={mode} onModeChange={setMode} />}
 
       <div className="viewbar glass" role="toolbar" aria-label="Preview">
         {!phone && <PanelToggle side="left" shown={panels.left} onToggle={() => panels.toggle('left')} />}
@@ -232,10 +257,10 @@ export function App() {
         : selectMode
         ? <div className="caption layout" role="status">{selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over lights' : selectTool === 'lasso' ? 'draw around lights' : selectTool === 'string' ? 'tap a string to pick all its lights' : 'drag a box around lights'} · ${selection.size} selected`}</div>
         : paintMode
-        ? <div className="caption layout" role="status">{view === 'stage' ? 'Paint: switch to Preview to paint' : paint.tool === 'orbit' ? 'Paint: Move tool, drag to turn the view' : paint.tool === 'erase' ? 'Paint: drag over lights to wipe paint off' : paint.look ? 'Paint: drag over the lights' : 'Paint: choose an effect first'}{mode === 'live' && stageName === selected && status.output.enabled ? ' · showing on the porch' : ''}</div>
+        ? <div className="caption layout" role="status">{view === 'stage' ? 'Paint: switch to Preview to paint' : paint.tool === 'orbit' ? 'Paint: Move tool, drag to turn the view' : paint.tool === 'erase' ? 'Paint: drag over lights to wipe paint off' : paint.look ? 'Paint: drag over the lights' : 'Paint: choose an effect first'}{mode === 'live' && (status.stage.preview ?? stageName) === selected && status.output.enabled ? ' · showing on the porch' : ''}</div>
         : layoutMode
         ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
-        : <ViewCaption view={view} show={show} selected={selected} />}
+        : <ViewCaption view={view} show={show} selected={selected} unsaved={editor.dirty && editor.name === selected} />}
       <Health show={show} />
       {phone && (
         <div className="phone-tabs" role="toolbar" aria-label="Panels">
@@ -250,6 +275,7 @@ export function App() {
           <button className="btn ghost small" onClick={show.clearError}>Dismiss</button>
         </div>
       )}
+      {dialog.element}
     </div>
   );
 }
@@ -352,54 +378,6 @@ function useHistoryKeys(editor: History<unknown> | SceneEditor) {
   }, [editor]);
 }
 
-export interface SceneActions {
-  create: () => Promise<void>;
-  duplicate: () => Promise<void>;
-  remove: (name: string) => Promise<void>;
-  rename: (newName: string) => Promise<boolean>;
-}
-
-/** New, duplicate, rename and delete. All are Blind saves: none of them changes the porch. */
-function useSceneActions(show: Show, editor: SceneEditor, select: (n: string | null) => void): SceneActions {
-  const names = () => show.scenes.map((s) => s.name);
-  const saveNew = async (scene: SceneConfig) => {
-    const saved = await api.saveScene(scene, false);
-    show.markSceneSaved(saved);
-    select(saved.name);
-  };
-  return {
-    create: () => saveNew({
-      name: uniqueName('New scene', names()),
-      layers: [{ id: 'solid', effect: 'solid', params: { color: '#ffb46b' } }],
-    }).catch(show.reportError),
-    duplicate: async () => {
-      const src = editor.scene;
-      if (!src.name) return;
-      await saveNew({ ...structuredClone(src), name: uniqueName(src.name, names()) }).catch(show.reportError);
-    },
-    remove: async (name) => {
-      if (show.status?.stage.scene === name) { show.reportError(new Error(`“${name}” is on stage. Go to another scene first, then delete it.`)); return; }
-      if (!window.confirm(`Delete the scene “${name}”? This can’t be undone.`)) return;
-      try {
-        await api.deleteScene(name);
-        await show.refresh();
-        select(null);
-      } catch (e) { show.reportError(e); }
-    },
-    rename: async (newName) => {
-      const old = editor.scene;
-      if (names().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
-      try {
-        // One step on the server, which also updates playlists, the schedule and the stage.
-        await api.renameScene(old.name, newName);
-        await show.refresh();
-        select(newName);
-        return true;
-      } catch (e) { show.reportError(e); return false; }
-    },
-  };
-}
-
 function BrushIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
@@ -452,7 +430,7 @@ function TopBar({ show, mode, tools, mapButton }: { show: Show; mode: EditMode; 
         <span className="brand-mark" aria-hidden />
         <h1>Porch Lights</h1>
       </div>
-      {mode === 'live' && <span className="live-badge" role="status" title="Live is armed: edits to the scene on stage go to the porch immediately">LIVE</span>}
+      {mode === 'live' && <span className="live-badge" role="status" title="Live is armed: the porch shows your edits to the scene on stage (or a new scene) as you make them, without saving them">LIVE</span>}
       <StagePill show={show} />
       <div className="spacer" />
       {tools}
@@ -475,6 +453,7 @@ function StagePill({ show }: { show: Show }) {
   const { stage, output } = show.status!;
   let tone = 'ok', text = `On stage: ${stage.scene}`;
   if (!output.enabled) { tone = 'muted'; text = 'Streaming off · WLED playlist'; }
+  else if (stage.preview) { tone = 'warn'; text = `On stage: ${stage.preview} · unsaved edits`; }
   else if (stage.scene === null) { tone = 'muted'; text = 'On stage: Blackout'; }
   else if (stage.dirty) { tone = 'warn'; text = `On stage: ${stage.scene} · edited, not sent`; }
   else if (show.status!.playlist) text = `Playlist ${show.status!.playlist.name}: ${stage.scene}`;
@@ -530,15 +509,23 @@ function StreamingSwitch({ show }: { show: Show }) {
 
 // ---------------------------------------------------------------------------------------------
 
-function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; mode: EditMode; selected: string | null; actions: SceneActions; onSelect: (name: string) => void }) {
+function ScenePanel({ show, selected, flow, editor, onSelect, onNew }: {
+  show: Show; selected: string | null; flow: SceneFlow; editor: WorkingCopy;
+  onSelect: (name: string) => void; onNew: () => void;
+}) {
   const status = show.status!;
   const stageName = status.stage.scene;
   const [going, setGoing] = useState(false);
   const [tab, setTab] = useState<'scenes' | 'playlists' | 'schedule'>('scenes');
-  const isOnStage = selected !== null && selected === stageName && !status.stage.dirty;
+  const isOnStage = selected !== null && selected === stageName && !status.stage.dirty && !status.stage.preview;
+  const onPorch = (n: string | null) => n !== null && (n === stageName || n === status.stage.preview);
+  /** The working copy's scene, when it has unsaved changes (or has never been stored). */
+  const unsaved = editor.dirty ? editor.name : null;
+  const rows = editor.neverStored ? [editor.scene, ...show.scenes] : show.scenes; // a new scene shows first, so it's in sight
+  const newSelected = editor.neverStored && selected === editor.name;
 
   const go = async () => {
-    if (!selected) return;
+    if (!selected || !(await flow.confirmGo(selected))) return;
     setGoing(true);
     try { await api.go(selected); await show.refresh(); } catch (e) { show.reportError(e); }
     setGoing(false);
@@ -557,13 +544,13 @@ function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; m
       {tab === 'schedule' && <ScheduleView show={show} />}
       {tab === 'scenes' && (<>
       <div className="scene-tools">
-        <button className="btn small" onClick={() => void actions.create()}>+ New</button>
-        <button className="btn small ghost" disabled={!selected} onClick={() => void actions.duplicate()}>Duplicate</button>
-        <button className="btn small ghost danger-quiet" disabled={!selected || selected === stageName} title={selected === stageName ? 'The scene on stage can’t be deleted' : undefined}
-          onClick={() => selected && void actions.remove(selected)}>Delete</button>
+        <button className="btn small" onClick={onNew} title="Start a new, blank scene">+ New</button>
+        <button className="btn small ghost" disabled={!selected || newSelected} title="Store a copy of the stored scene" onClick={() => void flow.duplicate()}>Duplicate</button>
+        <button className="btn small ghost danger-quiet" disabled={!selected || (!newSelected && onPorch(selected))} title={onPorch(selected) ? 'The scene on stage can’t be deleted' : undefined}
+          onClick={() => selected && void flow.remove(selected)}>Delete</button>
       </div>
       <ul className="scene-list" role="listbox" aria-label="Scenes" aria-activedescendant={selected ? `scene-${selected}` : undefined}>
-        {show.scenes.map((s) => (
+        {rows.map((s) => (
           <li key={s.name}>
             <button
               id={`scene-${s.name}`}
@@ -572,9 +559,12 @@ function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; m
               className={`scene-row ${s.name === selected ? 'selected' : ''}`}
               onClick={() => onSelect(s.name)}
             >
-              <Swatch scene={s} />
+              <Swatch scene={s.name === unsaved ? editor.scene : s} />
               <span className="scene-name">{s.name}</span>
-              {s.name === stageName && <span className={`tag ${status.stage.dirty ? 'warn' : 'ok'}`}>{status.stage.dirty ? 'Edited' : 'On stage'}</span>}
+              {s.name === unsaved && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}
+              {s.name === status.stage.preview
+                ? <span className="tag warn">Live edit</span>
+                : s.name === stageName && <span className={`tag ${status.stage.dirty ? 'warn' : 'ok'}`}>{status.stage.dirty ? 'Edited' : 'On stage'}</span>}
             </button>
           </li>
         ))}
@@ -588,8 +578,8 @@ function ScenePanel({ show, mode, selected, actions, onSelect }: { show: Show; m
             {[0, 0.5, 1, 2, 3, 5].map((v) => <option key={v} value={String(v)}>{v === 0 ? 'Cut' : `${v} s`}</option>)}
           </select>
         </label>
-        <button className="btn go" disabled={!selected || going || isOnStage} onClick={go}>
-          {going ? 'Sending…' : isOnStage ? 'On stage' : <>Go <span className="go-target">{selected}</span></>}
+        <button className="btn go" disabled={!selected || going || isOnStage || newSelected} title={newSelected ? 'Save this scene first: Go plays stored scenes' : undefined} onClick={go}>
+          {going ? 'Sending…' : isOnStage ? 'On stage' : newSelected ? 'Save it to Go' : <>Go <span className="go-target">{selected}</span></>}
         </button>
       </div>
       </>)}
@@ -619,13 +609,15 @@ function Swatch({ scene }: { scene: SceneConfig }) {
 
 // ---------------------------------------------------------------------------------------------
 
-function ViewCaption({ view, show, selected }: { view: View; show: Show; selected: string | null }) {
+function ViewCaption({ view, show, selected, unsaved }: { view: View; show: Show; selected: string | null; unsaved: boolean }) {
   const status = show.status!;
   let text: string;
   if (view === 'stage') {
-    text = status.output.enabled ? `Stage: what the porch is showing (${status.stage.scene ?? 'Blackout'})` : 'Stage: streaming is off, the real porch is on its WLED playlist';
+    const on = status.stage.preview ? `unsaved edits of ${status.stage.preview}` : status.stage.scene ?? 'Blackout';
+    text = status.output.enabled ? `Stage: what the porch is showing (${on})` : 'Stage: streaming is off, the real porch is on its WLED playlist';
   } else {
-    text = `Preview: ${selected ?? 'nothing selected'}${selected && selected !== status.stage.scene ? ' (not on the porch)' : ''}`;
+    const onPorch = selected !== null && selected === (status.stage.preview ?? status.stage.scene);
+    text = `Preview: ${selected ?? 'nothing selected'}${unsaved ? ' · unsaved changes' : ''}${selected && !onPorch ? ' (not on the porch)' : ''}`;
   }
   return <div className={`caption ${view}`} role="status">{text}</div>;
 }
