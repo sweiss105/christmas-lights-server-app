@@ -338,7 +338,7 @@ function CreateBar({ show, editor, flow, mode, onMode, selected, phone, onFullSc
             )}
             <Brightness show={show} />
             <StreamingSwitch show={show} />
-            {phone && <div className="more-row"><StagePill show={show} /><BlackoutButton show={show} /></div>}
+            <div className="more-row"><StagePill show={show} />{phone && <BlackoutButton show={show} />}</div>
             <button className="menu-item" onClick={() => { close(); onFullScreen(); }}><FullScreenIcon /> Full-screen display</button>
             <button className="menu-item" onClick={() => { close(); onBackups(); }}>Backups…</button>
           </>

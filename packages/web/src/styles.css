@@ -649,7 +649,8 @@ h1, h2 { margin: 0; }
 .btn.blackout:hover:not(:disabled) { background: rgba(255, 90, 82, 0.2); }
 .scene-group { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 4px; border-radius: 12px; background: rgba(0, 0, 0, 0.22); border: 1px solid var(--edge); }
 .scene-group .btn.small { min-height: 36px; }
-.scene-picker { min-width: 0; }
+.scene-picker { min-width: 72px; display: flex; flex: 0 1 auto; }
+.scene-picker-btn { min-width: 0; }
 .scene-picker-btn {
   display: inline-flex; align-items: center; gap: 6px; min-height: 36px; max-width: 220px; padding: 0 10px; border: 0; border-radius: 8px;
   background: transparent; font-weight: 650; font-size: 0.95rem; cursor: pointer;
@@ -814,8 +815,10 @@ h1, h2 { margin: 0; }
   .topbar .pill { max-width: 230px; }
   .mode-light .mode-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
+@media (max-width: 1380px) {
+  .page-create .topbar > .pill { display: none; }
+}
 @media (max-width: 1180px) {
-  .page-create .topbar .pill { display: none; }
   .scene-picker-btn { max-width: 150px; }
   .page-switch a { padding: 0 10px; }
   .topbar .segmented.mode button { min-width: 52px; padding: 0 10px; }
