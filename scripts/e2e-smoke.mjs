@@ -58,6 +58,14 @@ try {
   await page.goto(base, { waitUntil: 'networkidle' });
   await page.waitForSelector('.scene-row', { timeout: 15000 });
   check(await page.locator('.preview-canvas canvas').count() === 1, 'the 3D preview renders');
+  const camera = page.getByRole('radiogroup', { name: 'Camera' });
+  const houseView = camera.getByRole('radio', { name: 'House', exact: true });
+  check(await houseView.isVisible(), 'the camera has a House view');
+  await houseView.click();
+  await page.waitForTimeout(500);
+  const box = await page.locator('.preview-canvas canvas').boundingBox();
+  check(await houseView.getAttribute('aria-checked') === 'true' && !!box && box.width > 300 && box.height > 300 && errors.length === 0, 'the House view is picked and the preview still renders');
+  await camera.getByRole('radio', { name: 'Angle', exact: true }).click();
   const names = await page.locator('.scene-row .scene-name').allTextContents();
   check(names.includes('Candy cane'), 'scenes are listed');
   await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Aurora' }).click();
@@ -165,6 +173,8 @@ try {
   await phone.waitForSelector('.phone-tabs', { timeout: 15000 });
   await phone.getByRole('radio', { name: 'Edit', exact: true }).click();
   check(await phone.locator('.editor').isVisible() && !(await phone.locator('.scenes').isVisible()), 'the phone layout switches between Scenes and Edit');
+  await phone.getByRole('radio', { name: 'House', exact: true }).click();
+  check(await phone.getByRole('radio', { name: 'House', exact: true }).getAttribute('aria-checked') === 'true', 'the phone has the camera views');
 
   // Map lights in demo mode (a simulated camera, nothing sent to the server's lights): one spot end to end.
   // The simulated camera waits for the decoder rather than dropping frames, so a busy machine only makes it slower
