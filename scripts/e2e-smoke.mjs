@@ -215,12 +215,15 @@ try {
   await page.keyboard.press('Escape');
   check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc leaves the Brush for the Edit panel of the saved painting');
   await rail.getByRole('button', { name: 'Brush', exact: true }).click();
+  check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })) && await page.getByRole('heading', { name: 'Snowy roof' }).isVisible(), 'Move then Brush carries on with the same painting (to turn the view mid-painting)');
+  await page.keyboard.press('e');
   await scribble();
+  const snowyBefore = JSON.stringify(await storedLayers('Snowy roof'));
   await openScene('Candy cane');
   check(await shows(page.getByRole('dialog', { name: 'Unsaved changes' })), 'leaving an unsaved painting asks');
   await answer('Discard');
-  check(await shows(page.getByRole('heading', { name: 'Candy cane' })) && (await storedLayers('Painting')) === null, 'Discard drops the painting');
-  check(await rail.getByRole('button', { name: 'Move' }).getAttribute('aria-pressed') === 'true', 'opening a stored scene from the Brush goes back to Move (the Brush paints new scenes)');
+  check(await shows(page.getByRole('heading', { name: 'Candy cane' })) && JSON.stringify(await storedLayers('Snowy roof')) === snowyBefore, 'Discard drops the unsaved strokes, the saved painting is unchanged');
+  check(await rail.getByRole('button', { name: 'Move' }).getAttribute('aria-pressed') === 'true', 'opening an ordinary scene from the Brush goes back to Move');
 
   // Hold to see the porch (Blind): the stage shows while held, by pointer or Space.
   const peekButton = page.getByRole('button', { name: 'Hold to see the porch' });

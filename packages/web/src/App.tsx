@@ -9,6 +9,7 @@ import { LayoutPanel } from './LayoutPanel';
 import { SelectPanel } from './SelectPanel';
 import { PaintPanel, usePaint } from './PaintPanel';
 import { PaintOverlay } from './PaintOverlay';
+import { isPaintingScene } from './paint';
 import { SelectionOverlay, type SelectTool } from './SelectionOverlay';
 import type { SelectMode, Selection } from './selection';
 import { EditorPanel } from './EditorPanel';
@@ -94,12 +95,14 @@ export function App() {
   const railTool: CreateTool = painting ? (paint.tool === 'erase' ? 'erase' : 'brush') : tool;
 
   /**
-   * Change Create's tool. Brush and Eraser start a new blank canvas (asking first about unsaved
-   * edits), unless the working copy already is a new scene that has never been stored.
+   * Change Create's tool. Brush and Eraser carry on with the open scene when it's a painting (new and
+   * never stored, or already holding painted layers), so the owner can flip to Move to turn the view
+   * and back without losing the canvas. On an ordinary effects scene they start a new blank canvas
+   * (asking first about unsaved edits).
    */
   const pickTool = async (want: CreateTool) => {
     const isPaint = (t: CreateTool) => t === 'brush' || t === 'erase';
-    if (isPaint(want) && !isPaint(tool) && !editor.neverStored) { if (!(await flow.startNew('Painting'))) return; }
+    if (isPaint(want) && !isPaint(tool) && !isPaintingScene(editor)) { if (!(await flow.startNew('Painting'))) return; }
     if (want === 'brush') paint.setTool('paint');
     if (want === 'erase') paint.setTool('erase');
     setDrawing(false);
@@ -177,8 +180,8 @@ export function App() {
   const toSetup = (t: SetupTool) => { setDrawing(false); navigate({ ...route, page: 'setup', setupTool: t, capture: false }, true); };
   const toPage = (p: Page) => navigate({ ...route, page: p, capture: false });
 
-  /** Open a stored scene from Create's picker: the Brush and Eraser paint only new scenes, so they hand over to Move. */
-  const openScene = async (name: string) => { if ((await flow.open(name)) && (tool === 'brush' || tool === 'erase')) setTool('move'); };
+  /** Open a stored scene from Create's picker: on the Brush or Eraser, a painting stays on them; anything else hands over to Move. */
+  const openScene = async (name: string) => { if ((await flow.open(name)) && (tool === 'brush' || tool === 'erase') && !isPaintingScene(editor)) setTool('move'); };
   const editScene = async (name: string) => { if (!(await flow.open(name))) return; setTool('move'); toPage('create'); };
   const newScene = async () => { await flow.create(); if (!editor.neverStored) return; setTool('move'); toPage('create'); };
   const fullScreen = () => {

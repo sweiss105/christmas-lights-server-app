@@ -44,6 +44,11 @@ export function dabLine(screen: Float32Array, a: [number, number], b: [number, n
 
 export const isPainted = (l: LayerConfig): boolean => l.paint !== undefined;
 
+/** A scene the Brush can carry on painting: new and never stored, or already holding painted layers. */
+export function isPaintingScene(editor: { neverStored: boolean; scene: { layers: LayerConfig[] } }): boolean {
+  return editor.neverStored || editor.scene.layers.some(isPainted);
+}
+
 /** How many lights a painted layer covers. */
 export function paintedCount(l: LayerConfig): number {
   if (l.paint === undefined) return 0;
