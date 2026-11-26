@@ -99,7 +99,13 @@ export class ApiError extends Error {
 /** This tab's id, sent with every request so the server can say who made the latest change. */
 export const CLIENT_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
+type DemoHandler = (method: string, path: string, body?: unknown) => Promise<unknown>;
+let demoHandler: DemoHandler | null = null;
+/** The public demo answers every request in the browser instead of the network (see demo/install.ts). */
+export function setDemoHandler(h: DemoHandler | null) { demoHandler = h; }
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (demoHandler) return demoHandler(method, path, body) as Promise<T>;
   const res = await fetch(path, {
     method,
     headers: { 'x-client-id': CLIENT_ID, ...(body !== undefined && { 'content-type': 'application/json' }) },
@@ -149,6 +155,7 @@ export const api = {
   house: () => call<House>('GET', '/api/house'),
   setHouse: (h: Partial<Omit<House, 'parts'>>) => call<House>('PATCH', '/api/house', h),
   uploadHousePart: async (file: Blob, name: string) => {
+    if (demoHandler) return demoHandler('POST', '/api/house/parts') as Promise<HousePart>;
     const res = await fetch(`/api/house/parts?name=${encodeURIComponent(name)}`, { method: 'POST', body: file, headers: { 'content-type': 'model/gltf-binary', 'x-client-id': CLIENT_ID }, credentials: 'same-origin' });
     if (!res.ok) throw new ApiError(res.status, ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `upload failed (${res.status})`);
     return (await res.json()) as HousePart;
@@ -178,6 +185,7 @@ export const api = {
   saveMappingView: (v: Omit<MappingView, 'id' | 'createdAt' | 'layoutPixels'>) => call<MappingView>('POST', '/api/mapping/views', v),
   /** A spot's footage copy (see mapping/cameraControl.ts); raw bytes, not JSON. */
   uploadRecording: async (blob: Blob, q: { view: string; label: string; gz: boolean }) => {
+    if (demoHandler) return demoHandler('POST', '/api/mapping/recordings') as Promise<{ saved: string; bytes: number }>;
     const res = await fetch(`/api/mapping/recordings?view=${enc(q.view)}&label=${enc(q.label)}&gz=${q.gz ? 1 : 0}`, {
       method: 'POST', headers: { 'x-client-id': CLIENT_ID, 'content-type': 'application/octet-stream' }, body: blob, credentials: 'same-origin',
     });

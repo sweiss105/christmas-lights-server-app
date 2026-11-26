@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { api, type Playlist, type Schedule } from './api';
 import type { Show } from './useShow';
 
@@ -40,9 +41,9 @@ export function PlaylistsView({ show }: { show: Show }) {
         {lists?.length === 0 && <li className="empty">No playlists yet. A playlist plays scenes in turn, e.g. Warm white for 10 minutes, then Candy cane for 5.</li>}
       </ul>
       <div className="go-area">
-        <button className="btn small" disabled={!sceneNames.length}
+        <button className="btn small" disabled={!sceneNames.length || DEMO} title={DEMO ? DEMO_TIP : undefined}
           onClick={() => setEditing({ name: uniqueName('Evening', (lists ?? []).map((l) => l.name)), entries: [{ scene: sceneNames[0]!, seconds: 600 }], loop: true })}>+ New playlist</button>
-        <p className="hint">Playlists run on the server, so they keep going with the app closed. Go on a scene stops the playlist.</p>
+        <p className="hint">{DEMO ? 'In the demo a playlist plays in this tab only.' : 'Playlists run on the server, so they keep going with the app closed.'} Go on a scene stops the playlist.</p>
       </div>
     </div>
   );
@@ -97,9 +98,9 @@ function PlaylistEditor({ show, initial, sceneNames, onDone }: { show: Show; ini
         </label>
       </div>
       <div className="row">
-        <button className="btn small" disabled={saving || !p.name.trim()} onClick={() => void save()}>{saving ? 'Saving…' : 'Save playlist'}</button>
+        <button className="btn small" disabled={DEMO || saving || !p.name.trim()} title={DEMO ? DEMO_TIP : undefined} onClick={() => void save()}>{saving ? 'Saving…' : 'Save playlist'}</button>
         <button className="btn small ghost" onClick={onDone}>Cancel</button>
-        {initial.name && <button className="btn small ghost danger-quiet" onClick={() => {
+        {initial.name && <button className="btn small ghost danger-quiet" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => {
           if (window.confirm(`Delete the playlist “${initial.name}”?`)) api.deletePlaylist(initial.name).then(onDone).catch(show.reportError);
         }}>Delete</button>}
       </div>

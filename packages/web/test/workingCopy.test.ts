@@ -16,6 +16,7 @@ vi.mock('../src/api', () => ({
 import { addLayer, setParam } from '../src/editor.js';
 import { applyStroke } from '../src/paint.js';
 import { createSceneFlow } from '../src/sceneFlow.js';
+import { DEMO_REFUSAL } from '../src/demo/flag.js';
 import type { DialogAnswer, DialogSpec } from '../src/Dialog.js';
 import { createSceneWork, type EditMode } from '../src/useSceneEditor.js';
 import type { Show } from '../src/useShow.js';
@@ -95,7 +96,7 @@ describe('WorkingCopy', () => {
 });
 
 /** A flow over a fake show, with the dialog answered from a queue. */
-function setup(opts: { mode?: EditMode; stage?: { scene: string | null; dirty: boolean; preview?: string } } = {}) {
+function setup(opts: { mode?: EditMode; stage?: { scene: string | null; dirty: boolean; preview?: string }; demo?: boolean; errors?: string[] } = {}) {
   server.scenes = new Map([['Red', red()], ['Blue', blue()]]);
   server.calls = [];
   let selected: string | null = 'Red';
@@ -104,7 +105,7 @@ function setup(opts: { mode?: EditMode; stage?: { scene: string | null; dirty: b
   const show = {
     get scenes() { return [...server.scenes.values()] as SceneConfig[]; },
     status: { stage: opts.stage ?? { scene: 'Blue', dirty: false } },
-    reportError: (e: unknown) => { throw e; },
+    reportError: (e: unknown) => { if (opts.errors) opts.errors.push((e as Error).message); else throw e; },
     markSceneSaved: () => {},
     refresh: async () => {},
   } as unknown as Show;
@@ -123,7 +124,7 @@ function setup(opts: { mode?: EditMode; stage?: { scene: string | null; dirty: b
     const [choice, value] = a.split(':');
     return { choice: choice!, value: value ?? spec.input?.value ?? '' };
   };
-  const flow = createSceneFlow(show, work, ask, select, { current: null }, () => true);
+  const flow = createSceneFlow(show, work, ask, select, { current: null }, () => true, { demo: opts.demo ?? false });
   return { wc, flow, answers, asked, show, selected: () => selected };
 }
 
@@ -328,5 +329,52 @@ describe('leaving unsaved edits', () => {
     await flow.remove('Red');
     expect(wc.open).toBe(false);
     expect(selected()).toBe(null);
+  });
+});
+
+describe('the public demo: nothing is stored', () => {
+  beforeEach(() => { server.calls = []; });
+
+  it('leaving unsaved edits offers only Discard and Cancel', async () => {
+    const { wc, flow, asked, answers } = setup({ demo: true });
+    wc.edit(setParam(wc.scene, 'l', 'color', '#00ff00'));
+    answers.push('discard');
+    expect(await flow.leave()).toBe(true);
+    expect(asked[0]!.buttons.map((b) => b.id)).toEqual(['discard', 'cancel']);
+    expect(server.calls).toEqual([]);
+  });
+
+  it('Go with unsaved edits offers the stored version or Cancel, never Save and Go', async () => {
+    const { wc, flow, asked, answers } = setup({ demo: true });
+    wc.edit(setParam(wc.scene, 'l', 'color', '#00ff00'));
+    answers.push('stored');
+    expect(await flow.confirmGo('Red')).toBe(true);
+    expect(asked[0]!.buttons.map((b) => b.id)).toEqual(['stored', 'cancel']);
+  });
+
+  it('Save, Save as new, Duplicate, Rename and Delete say saving is off and store nothing', async () => {
+    const errors: string[] = [];
+    const { wc, flow } = setup({ demo: true, errors });
+    wc.edit(setParam(wc.scene, 'l', 'color', '#00ff00'));
+    expect(await flow.save()).toBe(false);
+    expect(await flow.saveAsNew()).toBe(false);
+    await flow.duplicate();
+    expect(await flow.duplicateScene('Blue')).toBeNull();
+    expect(await flow.rename('Crimson')).toBe(false);
+    expect(await flow.renameScene('Blue', 'Navy')).toBe(false);
+    await flow.remove('Blue');
+    expect(server.calls).toEqual([]);
+    expect(errors.length).toBe(7);
+    expect(new Set(errors)).toEqual(new Set([DEMO_REFUSAL]));
+    expect(server.scenes.has('Blue')).toBe(true);
+  });
+
+  it('a new, never-stored canvas can still be renamed and thrown away', async () => {
+    const { wc, flow } = setup({ demo: true });
+    await flow.startNew('New scene');
+    expect(await flow.rename('Mine')).toBe(true);
+    expect(wc.name).toBe('Mine');
+    await flow.remove('Mine');
+    expect(server.calls).toEqual([]);
   });
 });

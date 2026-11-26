@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { DEMO } from './demo/flag';
 import { createPortal } from 'react-dom';
 import { EFFECTS, paletteColors, resolveParams, type SceneConfig } from '@xmas/engine';
 import { api } from './api';
@@ -22,11 +23,13 @@ export function ModeLight({ page, mode, compact }: { page: Page; mode: EditMode;
   );
 }
 
-const PAGES: { page: Page; label: string; hint: string }[] = [
+const ALL_PAGES: { page: Page; label: string; hint: string }[] = [
   { page: 'create', label: 'Create', hint: 'Design scenes' },
   { page: 'control', label: 'Control', hint: 'Run the porch' },
   { page: 'setup', label: 'Setup', hint: 'Strings, house, mapping, controllers, backups' },
 ];
+/** The public demo has no Setup. */
+const PAGES = DEMO ? ALL_PAGES.filter((p) => p.page !== 'setup') : ALL_PAGES;
 
 /** Create · Control · Setup. On a phone it folds into a menu showing the current page. */
 export function PageSwitch({ page, onPage, compact }: { page: Page; onPage: (p: Page) => void; compact?: boolean }) {

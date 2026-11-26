@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import { api } from './api';
+import { DEMO, DEMO_REFUSAL } from './demo/flag';
 import type { Ask } from './Dialog';
 import { uniqueName } from './editor';
 import type { SceneWork } from './useSceneEditor';
@@ -42,11 +43,16 @@ export function useSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (n: 
 
 /** The same without React, for tests. */
 export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (n: string | null) => void,
-  returnTo: { current: string | null }, confirm: (message: string) => boolean): SceneFlow {
+  returnTo: { current: string | null }, confirm: (message: string) => boolean, opts: { demo?: boolean } = {}): SceneFlow {
   const { wc } = work;
   const taken = () => show.scenes.map((s) => s.name);
+  /** The public demo stores nothing: say so, and change nothing. */
+  const demo = opts.demo ?? DEMO;
+  const refuse = () => { show.reportError(new Error(DEMO_REFUSAL)); };
+
 
   const saveAsNew = async () => {
+    if (demo) { refuse(); return false; }
     const t = taken();
     const suggested = wc.neverStored && !t.includes(wc.name) ? wc.name : uniqueName(wc.name, t);
     const r = await ask({
@@ -58,7 +64,10 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
     });
     return r.choice === 'save' ? work.save(r.value) : false;
   };
-  const save = async () => (wc.neverStored ? saveAsNew() : work.save());
+  const save = async () => {
+    if (demo) { refuse(); return false; }
+    return wc.neverStored ? saveAsNew() : work.save();
+  };
 
   const discard = async () => {
     const wasNew = wc.neverStored;
@@ -70,10 +79,11 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
     if (!wc.worthKeeping) { if (wc.neverStored) await discard(); return true; }
     const { choice } = await ask({
       title: 'Unsaved changes',
-      message: wc.neverStored ? `“${wc.name}” isn’t saved yet. Save it as a scene before you go on?` : `“${wc.name}” has changes that aren’t saved.`,
+      message: demo ? `Your changes to “${wc.name}” can’t be kept in the demo.`
+        : wc.neverStored ? `“${wc.name}” isn’t saved yet. Save it as a scene before you go on?` : `“${wc.name}” has changes that aren’t saved.`,
       buttons: [
-        ...(wc.neverStored ? [] : [{ id: 'save', label: 'Save', kind: 'primary' as const }]),
-        { id: 'saveAs', label: 'Save as new…', kind: wc.neverStored ? 'primary' as const : 'ghost' as const },
+        ...(wc.neverStored || demo ? [] : [{ id: 'save', label: 'Save', kind: 'primary' as const }]),
+        ...(demo ? [] : [{ id: 'saveAs', label: 'Save as new…', kind: wc.neverStored ? 'primary' as const : 'ghost' as const }]),
         { id: 'discard', label: 'Discard', kind: 'danger' },
         { id: 'cancel', label: 'Cancel', kind: 'ghost' },
       ],
@@ -98,6 +108,7 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
     if (taken().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
     // Unsaved edits come along under the new name, so there's nothing to ask.
     if (wc.neverStored) { wc.rename(newName); select(newName); return true; }
+    if (demo) { refuse(); return false; }
     try {
       // One step on the server, which also updates playlists, the schedule and the stage.
       await api.renameScene(wc.name, newName);
@@ -124,7 +135,11 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
       const { choice } = await ask({
         title: 'Unsaved changes',
         message: `“${name}” has changes that aren’t saved. Go puts the stored scene on the porch.`,
-        buttons: [{ id: 'save', label: 'Save and Go', kind: 'primary' }, { id: 'stored', label: 'Go with the stored version', kind: 'ghost' }, { id: 'cancel', label: 'Cancel', kind: 'ghost' }],
+        buttons: [
+          ...(demo ? [] : [{ id: 'save', label: 'Save and Go', kind: 'primary' as const }]),
+          { id: 'stored', label: 'Go with the stored version', kind: demo ? 'primary' as const : 'ghost' as const },
+          { id: 'cancel', label: 'Cancel', kind: 'ghost' },
+        ],
         cancel: 'cancel',
       });
       if (choice === 'save') return work.save();
@@ -139,6 +154,7 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
     startNew,
     create: async () => { await startNew('New scene'); },
     duplicate: async () => {
+      if (demo) { refuse(); return; }
       if (!(await leave())) return;
       const src = show.scenes.find((s) => s.name === wc.name);
       if (!src) return;
@@ -154,6 +170,7 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
         await discard();
         return;
       }
+      if (demo) { refuse(); return; }
       const st = show.status?.stage;
       if (st?.scene === name || st?.preview === name) { show.reportError(new Error(`“${name}” is on stage. Go to another scene first, then delete it.`)); return; }
       const lost = wc.name === name && wc.worthKeeping ? ' Its unsaved changes are lost too.' : '';
@@ -165,6 +182,7 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
       } catch (e) { show.reportError(e); }
     },
     duplicateScene: async (name) => {
+      if (demo) { refuse(); return null; }
       const src = show.scenes.find((s) => s.name === name);
       if (!src) return null;
       try {
@@ -176,6 +194,7 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
     renameScene: async (name, newName) => {
       if (name === newName) return true;
       if (name === wc.name) return rename(newName);
+      if (demo) { refuse(); return false; }
       if (taken().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
       try {
         await api.renameScene(name, newName);

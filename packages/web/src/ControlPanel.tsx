@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { api } from './api';
 import { filterScenes, Popover, SceneSearch, Swatch } from './chrome';
 import type { Ask } from './Dialog';
@@ -27,18 +28,21 @@ interface Props {
 }
 
 /** Control's panel: the scenes to Go, the playlists and the nightly schedule. */
+/** The library's tabs. The public demo has no nightly schedule. */
+const LIBRARY_TABS = ([['scenes', 'Scenes'], ['playlists', 'Playlists'], ['schedule', 'Schedule']] as const).filter(([v]) => !DEMO || v !== 'schedule');
+
 export function ControlPanel({ show, flow, editor, ask, tab, onTab, onEdit, onNew, onHide }: Props) {
   return (
     <aside className="editor glass control-panel" aria-label="Scenes, playlists and schedule">
       <PanelHead onHide={onHide}>
         <div className="segmented panel-tabs" role="tablist" aria-label="Library">
-          {([['scenes', 'Scenes'], ['playlists', 'Playlists'], ['schedule', 'Schedule']] as const).map(([v, label]) => (
+          {LIBRARY_TABS.map(([v, label]) => (
             <button key={v} role="tab" aria-selected={tab === v} className={tab === v ? 'active' : ''} onClick={() => onTab(v)}>{label}</button>
           ))}
         </div>
       </PanelHead>
       {tab === 'playlists' && <PlaylistsView show={show} />}
-      {tab === 'schedule' && <ScheduleView show={show} />}
+      {tab === 'schedule' && !DEMO && <ScheduleView show={show} />}
       {tab === 'scenes' && <SceneLibrary show={show} flow={flow} editor={editor} ask={ask} onEdit={onEdit} onNew={onNew} />}
     </aside>
   );
@@ -97,9 +101,9 @@ function SceneLibrary({ show, flow, editor, ask, onEdit, onNew }: Omit<Props, 't
               )}>
                 {(close) => (
                   <>
-                    <button role="menuitem" className="menu-item" onClick={() => { close(); void flow.duplicateScene(s.name); }}>Duplicate</button>
-                    <button role="menuitem" className="menu-item" onClick={() => { close(); void rename(s.name); }}>Rename…</button>
-                    <button role="menuitem" className="menu-item danger" disabled={onPorch(s.name)} title={onPorch(s.name) ? 'The scene on stage can’t be deleted' : undefined}
+                    <button role="menuitem" className="menu-item" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => { close(); void flow.duplicateScene(s.name); }}>Duplicate</button>
+                    <button role="menuitem" className="menu-item" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => { close(); void rename(s.name); }}>Rename…</button>
+                    <button role="menuitem" className="menu-item danger" disabled={DEMO || onPorch(s.name)} title={DEMO ? DEMO_TIP : onPorch(s.name) ? 'The scene on stage can’t be deleted' : undefined}
                       onClick={() => { close(); void flow.remove(s.name); }}>Delete…</button>
                   </>
                 )}

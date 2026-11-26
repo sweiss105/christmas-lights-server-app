@@ -100,6 +100,15 @@ The light at the top left says which mode you're in, with its name beside it: gr
 - **Brush and Eraser** turn the 3D view into a canvas: pick a colour or an effect (or a saved preset), then drag over the lights. An effect paints as a pattern, not a colour: it's a mask (white on black) over what's below, so the lights you've already coloured twinkle, chase or ripple in their own colours. Only the effects that make a pattern that way are offered (`packages/web/test/pattern-effects.test.ts` checks each one). Size, soft edge and strength are on the brush; the Eraser (or holding Option/Alt) wipes paint off; each stroke is one Undo step. The Brush starts a new, blank scene (every light off); **Save as new…** stores it under a name. What you paint becomes painted layers of that scene, so it follows Blind and Live like any other edit.
 - **Streaming** hands the porch between this server and its WLED playlist. **Brightness** is the master level on the porch. Both are in the top bar on Control and Setup, and in ⋯ on Create.
 
+## Public demo
+
+`https://demoxmas.weiss-audio.com` is a demo of the app that anyone can open without signing in. It has Control and Create (no Setup), all the scenes and playlists, and extra strings that exist only in the demo: spirals round the mailbox post and box, along the handrail of the cement stairs, and lights over the four front bushes (`config/demo-extras.json`, placed from the house scan). Visitors can Go, play playlists, change brightness and edit in Blind or Live, but nothing is stored: every Save, rename and delete is off, and a ribbon at the top says so.
+
+- **Nothing reaches the lights.** The demo runs in the visitor's browser: the demo build of the UI (`npm run build:web:demo`, into `packages/web/dist-demo`) answers the app's requests itself (`packages/web/src/demo/backend.ts`), so each visitor's Go and Live edits stay in their own tab.
+- **The demo server only serves files** (`packages/server/src/demo.ts`): the demo build, `/demo/show.json` and the house model. It answers GET and HEAD only. `/demo/show.json` is built from `data/show.json` whenever that changes, so new scenes appear in the demo without a deploy. It's an allow-list: the schedule (with the home's coordinates), controller addresses, Home Assistant, backups and mapping are left out.
+- **Docker:** the `xmas-demo` service in `docker-compose.yml`, on `127.0.0.1:8091` (`XMAS_DEMO_PORT`), bridge networking, `./data` mounted read-only, a read-only root filesystem and no secrets. Cloudflare's tunnel sends `demoxmas.weiss-audio.com` to it, with no Access in front.
+- **Check it in a browser:** `npm run build:web:demo && node scripts/e2e-demo.mjs [data folder]`.
+
 ## Concepts
 
 - **Controller**: one WLED box. Pixels are numbered globally, controller by controller, in config order.

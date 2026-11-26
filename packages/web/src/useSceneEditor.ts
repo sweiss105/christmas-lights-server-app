@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { DEMO } from './demo/flag';
 import type { SceneConfig } from '@xmas/engine';
 import { api } from './api';
 import { latestWins } from './latest';
@@ -75,7 +76,7 @@ export function useSceneEditor(show: Show, sceneName: string | null, mode: EditM
   // A refresh or closing the tab would lose the edits: let the browser ask.
   useEffect(() => {
     const onUnload = (e: BeforeUnloadEvent) => {
-      if (!wc.worthKeeping) return;
+      if (!wc.worthKeeping || DEMO) return; // the demo keeps nothing, so there's nothing to warn about
       e.preventDefault();
       e.returnValue = '';
     };
