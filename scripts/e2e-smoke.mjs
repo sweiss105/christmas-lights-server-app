@@ -158,7 +158,9 @@ try {
   check(await phone.locator('.editor').isVisible() && !(await phone.locator('.scenes').isVisible()), 'the phone layout switches between Scenes and Edit');
 
   // Map lights in demo mode (a simulated camera, nothing sent to the server's lights): one spot end to end.
-  // The demo decodes simulated video in real time; close the other pages so their 3D views don't starve it on a busy machine.
+  // The simulated camera waits for the decoder rather than dropping frames, so a busy machine only makes it slower
+  // (about 17 s when idle). Close the other pages so their 3D views don't add to that, then wait for the spot to end
+  // either way: found, or the error the screen shows.
   await page.close();
   await phone.close();
   const demo = await browser.newPage({ viewport: { width: 430, height: 932 } });
@@ -167,8 +169,11 @@ try {
   await demo.goto(`${base}/#map-demo`, { waitUntil: 'networkidle' });
   await demo.locator('.map-start').click();
   const before = (await (await fetch(`${base}/api/mapping/views`)).json()).length;
-  check(await demo.getByRole('heading', { name: /^Found \d+ lights$/ }).waitFor({ timeout: 60000 }).then(() => true, () => false), 'a demo spot is filmed and decoded');
-  const found = Number((await demo.getByRole('heading', { name: /^Found/ }).textContent()).match(/\d+/)[0]);
+  const foundHead = demo.getByRole('heading', { name: /^Found \d+ lights$/ });
+  const outcome = await foundHead.or(demo.getByRole('heading', { name: 'That spot didn’t work' })).waitFor({ timeout: 180000 })
+    .then(async () => (await foundHead.isVisible() ? 'found' : `failed: ${await demo.locator('.map-warn').first().textContent()}`), () => 'still running after 3 minutes');
+  check(outcome === 'found', `a demo spot is filmed and decoded${outcome === 'found' ? '' : ` (${outcome})`}`);
+  const found = outcome === 'found' ? Number((await foundHead.textContent()).match(/\d+/)[0]) : 0;
   check(found > 20, `the demo spot finds lights (${found})`);
   check((await (await fetch(`${base}/api/mapping/views`)).json()).length === before, 'demo spots stay in the page (nothing saved on the server)');
   await demo.getByRole('button', { name: 'Review', exact: true }).last().click();
