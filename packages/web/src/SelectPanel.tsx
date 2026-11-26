@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { buildLayout, type LayoutConfig } from '@xmas/engine';
 import { api } from './api';
 import { aboveHeight, combine, endsOfRuns, everyNth, invert, selectAll, sideOf, type SelectMode, type Selection } from './selection';
@@ -109,7 +110,7 @@ export function SelectTools({ show, selection, onSelection, tool, onTool, mode, 
       <div className="section-head"><h3>Groups</h3><span className="hint-inline">use in a layer's Lights</span></div>
       <div className="rule-row">
         <input className="text" placeholder="New group name" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} aria-label="New group name" />
-        <button className="btn small" disabled={busy || !selection.size || !name.trim() || name.trim() === 'all' || name.trim().startsWith('run:')}
+        <button className="btn small" disabled={DEMO || busy || !selection.size || !name.trim() || name.trim() === 'all' || name.trim().startsWith('run:')} title={DEMO ? DEMO_TIP : undefined}
           onClick={() => { const n = name.trim(); if (config.groups?.[n] && !window.confirm(`Replace the group “${n}”?`)) return; void saveGroups({ ...(config.groups ?? {}), [n]: { pixels: sorted() } }).then(() => setName('')); }}>Save</button>
       </div>
       <ul className="group-list">
@@ -118,14 +119,14 @@ export function SelectTools({ show, selection, onSelection, tool, onTool, mode, 
             <div className="group-top">
               <button className="group-name" title="Select this group's lights" onClick={() => onSelection(members(g))}>{g}</button>
               <span className="muted">{[...(layout.groups.get(g) ?? [])].filter(Boolean).length} lights</span>
-              <button className="btn small ghost" disabled={busy || !selection.size} title="Replace this group's lights with the selection"
+              <button className="btn small ghost" disabled={DEMO || busy || !selection.size} title={DEMO ? DEMO_TIP : "Replace this group's lights with the selection"}
                 onClick={() => void saveGroups({ ...config.groups, [g]: { ...cfg, runs: undefined, pixels: sorted() } })}>Update</button>
-              <button className="icon-btn small" aria-label={`Delete group ${g}`} disabled={busy}
+              <button className="icon-btn small" aria-label={`Delete group ${g}`} disabled={DEMO || busy} title={DEMO ? DEMO_TIP : undefined}
                 onClick={() => { if (window.confirm(`Delete the group “${g}”? Layers using it switch to all lights.`)) void deleteGroup(g); }}>×</button>
             </div>
             <label className="field slider compact">
               <span className="field-label" aria-hidden>Soft edge<span className="field-value">{(cfg.feather ?? 0).toFixed(2)} m</span></span>
-              <input type="range" min={0} max={3} step={0.05} defaultValue={cfg.feather ?? 0} aria-label={`Soft edge for ${g}`} style={{ ['--fill' as string]: `${((cfg.feather ?? 0) / 3) * 100}%` }}
+              <input type="range" min={0} max={3} step={0.05} defaultValue={cfg.feather ?? 0} aria-label={`Soft edge for ${g}`} disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} style={{ ['--fill' as string]: `${((cfg.feather ?? 0) / 3) * 100}%` }}
                 onPointerUp={(e) => void saveGroups({ ...config.groups, [g]: { ...cfg, feather: Number((e.target as HTMLInputElement).value) } })}
                 onKeyUp={(e) => void saveGroups({ ...config.groups, [g]: { ...cfg, feather: Number((e.target as HTMLInputElement).value) } })} />
             </label>

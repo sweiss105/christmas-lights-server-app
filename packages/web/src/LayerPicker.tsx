@@ -1,4 +1,5 @@
 import { useMemo, useRef, useEffect, useState } from 'react';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { EFFECT_CATEGORIES, EFFECTS, type EffectDef } from '@xmas/engine';
 import type { Preset } from './api';
 
@@ -74,7 +75,7 @@ export function LayerPicker({ presets, onPickEffect, onPickPreset, onDeletePrese
                 <span className="effect-name">{p.name}</span>
                 <span className="effect-desc">{EFFECTS[p.effect]?.name ?? p.effect}{p.blend && p.blend !== 'normal' ? ` · ${p.blend}` : ''}{(p.opacity ?? 1) < 1 ? ` · ${Math.round((p.opacity ?? 1) * 100)}%` : ''}</span>
               </button>
-              <button className="icon-btn small" aria-label={`Delete preset ${p.name}`} title="Delete preset"
+              <button className="icon-btn small" aria-label={`Delete preset ${p.name}`} title={DEMO ? DEMO_TIP : 'Delete preset'} disabled={DEMO}
                 onClick={() => { if (window.confirm(`Delete the preset “${p.name}”?`)) onDeletePreset(p.name); }}><CloseIcon /></button>
             </div>
           ))}

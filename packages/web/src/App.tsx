@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { DEMO } from './demo/flag';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { buildLayout, type LayoutConfig } from '@xmas/engine';
 import { api } from './api';
 import { History, type SceneEditor } from './editor';
@@ -363,9 +363,9 @@ function CreateBar({ show, editor, flow, mode, onMode, selected, phone, onFullSc
     <div className="scene-group">
       <ScenePicker show={show} name={name} unsaved={dirty} onOpen={onOpenScene} onNew={() => void flow.create()} />
       {dirty && <span className="unsaved-mark" title={editor.neverStored ? 'This new scene isn’t saved yet' : 'Changes not saved yet'}><span className="unsaved-dot" aria-hidden />{editor.neverStored ? 'Not saved' : 'Unsaved'}</span>}
-      <button className="btn small primary" disabled={!dirty} onClick={() => void flow.save()} title={editor.neverStored ? 'Store this new scene (asks for a name)' : 'Store the changes over the saved scene'}>Save</button>
+      <button className="btn small primary" disabled={!dirty || DEMO} onClick={() => void flow.save()} title={DEMO ? DEMO_TIP : editor.neverStored ? 'Store this new scene (asks for a name)' : 'Store the changes over the saved scene'}>Save</button>
       {!phone && <>
-        <button className="btn small ghost" disabled={!dirty} onClick={() => void flow.saveAsNew()} title="Store a copy under a new name; the saved scene stays as it was">Save as new…</button>
+        <button className="btn small ghost" disabled={!dirty || DEMO} onClick={() => void flow.saveAsNew()} title={DEMO ? DEMO_TIP : 'Store a copy under a new name; the saved scene stays as it was'}>Save as new…</button>
         <button className="icon-btn bar-icon" aria-label="Revert" disabled={revertDisabled} onClick={() => void flow.revert()}
           title={editor.neverStored ? 'Clear it back to a blank scene' : 'Revert: throw the changes away and go back to the saved scene'}><RevertIcon /></button>
         <button className="icon-btn bar-icon" onClick={() => editor.undo()} disabled={!editor.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
@@ -389,7 +389,7 @@ function CreateBar({ show, editor, flow, mode, onMode, selected, phone, onFullSc
           <>
             {phone && (
               <div className="more-row">
-                <button className="btn small ghost" disabled={!dirty} onClick={() => { close(); void flow.saveAsNew(); }}>Save as new…</button>
+                <button className="btn small ghost" disabled={!dirty || DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => { close(); void flow.saveAsNew(); }}>Save as new…</button>
                 <button className="btn small ghost" disabled={revertDisabled} onClick={() => { close(); void flow.revert(); }}>Revert</button>
               </div>
             )}

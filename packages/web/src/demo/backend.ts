@@ -6,8 +6,9 @@
  */
 import { buildLayout, EFFECTS, Engine, PALETTE_NAMES, playlistPosition, validateScene, type DemoSnapshot, type LayerConfig, type SceneConfig } from '@xmas/engine';
 import { ApiError } from '../api';
+import { DEMO_REFUSAL } from './flag';
 
-export const DEMO_REFUSAL = 'This is a demo: saving is turned off.';
+export { DEMO_REFUSAL };
 const UNAVAILABLE = 'The demo is unavailable right now. Try again in a minute.';
 const MAX_NAME = 80;
 

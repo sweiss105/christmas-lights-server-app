@@ -1,4 +1,5 @@
 import { cloneElement, useEffect, useId, useMemo, useState } from 'react';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { BLEND_MODES, EFFECTS, buildLayout, resolveParams, type BlendMode, type LayerConfig, type ParamSpec } from '@xmas/engine';
 import { addLayer, addLayerFromLook, applyLook, clearScene, confirmClear, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, setParams, updateLayer, type SceneEditor } from './editor';
 import type { SceneFlow } from './sceneFlow';
@@ -60,7 +61,7 @@ export function EditorPanel({ show, editor, flow, mode, onHide }: Props) {
           )}>
             {(close) => (
               <>
-                <button role="menuitem" className="menu-item" disabled={!layer} onClick={() => { close(); setNamingPreset(true); }}>Save layer as preset…<span className="menu-hint">Reuse this layer’s look in other scenes</span></button>
+                <button role="menuitem" className="menu-item" disabled={!layer || DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => { close(); setNamingPreset(true); }}>Save layer as preset…<span className="menu-hint">Reuse this layer’s look in other scenes</span></button>
                 <button role="menuitem" className="menu-item danger" disabled={scene.layers.length === 0}
                   onClick={() => { close(); if (confirmClear(scene.name, live)) { editor.edit(clearScene(scene)); setSelectedId(null); } }}>Clear scene<span className="menu-hint">Remove every layer (Undo brings them back)</span></button>
               </>

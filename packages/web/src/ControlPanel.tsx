@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { DEMO } from './demo/flag';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { api } from './api';
 import { filterScenes, Popover, SceneSearch, Swatch } from './chrome';
 import type { Ask } from './Dialog';
@@ -101,9 +101,9 @@ function SceneLibrary({ show, flow, editor, ask, onEdit, onNew }: Omit<Props, 't
               )}>
                 {(close) => (
                   <>
-                    <button role="menuitem" className="menu-item" onClick={() => { close(); void flow.duplicateScene(s.name); }}>Duplicate</button>
-                    <button role="menuitem" className="menu-item" onClick={() => { close(); void rename(s.name); }}>Rename…</button>
-                    <button role="menuitem" className="menu-item danger" disabled={onPorch(s.name)} title={onPorch(s.name) ? 'The scene on stage can’t be deleted' : undefined}
+                    <button role="menuitem" className="menu-item" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => { close(); void flow.duplicateScene(s.name); }}>Duplicate</button>
+                    <button role="menuitem" className="menu-item" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => { close(); void rename(s.name); }}>Rename…</button>
+                    <button role="menuitem" className="menu-item danger" disabled={DEMO || onPorch(s.name)} title={DEMO ? DEMO_TIP : onPorch(s.name) ? 'The scene on stage can’t be deleted' : undefined}
                       onClick={() => { close(); void flow.remove(s.name); }}>Delete…</button>
                   </>
                 )}

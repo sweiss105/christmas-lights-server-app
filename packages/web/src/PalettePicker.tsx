@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { DEMO, DEMO_TIP } from './demo/flag';
 import { builtinPaletteStops, PALETTE_NAMES, WLED_PALETTE_NAMES, paletteColors, paletteStopsFor, type PaletteStop, type SavedPalette } from '@xmas/engine';
 import { api } from './api';
 
@@ -174,10 +175,10 @@ export function PaletteControl({ label, value, params, saved, onPatch, onEnd, on
             </div>
           ) : (
             <div className="preset-bar palette-actions">
-              {!builtin && !isSaved && <button className="btn small" onClick={() => startNaming('save')}>Save as palette</button>}
+              {!builtin && !isSaved && <button className="btn small" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => startNaming('save')}>Save as palette</button>}
               {canReset && <button className="btn small ghost" onClick={reset} title={`Back to ${base}`}>Reset</button>}
-              {isSaved && <button className="btn small ghost" onClick={() => startNaming('rename')}>Rename</button>}
-              {isSaved && <button className="btn small ghost danger-quiet" onClick={() => void remove()}>Delete</button>}
+              {isSaved && <button className="btn small ghost" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => startNaming('rename')}>Rename</button>}
+              {isSaved && <button className="btn small ghost danger-quiet" disabled={DEMO} title={DEMO ? DEMO_TIP : undefined} onClick={() => void remove()}>Delete</button>}
               {builtin && <span className="hint-inline">Tap a colour to change it</span>}
             </div>
           )}
