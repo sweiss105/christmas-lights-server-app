@@ -24,3 +24,30 @@ services:
     volumes:
       - ./data:/data
     stop_grace_period: 10s
+
+  # The public demo (demoxmas.weiss-audio.com): read-only files only, see "Public demo" in README.md.
+  # It never reaches the lights: no host networking, the show folder read-only, no secrets.
+  xmas-demo:
+    build: .
+    restart: unless-stopped
+    command: ["node", "--conditions=source", "--import", "tsx", "packages/server/src/demo.ts"]
+    user: node
+    environment:
+      PORT: "8091"
+      # Inside the container; published on the host's loopback only (below), where cloudflared picks it up.
+      HOST: 0.0.0.0
+      XMAS_DEMO_DATA: /data
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:${XMAS_DEMO_PORT:-8091}:8091"
+    volumes:
+      - ./data:/data:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 0.5
+    stop_grace_period: 5s
