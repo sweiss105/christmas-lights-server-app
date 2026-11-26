@@ -60,7 +60,7 @@ const ARGS: Record<string, unknown[]> = {
 /** The api functions the demo refuses on purpose. Everything else must get a real answer. */
 const REFUSED = ['login', 'saveScene', 'renameScene', 'deleteScene', 'savePreset', 'deletePreset', 'savePalette', 'renamePalette', 'deletePalette',
   'saveLayout', 'setHouse', 'uploadHousePart', 'setHousePart', 'deleteHousePart', 'savePlaylist', 'deletePlaylist', 'saveSchedule',
-  'discoverControllers', 'backups', 'restore', 'restoreBackup', 'mappingStart', 'mappingPreview', 'mappingStop', 'mappingViews',
+  'discoverControllers', 'restore', 'restoreBackup', 'mappingStart', 'mappingPreview', 'mappingStop',
   'saveMappingView', 'uploadRecording', 'deleteMappingView', 'backupNow'];
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -168,6 +168,11 @@ describe('demo stand-in', () => {
     const b = demo();
     await refusal(b.send('PUT', '/api/scenes/A?apply=false', { layers: [] }));
     expect(await b.get('/api/scenes/A')).toEqual(red);
+  });
+
+  it('answers the reads the app makes on startup with empty lists, so no error shows', async () => {
+    expect(await demo().get('/api/mapping/views')).toEqual([]);
+    expect(await demo().get('/api/backups')).toEqual([]);
   });
 
   it('answers an unknown read with 404', async () => {

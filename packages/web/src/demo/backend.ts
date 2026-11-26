@@ -162,14 +162,14 @@ export function createDemoBackend(snapshot: DemoSnapshot, now: () => number = Da
           case 'output': return { ...output(), fps: 40 };
           case 'schedule': return { enabled: false };
           case 'controllers': return status().stream.controllers;
-          case 'backups': throw refuse();
+          case 'backups': return []; // the app loads these lists on startup: empty, not an error
         }
       }
       if (seg.length === 3) {
         if (a === 'scenes') return found(has(show.scenes, b!), 'scene');
         if (a === 'presets') return found(has(show.presets, b!), 'preset');
         if (a === 'palettes') return found(has(show.palettes, b!), 'palette');
-        if (a === 'mapping' && b === 'views') throw refuse();
+        if (a === 'mapping' && b === 'views') return [];
       }
       throw new ApiError(404, `no route ${method} ${path}`);
     }

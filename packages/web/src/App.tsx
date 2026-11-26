@@ -511,7 +511,7 @@ function PorchCard({ show, onFullScreen }: { show: Show; onFullScreen: () => voi
   const on = s.stage.preview ?? s.stage.scene;
   return (
     <section className="porch-card glass" aria-label="On the porch">
-      <span className="eyebrow">{s.output.enabled ? 'Live on the porch' : 'Streaming off: the porch runs its WLED playlist'}</span>
+      <span className="eyebrow">{DEMO ? (s.output.enabled ? 'Playing in this demo' : 'Lights off') : s.output.enabled ? 'Live on the porch' : 'Streaming off: the porch runs its WLED playlist'}</span>
       <strong className="porch-scene">{on ?? 'Blackout'}{s.stage.preview ? ' (unsaved edits)' : ''}</strong>
       {pl && (
         <span className="porch-playlist">

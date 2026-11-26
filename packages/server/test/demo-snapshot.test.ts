@@ -92,6 +92,15 @@ describe('demo snapshot', () => {
     for (const p of px) for (let k = 0; k < 3; k++) { expect(p[k]).toBeGreaterThanOrEqual(min[k]!); expect(p[k]).toBeLessThanOrEqual(max[k]!); }
   });
 
+  it('keeps the bush lights near the outside of the bush (its scan is a rounded box), not buried in it', () => {
+    const px = groupPixels(snap, 'run:bush-c');
+    const min = [-2.4, -0.1, -0.02], max = [-0.38, 1.54, 1.32];
+    // Distance in from the nearest side or the top (the bottom is the ground).
+    const depth = (p: Vec3) => Math.min(p[0] - min[0]!, max[0]! - p[0], p[2] - min[2]!, max[2]! - p[2], max[1]! - p[1]);
+    const near = px.filter((p) => depth(p) < 0.15).length;
+    expect(near / px.length).toBeGreaterThan(0.8);
+  });
+
   it('refuses extras that break the layout', () => {
     const extras = realExtras();
     extras.runs[0] = { ...extras.runs[0]!, coil: { radius: 2, pitch: 0.1 } }; // wider than any coil can be

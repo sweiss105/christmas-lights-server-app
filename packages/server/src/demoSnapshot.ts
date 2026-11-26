@@ -10,10 +10,15 @@ const NOWHERE = 'demo.invalid';
 const OUTWARD = 0.03;
 /** The lowest part of a bush's dome gets no lights (they'd sit in the mulch). */
 const LOWEST = 0.2;
+/** How boxy the dome is: 2 is an ellipsoid; the scanned bushes are rounded boxes, closer to 6. */
+const BOXY = 6;
+/** cos/sin bent towards a rounded square (a superellipse), keeping the sign. */
+const bend = (v: number) => Math.sign(v) * Math.abs(v) ** (2 / BOXY);
 
 /**
- * `count` lights over a half-ellipsoid filling the box, standing on its floor: rings from the top
- * down, alternate rings run the other way (zig-zag, like a net), pushed a little outward. Deterministic.
+ * `count` lights over a rounded dome (half a superellipsoid) filling the box, standing on its floor:
+ * rings from the top down, alternate rings run the other way (zig-zag, like a net), pushed a little
+ * outward. Deterministic.
  */
 export function domePositions(min: Vec3, max: Vec3, count: number): Vec3[] {
   if (!(count > 0)) return [];
@@ -22,7 +27,7 @@ export function domePositions(min: Vec3, max: Vec3, count: number): Vec3[] {
   const thetaMax = Math.acos(LOWEST);
   const rings = Math.max(1, Math.round(Math.sqrt(count / 2)));
   const thetas = Array.from({ length: rings }, (_, k) => (thetaMax * (k + 0.5)) / rings);
-  const weights = thetas.map((t) => Math.sin(t));
+  const weights = thetas.map((t) => bend(Math.sin(t)));
   const total = weights.reduce((a, b) => a + b, 0);
   const per = weights.map((w) => Math.floor((count * w) / total));
   // Hand out what rounding left over, widest rings first.
@@ -34,7 +39,7 @@ export function domePositions(min: Vec3, max: Vec3, count: number): Vec3[] {
     const ring: Vec3[] = [];
     for (let i = 0; i < n; i++) {
       const phi = phase + (2 * Math.PI * i) / n;
-      ring.push([cx + rx * Math.sin(theta) * Math.cos(phi), min[1] + ry * Math.cos(theta), cz + rz * Math.sin(theta) * Math.sin(phi)]);
+      ring.push([cx + rx * bend(Math.sin(theta)) * bend(Math.cos(phi)), min[1] + ry * bend(Math.cos(theta)), cz + rz * bend(Math.sin(theta)) * bend(Math.sin(phi))]);
     }
     out.push(...(k % 2 ? ring.reverse() : ring));
   });
