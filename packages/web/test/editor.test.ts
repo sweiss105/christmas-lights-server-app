@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SceneConfig } from '@xmas/engine';
-import { SceneEditor, addLayer, addLayerFromLook, applyLook, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, updateLayer, uniqueName } from '../src/editor.js';
+import { SceneEditor, addLayer, addLayerFromLook, applyLook, clearScene, duplicateLayer, lookOf, moveLayer, removeLayer, setParam, updateLayer, uniqueName } from '../src/editor.js';
 
 const scene = (): SceneConfig => ({
   name: 'Test',
@@ -135,5 +135,18 @@ describe('presets (saved layer looks)', () => {
   it('lookOf strips the layer id and visibility so it can be saved', () => {
     const l = lookOf(scene().layers[1]!);
     expect(l).toEqual({ effect: 'twinkle', blend: 'screen' });
+  });
+});
+
+describe('clearing a scene', () => {
+  it('removes every layer, keeps the scene, and undo brings the layers back', () => {
+    const ed = new SceneEditor(scene());
+    const before = ed.scene.layers.length;
+    expect(before).toBeGreaterThan(0);
+    ed.edit(clearScene(ed.scene));
+    expect(ed.scene.layers).toEqual([]);
+    expect(ed.scene.name).toBe(scene().name);
+    ed.undo();
+    expect(ed.scene.layers.length).toBe(before);
   });
 });
