@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLayout, Engine, EFFECTS, LayoutError, type LayoutConfig } from '../src/index.js';
+import { buildLayout, Engine, EFFECTS, LayoutError, playlistPosition, type LayoutConfig } from '../src/index.js';
 
 const cfg = (): LayoutConfig => ({
   controllers: [
@@ -273,5 +273,11 @@ describe('feathered groups (soft-edged selections)', () => {
   it('rejects a negative or huge feather', () => {
     expect(() => buildLayout(cfg(-1))).toThrow(/feather/);
     expect(() => buildLayout(cfg(100))).toThrow(/feather/);
+  });
+});
+
+describe('playlist timing', () => {
+  it('is exported by the engine, so the browser demo can play playlists', () => {
+    expect(playlistPosition([{ scene: 'a', seconds: 10 }, { scene: 'b', seconds: 10 }], 0, 15_000, true).index).toBe(1);
   });
 });

@@ -3,6 +3,7 @@ export * from './color.js';
 export * from './effects.js';
 export * from './scene.js';
 export * from './paint.js';
+export * from './playlist.js';
 
 /** Palette names for the editor: WLED's 72 in the controller's order, then our own that don't clash by name. */
 export { builtinPaletteStops, paletteStopsFor, PALETTE_NAMES, WLED_PALETTE_NAMES } from './wled/palettes.js';
