@@ -2,7 +2,7 @@
 
 Spatial Christmas light controller for xmas.weiss-audio.com. It renders effects in 3D space across about 2900 pixels and streams them over DDP to two GLEDOPTO GL-C-618WL (WLED) controllers.
 
-**Status:** Phase 1 (engine, DDP, discovery, REST API) is done and running on the porch. Phase 2 (web UI) is in progress: see [docs/PHASE2-PLAN.md](docs/PHASE2-PLAN.md) and [docs/PLAN.md](docs/PLAN.md).
+**Status:** Phases 1 and 2 (engine, DDP, REST API, web UI, WLED effects, show automation) are done and running on the porch, which has one controller (1101 LEDs) so far. Camera mapping (Phase 3) is built and still being tried on the real lights. Home Assistant is linked. See [docs/HANDOFF.md](docs/HANDOFF.md) for the current state and [docs/PLAN.md](docs/PLAN.md) for the phases.
 
 ## Layout
 
@@ -85,7 +85,7 @@ Scenes and playlists added, renamed or deleted in the app show up in the selects
 
 ## Web UI
 
-Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare Access, or `http://<server>:8090` at home). It's built for desktop and tablet.
+Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare Access, or `http://<server>:8090` at home). It's built for desktop and tablet, with a phone layout too.
 
 - **Blind and Live, like a lighting console.** Picking a scene previews it in 3D without touching the porch. **Go** puts it on stage. Blind edits (`?apply=false`) are saved but stay off the porch until Go; the status pill shows *edited, not sent*.
 - **Preview / Stage** switches the 3D view between what you're working on and what the porch is running. The preview uses the server's clock, so it animates in step with the real lights.
@@ -98,7 +98,7 @@ Open the server's address in a browser (xmas.weiss-audio.com behind Cloudflare A
 - **Run**: a contiguous block of pixels on one controller, placed along a polyline in metres (or measured `positions` from camera mapping later).
 - **Group**: a named set of runs and pixels. Every run is also the group `run:<id>`, and `all` always exists.
 - **Scene**: a stack of layers. Each layer is an effect plus params, an optional group mask, opacity and blend (`normal`, `add`, `multiply`, `screen`, `max`). A layer may also carry `paint`: how strongly it shows on each light (base64, one byte per global pixel, trailing zeros dropped). A painted layer shows only where it was painted.
-- **Effects** (`GET /api/effects` lists them with param specs): `solid`, `rainbow`, `sweep`, `twinkle`, `noise` (Aurora), `stripes` (Candy cane), `ripple`. They work in normalised 3D space, so a sweep crosses the whole house however the strings are wired.
+- **Effects** (`GET /api/effects` lists them with param specs): the app's own `solid`, `rainbow`, `sweep`, `twinkle`, `noise` (Aurora), `stripes` (Candy cane) and `ripple`, which work in normalised 3D space so a sweep crosses the whole house however the strings are wired; plus 175 effects ported from WLED (see `packages/engine/src/wled/PORTING.md`).
 
 ## API
 

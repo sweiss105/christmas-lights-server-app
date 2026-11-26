@@ -18,9 +18,9 @@ Rebuilt on 2026-11-23 from the planning session summary; the original file was l
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | TS effect engine, DDP streaming, WLED discovery and health, REST API, persistence, Docker | **Done** |
-| 2 | Web UI: 3D preview (shared engine in the browser), manual line tool for placing runs, scene and layer editing, first effects polish | Next. Load the apple-design skill before starting the UI |
-| 3 | Camera mapping on the phone → per-pixel `positions` on runs | Built (branch `phase-3-camera-mapping`); first night test pending |
-| 4 | Canvas stage, masks, remaining effects | |
+| 2 | Web UI: 3D preview (shared engine in the browser), manual line tool for placing runs, scene and layer editing, first effects polish | **Done** (PR #2, plus WLED effects, show automation, paint mode, palettes). Load the apple-design skill before UI work |
+| 3 | Camera mapping on the phone → per-pixel `positions` on runs | Built (PRs #4, #7); first night 2026-11-24 solved 3 of 4 close spots; next test from 3–5 m |
+| 4 | Canvas stage, masks, remaining effects | Masks and the WLED effects done in Phase 2 |
 | 5 | Touch polish (phone and tablet control) | |
 | 2027 | Music-synced timeline | |
 
@@ -28,7 +28,7 @@ Rebuilt on 2026-11-23 from the planning session summary; the original file was l
 
 ## Risks
 
-- **Camera mapping is untested on real lights.** Manual polyline placement (Phase 2) stays the fallback.
+- **Camera mapping doesn't yet give usable positions on real lights.** Manual polyline placement (Phase 2) stays the fallback.
 - **Wi-Fi throughput and jitter.** 2900 px at 40 fps is about 8 packets per frame (350 KB/s). Use 2.4 GHz with a strong signal, or the controllers' Ethernet if they have it. Watch `sendErrors` and visible stutter, and drop to 30 fps if needed.
 - **Firewall.** Outbound UDP 4048 and mDNS (UDP 5353) from the server to the controller VLAN, plus HTTP 80 for the WLED JSON API.
 - **Public exposure.** The API controls the lights. Put Cloudflare Access in front of xmas.weiss-audio.com and/or set `XMAS_API_TOKEN`.
