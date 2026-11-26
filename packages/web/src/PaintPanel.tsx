@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { EFFECTS, paletteColors, resolveParams, type LayerConfig } from '@xmas/engine';
 import { api } from './api';
-import { lookOf, removeLayer, type Look, type SceneEditor } from './editor';
+import { confirmClear, lookOf, removeLayer, type Look, type SceneEditor } from './editor';
 import { ParamControl, Slider, UndoIcon } from './EditorPanel';
 import { LayerPicker } from './LayerPicker';
 import { clearPaint, colorLook, isPainted, paintedCount, paintLayerFor, retunePaint, type Brush } from './paint';
@@ -182,11 +182,10 @@ export function PaintPanel({ show, editor, paint, mode, onModeChange, onDone }: 
         ))}
         {painted.length === 0 && <li className="empty">Nothing painted yet. Drag over the lights in the view.</li>}
       </ul>
-      {painted.length > 0 && (
-        <div className="layer-actions">
-          <button className="btn small ghost danger-quiet" onClick={() => editor.edit(clearPaint(editor.scene))}>Clear all paint</button>
-        </div>
-      )}
+      <div className="layer-actions">
+        <button className="btn small ghost danger-quiet" disabled={painted.length === 0} title="Remove everything painted (the scene's other layers stay; Undo brings the paint back)"
+          onClick={() => { if (confirmClear(editor.scene.name, live, 'painting')) editor.edit(clearPaint(editor.scene)); }}>Clear painting</button>
+      </div>
       <p className="mode-hint paint-foot">Each paint is a layer of the scene: press Done to reorder it or fine-tune it with the other layers. Hold Option/Alt to erase.</p>
     </aside>
   );

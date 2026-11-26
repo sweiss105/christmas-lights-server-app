@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import type { LayoutConfig } from '@xmas/engine';
-import { QUALITY, type RunSolve } from '@xmas/engine/mapping';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildLayout, type LayoutConfig } from '@xmas/engine';
+import { planMapping, QUALITY, type RunSolve } from '@xmas/engine/mapping';
+import { simulatedSource } from '../src/mapping/capture.js';
 import { ServerClock } from '../src/clock.js';
 import { rgbaToLum } from '../src/mapping/workerProtocol.js';
 import { applyPositions, solverViews } from '../src/mapping/review.js';
@@ -37,5 +38,51 @@ describe('mapping in the browser', () => {
   it('leaves out spots filmed against a layout of a different size', () => {
     const v = (id: string, layoutPixels: number) => ({ id, layoutPixels, width: 10, height: 10, detections: [] }) as unknown as MappingView;
     expect(solverViews([v('a', 4), v('b', 9)], 4).map((x) => x.id)).toEqual(['a']);
+  });
+
+  describe('the demo’s simulated camera on a slow computer', () => {
+    afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+    const layout: LayoutConfig = { controllers: [{ id: 'c', name: 'C', host: 'x', pixelCount: 6 }], runs: [{ id: 'a', controller: 'c', start: 0, count: 6, points: [[0, 0, 0], [5, 0, 0]] }] };
+    const view = { eye: [2.5, 0, 10] as [number, number, number], target: [2.5, 0, 0] as [number, number, number], hfovDeg: 60, width: 32, height: 18 };
+    /** A source whose timer can fire late: the clock only moves when the test says so. */
+    const setup = () => {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      const source = simulatedSource(layout, planMapping(buildLayout(layout)), view, 1000, null);
+      const times: number[] = [];
+      let open = true;
+      const stop = source.start((t) => times.push(t), () => open);
+      return { source, times, stop, setClock: (ms: number) => { now = ms; }, setOpen: (v: boolean) => { open = v; }, tick: () => vi.advanceTimersToNextTimer() };
+    };
+
+    it('stamps frames with the moment they show, not when a late timer gets to them', () => {
+      const { source, times, stop, setClock, tick } = setup();
+      expect(source.simulated).toBe(true);
+      setClock(1000); // the timer fires a whole second late
+      tick();
+      stop();
+      expect(times.length).toBeGreaterThan(25); // about 30 frames a second, a few dropped like a real camera
+      expect(times[0]).toBeLessThan(40);
+      expect(times.at(-1)).toBeLessThanOrEqual(1000);
+      for (let i = 1; i < times.length; i++) expect(times[i]! - times[i - 1]!).toBeGreaterThan(20); // spread out, not bunched
+    });
+
+    it('waits for a busy decoder instead of dropping frames', () => {
+      const { times, stop, setClock, setOpen, tick } = setup();
+      setClock(500);
+      setOpen(false);
+      tick();
+      expect(times).toEqual([]); // nothing made while the decoder is busy
+      setOpen(true);
+      tick();
+      const first = times.length;
+      setClock(1000);
+      tick();
+      stop();
+      expect(first).toBeGreaterThan(10);
+      expect(times[0]).toBeLessThan(40); // it picks up from the start, nothing skipped
+      for (let i = 1; i < times.length; i++) expect(times[i]! - times[i - 1]!).toBeLessThan(110); // at most a couple of dropped frames in a row
+    });
   });
 });

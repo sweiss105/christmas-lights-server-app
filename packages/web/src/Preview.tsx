@@ -7,10 +7,11 @@ import { runHue } from './layoutColors';
 import type { ServerClock } from './clock';
 import type { House } from './api';
 import { HouseModel } from './HouseModel';
+import { fitPoints, viewPoints, VIEW_ANGLES, type Box, type HouseBounds, type View } from './cameraFit';
 import { clusterLights, glowColors } from './glow';
 import { createGlowUniforms, type GlowUniforms } from './glowMaterial';
 
-export type CameraPreset = 'front' | 'close' | 'angle' | 'top';
+export type CameraPreset = View;
 
 interface PreviewProps {
   layout: LayoutConfig;
@@ -20,7 +21,9 @@ interface PreviewProps {
   /** Pixels covered by side panels; the view is centred in the space between them. */
   leftInset?: number;
   rightInset?: number;
-  /** Pixels covered at the bottom (the phone's bottom sheet). */
+  /** Pixels covered at the top (the top bar). */
+  topInset?: number;
+  /** Pixels covered at the bottom (the phone's bottom sheet, the view bar). */
   bottomInset?: number;
   house?: House | null;
   /** Layout mode: diagnostic run colours, point handles and drawing. */
@@ -47,12 +50,15 @@ const BACKGROUND = '#06080d';
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** The 3D preview: the porch's pixels, rendered in the browser by the same engine as the porch. */
-export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, bottomInset = 0, house, layoutEdit, selection, onProjector, diagnostic, markers }: PreviewProps) {
+export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInset = 0, topInset = 0, bottomInset = 0, house, layoutEdit, selection, onProjector, diagnostic, markers }: PreviewProps) {
   const built = useMemo(() => buildLayout(layout), [layout]);
   const diag = useMemo(() => (layoutEdit ? { config: layout, selected: layoutEdit.selected } : diagnostic ? { config: layout, selected: null } : null), [layoutEdit, diagnostic, layout]);
   const glow = useMemo(createGlowUniforms, []);
   // The lights' spill on the house: only on a shown house, and not with diagnostic colours (layout mode, mapping review).
-  const glowStrength = house?.parts.some((p) => p.visible) && !diag ? (house.glow ?? 1) : 0;
+  const showHouse = !!house?.parts.some((p) => p.visible);
+  const glowStrength = showHouse && !diag ? (house?.glow ?? 1) : 0;
+  const [houseBounds, setHouseBounds] = useState<HouseBounds | null>(null);
+  const insets = useMemo(() => ({ left: leftInset, right: rightInset, top: topInset, bottom: bottomInset }), [leftInset, rightInset, topInset, bottomInset]);
   return (
     <Canvas
       className="preview-canvas"
@@ -61,33 +67,52 @@ export function Preview({ layout, scene, clock, preset, leftInset = 0, rightInse
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       onCreated={({ gl }) => gl.setClearColor(BACKGROUND)}
     >
+      {/* Fades the endless floor into the night. A house brings its own ground and is often seen from further back, so its fog follows the camera. */}
       <fog attach="fog" args={[BACKGROUND, 18, 60]} />
+      <FogFollow enabled={showHouse} />
       {/* A house model brings its own ground (lawns, slopes, steps below porch level), which a flat floor at 0 m would hide. */}
-      {!house?.parts.some((p) => p.visible) && <Ground layout={built} />}
-      {house && <HouseModel house={house} glow={glow} onPick={layoutEdit?.drawing ? layoutEdit.onAddPoint : undefined} />}
+      {!showHouse && <Ground layout={built} />}
+      {house && <HouseModel house={house} glow={glow} onBounds={setHouseBounds} onPick={layoutEdit?.drawing ? layoutEdit.onAddPoint : undefined} />}
       <Wires layout={layout} />
       <Pixels layout={built} scene={scene} clock={clock} glow={glow} glowStrength={glowStrength} diagnostic={diag} />
       {markers && <Markers markers={markers} />}
       {layoutEdit && <LayoutTools layout={layout} edit={layoutEdit} />}
       {selection && <SelectionHighlight layout={built} selection={selection} />}
       {onProjector && <Projector layout={built} onProjector={onProjector} />}
-      <Camera layout={built} preset={preset} hidden={leftInset + rightInset} hiddenY={bottomInset} />
-      <ViewOffset left={leftInset} right={rightInset} bottom={bottomInset} />
+      <Camera layout={built} preset={preset} insets={insets} house={showHouse ? houseBounds : null} />
+      <ViewOffset {...insets} />
     </Canvas>
   );
 }
 
+/**
+ * Keeps the fog behind what the camera looks at: with a house, the whole-house view on a narrow
+ * screen can stand 50 m back, where the fixed fog would hide the house altogether.
+ */
+function FogFollow({ enabled }: { enabled: boolean }) {
+  const scene = useThree((s) => s.scene);
+  const controls = useThree((s) => s.controls) as unknown as CameraControls | null;
+  useFrame(() => {
+    const fog = scene.fog as THREE.Fog | null;
+    if (!fog) return;
+    const d = enabled && controls ? controls.distance : 0;
+    fog.near = Math.max(18, d + 10);
+    fog.far = Math.max(60, d + 60);
+  });
+  return null;
+}
+
 /** Shifts the projection so the scene centres in the area between the side panels. */
-function ViewOffset({ left, right, bottom }: { left: number; right: number; bottom: number }) {
+function ViewOffset({ left, right, top, bottom }: Insets) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
   useEffect(() => {
-    const dx = left + right < size.width * 0.8 ? (left - right) / 2 : 0;
-    const dy = bottom < size.height * 0.8 ? bottom / 2 : 0; // move the scene up into the area above the sheet
+    // dy > 0 moves the scene up, into the area above the phone's sheet or the view bar.
+    const { dx, dy } = visibleArea({ left, right, top, bottom }, size.width, size.height);
     if (dx !== 0 || dy !== 0) camera.setViewOffset(size.width, size.height, -dx, dy, size.width, size.height);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
-  }, [camera, size, left, right, bottom]);
+  }, [camera, size, left, right, top, bottom]);
   return null;
 }
 
@@ -242,48 +267,62 @@ function center(layout: Layout): Vec3 {
   return [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
 }
 
-/** Viewing angle for each preset (radians): azimuth around the vertical axis, polar from straight up. */
-const PRESETS: Record<CameraPreset, { azimuth: number; polar: number; padding: number }> = {
-  front: { azimuth: 0, polar: 1.3, padding: 0.12 },
-  close: { azimuth: 0, polar: 1.42, padding: 0 },
-  angle: { azimuth: -0.62, polar: 1.12, padding: 0.1 },
-  top: { azimuth: 0, polar: 0.02, padding: 0.12 },
-};
-
 /** Box around every placed pixel, with a little height so a flat run still frames well. */
-function layoutBox(layout: Layout): THREE.Box3 {
+function layoutBox(layout: Layout): Box {
   const { min, max } = layout.bounds;
-  const box = new THREE.Box3(new THREE.Vector3(...min), new THREE.Vector3(...max));
-  if (box.isEmpty()) box.set(new THREE.Vector3(-2, 0, -1), new THREE.Vector3(2, 2, 1));
-  box.min.y = Math.min(box.min.y, 0);
-  return box;
+  if (!(max[0] >= min[0] && max[1] >= min[1] && max[2] >= min[2])) return { min: [-2, 0, -1], max: [2, 2, 1] };
+  return { min: [min[0], Math.min(min[1], 0), min[2]], max: [max[0], max[1], max[2]] };
 }
 
-function Camera({ layout, preset, hidden: hiddenPx, hiddenY: hiddenYPx = 0 }: { layout: Layout; preset: { name: CameraPreset; nonce: number }; hidden: number; hiddenY?: number }) {
+/** Screen edges covered by panels and bars, in pixels; the view is fitted and centred in the rest. */
+export interface Insets { left: number; right: number; top: number; bottom: number }
+
+
+
+
+/**
+ * The screen area the panels leave free, in pixels, and how far its centre is from the screen's.
+ * Panels that would leave almost nothing are ignored, so a tiny window still shows the scene.
+ */
+function visibleArea(insets: Insets, width: number, height: number) {
+  const sides = insets.left + insets.right < width * 0.8;
+  const ends = insets.top + insets.bottom < height * 0.8;
+  return {
+    w: sides ? width - insets.left - insets.right : width,
+    h: ends ? height - insets.top - insets.bottom : height,
+    dx: sides ? (insets.left - insets.right) / 2 : 0,
+    dy: ends ? (insets.bottom - insets.top) / 2 : 0,
+  };
+}
+
+function Camera({ layout, preset, insets, house }: { layout: Layout; preset: { name: CameraPreset; nonce: number }; insets: Insets; house: HouseBounds | null }) {
   const ref = useRef<CameraControls>(null);
   const first = useRef(true);
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const width = useThree((s) => s.size.width);
   const height = useThree((s) => s.size.height);
+  // The house's bounds are read whenever a view is chosen, but only a new set of loaded parts
+  // re-frames by itself: moving the model in the House panel shouldn't keep yanking the view around.
+  const houseRef = useRef<HouseBounds | null>(null);
+  houseRef.current = house;
+  const houseKey = house?.key ?? '';
+  const { left, right, top, bottom } = insets;
   useEffect(() => {
     const controls = ref.current;
-    if (!controls) return;
-    const p = PRESETS[preset.name];
-    const box = layoutBox(layout);
-    const size = box.getSize(new THREE.Vector3());
-    const pad = Math.max(size.x, size.y, 1) * p.padding;
-    // Side panels hide part of the width, so fit as if the view were that much narrower.
-    const hidden = width > 0 ? Math.min(0.7, hiddenPx / width) : 0;
-    const side = pad + (size.x * hidden) / (2 * (1 - hidden));
-    // Glide between presets. Interruptible: grabbing the view mid-move takes over at once.
+    if (!controls || width <= 0 || height <= 0) return;
+    const v = VIEW_ANGLES[preset.name];
+    const points = viewPoints(preset.name, layoutBox(layout), houseRef.current);
+    const margin = houseRef.current ? v.houseMargin : v.margin;
+    // Fit into the part of the screen the panels leave free (ViewOffset centres the view there).
+    const area = visibleArea({ left, right, top, bottom }, width, height);
+    const tanY = Math.tan(((camera.fov || 40) * Math.PI) / 360);
+    const tanX = tanY * (width / height);
+    const fit = fitPoints(points, v.azimuth, v.polar, tanX * (area.w / width) * (1 - margin), tanY * (area.h / height) * (1 - margin));
+    // Glide between views. Interruptible: grabbing the view mid-move takes over at once.
     const animate = !first.current && !reducedMotion();
-    // fitToBox snaps the view to the nearest axis, so fit first (sets distance and target), then turn
-    // to the preset's angle, which keeps that distance.
-    const hiddenY = height > 0 ? Math.min(0.7, hiddenYPx / height) : 0;
-    const vert = pad + (Math.max(size.y, 1) * hiddenY) / (2 * (1 - hiddenY));
-    void controls.fitToBox(box, animate, { paddingLeft: side, paddingRight: side, paddingTop: vert, paddingBottom: vert });
-    void controls.rotateTo(p.azimuth, p.polar, animate);
+    void controls.setLookAt(...fit.position, ...fit.target, animate);
     first.current = false;
-  }, [layout, preset, hiddenPx, hiddenYPx, width, height]);
+  }, [layout, preset, houseKey, left, right, top, bottom, width, height, camera]);
   return (
     <CameraControls
       ref={ref}

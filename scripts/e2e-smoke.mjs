@@ -58,6 +58,14 @@ try {
   await page.goto(base, { waitUntil: 'networkidle' });
   await page.waitForSelector('.scene-row', { timeout: 15000 });
   check(await page.locator('.preview-canvas canvas').count() === 1, 'the 3D preview renders');
+  const camera = page.getByRole('radiogroup', { name: 'Camera' });
+  const houseView = camera.getByRole('radio', { name: 'House', exact: true });
+  check(await houseView.isVisible(), 'the camera has a House view');
+  await houseView.click();
+  await page.waitForTimeout(500);
+  const box = await page.locator('.preview-canvas canvas').boundingBox();
+  check(await houseView.getAttribute('aria-checked') === 'true' && !!box && box.width > 300 && box.height > 300 && errors.length === 0, 'the House view is picked and the preview still renders');
+  await camera.getByRole('radio', { name: 'Angle', exact: true }).click();
   const names = await page.locator('.scene-row .scene-name').allTextContents();
   check(names.includes('Candy cane'), 'scenes are listed');
   await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Aurora' }).click();
@@ -115,6 +123,15 @@ try {
   check(!(await page.getByRole('complementary', { name: 'Layout editor' }).isVisible()), 'Esc leaves Layout');
   await page.getByRole('tab', { name: /^Playlists/ }).click();
   check(await shows(page.getByRole('button', { name: '+ New playlist' })), 'the Playlists tab opens');
+  // Per-scene fades: "Fade all" sets every scene, one scene can then differ, and Save keeps both.
+  await page.getByRole('button', { name: '+ New playlist' }).click();
+  await page.getByRole('button', { name: '+ Add scene' }).click();
+  await page.getByLabel('Seconds to fade into every scene', { exact: true }).fill('2');
+  await page.getByLabel('Seconds to fade into scene 1', { exact: true }).fill('0.7');
+  await page.getByRole('button', { name: 'Save playlist' }).click();
+  await shows(page.getByRole('button', { name: '+ New playlist' }));
+  const savedFades = (await (await fetch(`${base}/api/playlists`)).json()).find((p) => p.name === 'Evening')?.entries.map((e) => e.fade);
+  check(JSON.stringify(savedFades) === '[0.7,2]', `the playlist editor saves each scene's fade (got ${JSON.stringify(savedFades)})`);
   await page.getByRole('tab', { name: /^Schedule/ }).click();
   check(await shows(page.getByText('Run the show every night')), 'the Schedule tab opens');
   await page.getByRole('button', { name: 'Backups', exact: true }).click();
@@ -156,9 +173,13 @@ try {
   await phone.waitForSelector('.phone-tabs', { timeout: 15000 });
   await phone.getByRole('radio', { name: 'Edit', exact: true }).click();
   check(await phone.locator('.editor').isVisible() && !(await phone.locator('.scenes').isVisible()), 'the phone layout switches between Scenes and Edit');
+  await phone.getByRole('radio', { name: 'House', exact: true }).click();
+  check(await phone.getByRole('radio', { name: 'House', exact: true }).getAttribute('aria-checked') === 'true', 'the phone has the camera views');
 
   // Map lights in demo mode (a simulated camera, nothing sent to the server's lights): one spot end to end.
-  // The demo decodes simulated video in real time; close the other pages so their 3D views don't starve it on a busy machine.
+  // The simulated camera waits for the decoder rather than dropping frames, so a busy machine only makes it slower
+  // (about 17 s when idle). Close the other pages so their 3D views don't add to that, then wait for the spot to end
+  // either way: found, or the error the screen shows.
   await page.close();
   await phone.close();
   const demo = await browser.newPage({ viewport: { width: 430, height: 932 } });
@@ -167,8 +188,11 @@ try {
   await demo.goto(`${base}/#map-demo`, { waitUntil: 'networkidle' });
   await demo.locator('.map-start').click();
   const before = (await (await fetch(`${base}/api/mapping/views`)).json()).length;
-  check(await demo.getByRole('heading', { name: /^Found \d+ lights$/ }).waitFor({ timeout: 60000 }).then(() => true, () => false), 'a demo spot is filmed and decoded');
-  const found = Number((await demo.getByRole('heading', { name: /^Found/ }).textContent()).match(/\d+/)[0]);
+  const foundHead = demo.getByRole('heading', { name: /^Found \d+ lights$/ });
+  const outcome = await foundHead.or(demo.getByRole('heading', { name: 'That spot didn’t work' })).waitFor({ timeout: 180000 })
+    .then(async () => (await foundHead.isVisible() ? 'found' : `failed: ${await demo.locator('.map-warn').first().textContent()}`), () => 'still running after 3 minutes');
+  check(outcome === 'found', `a demo spot is filmed and decoded${outcome === 'found' ? '' : ` (${outcome})`}`);
+  const found = outcome === 'found' ? Number((await foundHead.textContent()).match(/\d+/)[0]) : 0;
   check(found > 20, `the demo spot finds lights (${found})`);
   check((await (await fetch(`${base}/api/mapping/views`)).json()).length === before, 'demo spots stay in the page (nothing saved on the server)');
   await demo.getByRole('button', { name: 'Review', exact: true }).last().click();

@@ -121,6 +121,17 @@ export function duplicateLayer(scene: SceneConfig, id: string): SceneConfig {
   return { ...scene, layers };
 }
 
+/** Every layer gone: the scene is dark, ready to build up again (undo brings the layers back). */
+export function clearScene(scene: SceneConfig): SceneConfig {
+  return { ...scene, layers: [] };
+}
+
+/** Ask before clearing a scene's layers or its painting; in Live the porch changes straight away, so say so. */
+export function confirmClear(name: string, live: boolean, what: 'layers' | 'painting' = 'layers'): boolean {
+  const q = what === 'layers' ? `Clear every layer from “${name}”?` : `Clear everything painted on “${name}”?`;
+  return window.confirm(`${q}${live ? ' You’re in Live, so the porch changes now.' : ''} Undo brings it back.`);
+}
+
 export function removeLayer(scene: SceneConfig, id: string): SceneConfig {
   return { ...scene, layers: scene.layers.filter((l) => l.id !== id) };
 }

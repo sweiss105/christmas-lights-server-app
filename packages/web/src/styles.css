@@ -27,6 +27,12 @@
   font: 100%/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Space the side panels take from the 3D view (zero when a panel is hidden). */
+.app { --left-space: calc(var(--scenes-w) + var(--gap)); --right-space: calc(var(--editor-w) + var(--gap)); }
+.app.hide-left { --left-space: 0px; }
+.app.hide-right { --right-space: 0px; }
+.app.hide-left .scenes, .app.hide-right .editor { display: none; }
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--text); overflow: hidden; -webkit-font-smoothing: antialiased; touch-action: manipulation; }
@@ -147,7 +153,7 @@ h1, h2 { margin: 0; }
 
 /* ---- view bar, caption, health ------------------------------------------------------------ */
 .viewbar {
-  position: absolute; bottom: var(--gap); left: calc(var(--scenes-w) + var(--gap) * 2 + (100vw - var(--scenes-w) - var(--editor-w) - var(--gap) * 4) / 2); transform: translateX(-50%);
+  position: absolute; bottom: var(--gap); left: calc(var(--left-space) + var(--gap) + (100vw - var(--left-space) - var(--right-space) - var(--gap) * 2) / 2); transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 14px;
 }
 .divider { width: 1px; height: 28px; background: var(--edge-top); }
@@ -161,7 +167,7 @@ h1, h2 { margin: 0; }
 .segmented button.active { background: rgba(255, 255, 255, 0.14); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
 
 .caption {
-  position: absolute; top: calc(60px + var(--gap) * 2 + 4px); left: calc(var(--scenes-w) + var(--gap) * 2); right: calc(var(--editor-w) + var(--gap) * 2);
+  position: absolute; top: calc(60px + var(--gap) * 2 + 4px); left: calc(var(--left-space) + var(--gap)); right: calc(var(--right-space) + var(--gap));
   text-align: center; font-size: 0.82rem; font-weight: 550; color: var(--text-2); pointer-events: none;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
 }
@@ -367,7 +373,7 @@ h1, h2 { margin: 0; }
 .viewbar-btn:hover, .viewbar-btn.active { color: var(--text); background: rgba(255, 255, 255, 0.1); }
 /* Docked at the right edge of the 3D view, so the house and lights stay visible while aligning. */
 .house-panel {
-  position: absolute; top: calc(60px + var(--gap) * 2 + 32px); right: calc(var(--editor-w) + var(--gap) * 2);
+  position: absolute; top: calc(60px + var(--gap) * 2 + 32px); right: calc(var(--right-space) + var(--gap));
   width: 280px; max-height: calc(100vh - 60px - 64px - var(--gap) * 5 - 32px); overflow-y: auto;
   border-radius: var(--radius); background: var(--glass-strong); animation: pop-in 180ms ease-out; transform-origin: top right;
 }
@@ -439,7 +445,7 @@ h1, h2 { margin: 0; }
 .fade-row select { min-height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 0.85rem; }
 
 /* ---- phone: preview on top, panels as a bottom sheet with tabs ----------------------------- */
-.phone-tabs { display: none; }
+.phone-tabs, .phone-camera { display: none; }
 @media (max-width: 760px) {
   :root { --gap: 8px; --sheet-h: min(52vh, 460px); }
   .topbar { min-height: 52px; padding: 6px 6px 6px 12px; gap: 8px; }
@@ -457,6 +463,10 @@ h1, h2 { margin: 0; }
   }
   .phone-tabs .segmented { background: rgba(10, 13, 20, 0.85); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
   .phone-tabs .segmented button { min-width: 0; padding: 0 14px; }
+  /* Camera views under the top bar: five short labels share the width. */
+  .phone-camera { display: flex; justify-content: center; position: absolute; top: calc(var(--gap) + 58px); left: var(--gap); right: var(--gap); }
+  .phone-camera .segmented { flex: 1; max-width: 420px; background: rgba(10, 13, 20, 0.85); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+  .phone-camera .segmented button { flex: 1; min-width: 0; min-height: 36px; padding: 0 6px; font-size: 0.84rem; }
   .editor-head { padding-top: 10px; }
   .banner { top: 66px; }
 }
@@ -481,7 +491,18 @@ h1, h2 { margin: 0; }
 .playlist-row { display: flex; align-items: center; gap: 6px; padding-right: 4px; }
 .playlist-row .scene-row { flex-direction: column; align-items: flex-start; gap: 2px; }
 .entries { list-style: none; margin: 0; padding: 0 12px; }
-.entry-row { display: grid; grid-template-columns: 1fr 64px auto 32px 32px; gap: 6px; align-items: center; margin: 4px 0; }
+.entry-row { display: grid; grid-template-columns: minmax(0, 1fr) 60px 56px 32px 32px; gap: 6px; align-items: center; margin: 4px 0; }
+.entry-head { margin: 6px 12px 0; font-size: 0.72rem; color: var(--text-2); }
+.entry-head span:nth-child(n + 2) { text-align: right; padding-right: 8px; }
+.fade-all .num { width: 68px; min-height: 36px; }
+/* A narrow panel (the desktop sidebar) puts each scene's picker on its own line, its times below. */
+.playlist-editor { container-type: inline-size; }
+@container (max-width: 340px) {
+  .entry-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px 32px; row-gap: 4px; margin: 4px 0 10px; }
+  .entry-row select { grid-column: 1 / -1; }
+  .entry-head { margin-top: 2px; }
+  .entry-head span:first-child { display: none; }
+}
 .entry-row select, .schedule select { min-height: 40px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 0.86rem; min-width: 0; }
 .entry-row .num { width: 100%; min-height: 40px; }
 .playlist-editor .row, .schedule .row { display: flex; align-items: center; gap: 8px; padding: 8px 16px; flex-wrap: wrap; }
@@ -620,3 +641,18 @@ h1, h2 { margin: 0; }
 .painted-note { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
 @media (prefers-reduced-motion: reduce) { .paint-swatch { transition: none; } }
 .icon-btn.map-entry.active { background: var(--fill-2); border-color: var(--edge-top); }
+
+/* Show/hide the side panels (desktop and tablet). */
+.panel-toggle { width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); cursor: pointer; }
+.panel-toggle:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+.panel-toggle[aria-pressed='false'] { color: var(--text-3, rgba(255, 255, 255, 0.4)); }
+/* The bottom bar holds the preview switch, five camera views and the two panel toggles: keep it
+   between the side panels on smaller screens (an iPad is 1024–1180 px wide). */
+@media (max-width: 1280px) {
+  .viewbar { gap: 4px; padding: 4px; }
+  .viewbar .segmented button { min-width: 0; padding: 0 10px; }
+}
+@media (max-width: 1050px) {
+  .viewbar .segmented button { padding: 0 7px; font-size: 0.8rem; }
+  .viewbar .panel-toggle { width: 32px; }
+}

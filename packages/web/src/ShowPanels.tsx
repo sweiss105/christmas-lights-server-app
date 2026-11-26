@@ -52,6 +52,10 @@ function PlaylistEditor({ show, initial, sceneNames, onDone }: { show: Show; ini
   const [p, setP] = useState(initial);
   const [saving, setSaving] = useState(false);
   const setEntry = (i: number, patch: Partial<Playlist['entries'][number]>) => setP({ ...p, entries: p.entries.map((e, j) => (j === i ? { ...e, ...patch } : e)) });
+  const globalFade = show.status?.output.transition ?? 1;
+  const fades = new Set(p.entries.map((e) => e.fade));
+  const mixedFades = fades.size > 1;
+  const sameFade = mixedFades ? undefined : p.entries[0]?.fade;
   const move = (i: number, d: number) => { const e = [...p.entries]; const [x] = e.splice(i, 1); e.splice(i + d, 0, x!); setP({ ...p, entries: e }); };
   const save = async () => {
     setSaving(true);
@@ -63,6 +67,9 @@ function PlaylistEditor({ show, initial, sceneNames, onDone }: { show: Show; ini
       <label className="field"><span className="field-label">Name</span>
         <input className="text" value={p.name} maxLength={60} onChange={(e) => setP({ ...p, name: e.target.value })} />
       </label>
+      <div className="entry-row entry-head" aria-hidden="true">
+        <span>Scene</span><span>Minutes</span><span title="Seconds to fade into this scene. Blank uses the app's fade.">Fade s</span>
+      </div>
       <ol className="entries">
         {p.entries.map((e, i) => (
           <li key={i} className="entry-row">
@@ -71,7 +78,9 @@ function PlaylistEditor({ show, initial, sceneNames, onDone }: { show: Show; ini
             </select>
             <input className="num" type="number" min={1} step={1} value={Math.round(e.seconds / 60 * 10) / 10} aria-label={`Minutes for scene ${i + 1}`}
               onChange={(ev) => setEntry(i, { seconds: Math.max(1, Math.round(Number(ev.target.value) * 60)) })} />
-            <span className="muted">min</span>
+            <input className="num" type="number" min={0} max={60} step={0.1} inputMode="decimal" value={e.fade ?? ''} placeholder={String(globalFade)}
+              aria-label={`Seconds to fade into scene ${i + 1}`} title="Seconds to fade into this scene. Blank uses the app's fade."
+              onChange={(ev) => setEntry(i, { fade: parseFade(ev.target.value) })} />
             <button className="icon-btn small" disabled={i === 0} aria-label="Move up" onClick={() => move(i, -1)}>↑</button>
             <button className="icon-btn small" disabled={p.entries.length < 2} aria-label="Remove" onClick={() => setP({ ...p, entries: p.entries.filter((_, j) => j !== i) })}>−</button>
           </li>
@@ -81,6 +90,11 @@ function PlaylistEditor({ show, initial, sceneNames, onDone }: { show: Show; ini
         <button className="btn small" onClick={() => setP({ ...p, entries: [...p.entries, { scene: sceneNames[0]!, seconds: 300 }] })}>+ Add scene</button>
         <label className="check"><input type="checkbox" checked={p.loop} onChange={(e) => setP({ ...p, loop: e.target.checked })} /> Loop</label>
         <label className="check" title="Play the scenes in a random order, a new one each time round"><input type="checkbox" checked={!!p.shuffle} onChange={(e) => setP({ ...p, shuffle: e.target.checked })} /> Shuffle</label>
+        <label className="check fade-all" title="Set the fade for every scene. Blank uses the app's fade.">Fade all
+          <input className="num" type="number" min={0} max={60} step={0.1} inputMode="decimal" aria-label="Seconds to fade into every scene"
+            value={sameFade ?? ''} placeholder={sameFade === undefined && mixedFades ? 'mixed' : String(globalFade)}
+            onChange={(ev) => { const fade = parseFade(ev.target.value); setP({ ...p, entries: p.entries.map((e) => ({ ...e, fade })) }); }} /> s
+        </label>
       </div>
       <div className="row">
         <button className="btn small" disabled={saving || !p.name.trim()} onClick={() => void save()}>{saving ? 'Saving…' : 'Save playlist'}</button>
@@ -91,6 +105,13 @@ function PlaylistEditor({ show, initial, sceneNames, onDone }: { show: Show; ini
       </div>
     </div>
   );
+}
+
+/** A fade typed in the editor: blank means "use the app's fade"; otherwise seconds, kept to 0..60. */
+function parseFade(text: string): number | undefined {
+  if (text.trim() === '') return undefined;
+  const n = Number(text);
+  return Number.isFinite(n) ? Math.min(60, Math.max(0, n)) : undefined;
 }
 
 // ---- schedule -----------------------------------------------------------------------------------
