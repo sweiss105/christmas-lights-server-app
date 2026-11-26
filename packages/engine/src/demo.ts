@@ -19,7 +19,13 @@ export interface DemoSnapshot {
   house: { position: Vec3; rotation: number; scale: number; opacity: number; glow?: number; parts: DemoHousePart[] } | null;
 }
 
-/** A demo-only run: a normal run (points + coil), or lights spread over a dome filling a box (bushes). */
-export type DemoRun = Omit<RunConfig, 'controller' | 'start'> & { dome?: { min: Vec3; max: Vec3 } };
+/**
+ * A demo-only run: a normal run (points + coil); a string zig-zagging up and down a bush that fills a
+ * box; or a string coiled round a tree trunk, given as rings [x, y, z, radius] up the trunk.
+ */
+export type DemoRun = Omit<RunConfig, 'controller' | 'start'> & {
+  bush?: { min: Vec3; max: Vec3 };
+  trunk?: { rings: [number, number, number, number][]; pitch: number };
+};
 
 export interface DemoExtras { runs: DemoRun[]; groups: Record<string, GroupConfig> }

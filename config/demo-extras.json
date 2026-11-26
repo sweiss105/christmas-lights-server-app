@@ -3,15 +3,17 @@
     { "id": "mailbox-post", "name": "Mailbox post (demo)", "count": 70, "points": [[2.485, -0.27, 2.285], [2.485, 0.96, 2.285]], "coil": { "radius": 0.07, "pitch": 0.12 } },
     { "id": "mailbox-box", "name": "Mailbox (demo)", "count": 80, "points": [[2.485, 1.1, 2.14], [2.485, 1.1, 2.86]], "coil": { "radius": 0.18, "pitch": 0.08 } },
     { "id": "stair-rail", "name": "Stair handrail (demo)", "count": 250, "points": [[2.26, 0.77, 3.3], [2.26, -0.66, 6.05]], "coil": { "radius": 0.035, "pitch": 0.15 } },
-    { "id": "bush-a", "name": "Bush by the porch end (demo)", "count": 100, "dome": { "min": [-5.0, -0.1, -1.54], "max": [-3.88, 1.19, 0.14] } },
-    { "id": "bush-b", "name": "Front bush, left (demo)", "count": 100, "dome": { "min": [-3.56, -0.1, -0.02], "max": [-2.92, 1.54, 1.32] } },
-    { "id": "bush-c", "name": "Front bush, wide (demo)", "count": 200, "dome": { "min": [-2.4, -0.1, -0.02], "max": [-0.38, 1.54, 1.32] } },
-    { "id": "bush-d", "name": "Bush by the steps (demo)", "count": 100, "dome": { "min": [0.16, -0.1, -0.02], "max": [0.83, 1.44, 1.3] } }
+    { "id": "bush-a", "name": "Bush by the porch end (demo)", "count": 100, "bush": { "min": [-5.0, -0.1, -1.54], "max": [-3.88, 1.19, 0.14] } },
+    { "id": "bush-b", "name": "Front bush, left (demo)", "count": 100, "bush": { "min": [-3.56, -0.1, -0.02], "max": [-2.92, 1.54, 1.32] } },
+    { "id": "bush-c", "name": "Front bush, wide (demo)", "count": 200, "bush": { "min": [-2.4, -0.1, -0.02], "max": [-0.38, 1.54, 1.32] } },
+    { "id": "bush-d", "name": "Bush by the steps (demo)", "count": 100, "bush": { "min": [0.16, -0.1, -0.02], "max": [0.83, 1.44, 1.3] } },
+    { "id": "tree-trunk", "name": "Tree trunk (demo)", "count": 300, "trunk": { "pitch": 0.15, "rings": [[-4.827, 0.05, 2.52, 0.43], [-4.827, 0.18, 2.52, 0.4], [-4.827, 0.38, 2.52, 0.33], [-4.808, 0.63, 2.56, 0.265], [-4.823, 0.93, 2.555, 0.245], [-4.868, 1.43, 2.54, 0.24], [-4.918, 1.93, 2.52, 0.232], [-4.968, 2.93, 2.48, 0.23], [-4.99, 3.3, 2.47, 0.23]] } }
   ],
   "groups": {
     "mailbox": { "runs": ["mailbox-post", "mailbox-box"] },
     "stair-rail": { "runs": ["stair-rail"] },
     "bushes": { "runs": ["bush-a", "bush-b", "bush-c", "bush-d"] },
-    "demo-extras": { "runs": ["mailbox-post", "mailbox-box", "stair-rail", "bush-a", "bush-b", "bush-c", "bush-d"] }
+    "tree": { "runs": ["tree-trunk"] },
+    "demo-extras": { "runs": ["mailbox-post", "mailbox-box", "stair-rail", "bush-a", "bush-b", "bush-c", "bush-d", "tree-trunk"] }
   }
 }
