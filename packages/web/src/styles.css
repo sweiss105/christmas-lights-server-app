@@ -819,6 +819,18 @@ h1, h2 { margin: 0; }
   left: calc(var(--inset-l, 0px) + (100vw - var(--inset-l, 0px) - var(--inset-r, 0px)) / 2); right: auto; transform: translateX(-50%);
   padding: 7px 14px; border-radius: 999px; white-space: nowrap; background: rgba(61, 220, 132, 0.18); border: 1px solid var(--ok); color: #bff0d4; font-weight: 650; text-shadow: none;
 }
+/* Touch screens: the round hold-to-move button, at the bottom right of the 3D view (Space on a keyboard). */
+.hold-move {
+  position: absolute; z-index: 3; right: calc(var(--inset-r, 0px) + 4px); bottom: max(var(--gap), var(--hold-b, 0px));
+  width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; padding: 0; color: var(--text); cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.16); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none;
+  transition: transform 120ms ease-out, background-color 120ms ease-out;
+}
+.hold-move.on { background: var(--accent); color: var(--accent-ink); transform: scale(1.08); }
+.caption.peek-label.move-label { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.35); color: var(--text); }
+/* While held, the Move button lights up beside the tool you'll go back to. */
+.app.holding-move .rail-btn[data-tool="move"] { box-shadow: inset 0 0 0 2px var(--accent); color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .hold-move { transition: none; } .hold-move.on { transform: none; } }
 .porch-card {
   position: absolute; left: var(--gap); top: calc(60px + var(--gap) * 2); max-width: min(380px, calc(100vw - var(--inset-r, 0px) - var(--gap) * 2));
   display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--radius); z-index: 2;
@@ -901,6 +913,7 @@ h1, h2 { margin: 0; }
   .tool-pop .brush-tools .mode-hint { display: none; }
   /* The camera menu sits where the pop-out opens: it comes back when the pop-out closes. */
   .app.has-pop.page-create .view-tools { visibility: hidden; }
+  .hold-move { right: var(--gap); width: 52px; height: 52px; }
   .view-tools { bottom: calc(var(--sheet-h) + var(--gap) * 2); left: 50%; }
   .page-create .view-tools, .page-setup .view-tools { bottom: calc(var(--sheet-h) + var(--strip-h) + var(--gap) * 3); }
   .app.panel-hidden .view-tools { bottom: var(--gap); }

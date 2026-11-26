@@ -251,6 +251,22 @@ try {
   await scribble();
   await shot('paint-colour');
   check(await paintItems.count() === 1, 'a brush stroke adds a painted layer');
+  // Space held moves the view for a moment (even right after clicking Brush on the rail); letting go goes back to the Brush.
+  check(await page.locator('.hold-move').count() === 0, 'no round hold button with a mouse and keyboard');
+  await rail.getByRole('button', { name: 'Brush', exact: true }).click(); // closes its pop-out; the rail button keeps focus
+  await page.keyboard.down(' ');
+  check(await gone(page.locator('.paint-overlay')) && await page.locator('.move-label').isVisible()
+    && await rail.getByRole('button', { name: 'Brush' }).getAttribute('aria-pressed') === 'true', 'holding Space moves the view, with the Brush still picked');
+  await page.mouse.move(500, 300); await page.mouse.down(); await page.mouse.move(800, 420, { steps: 8 }); await page.mouse.up();
+  check(await paintItems.count() === 1, 'a drag while Space is held turns the view and paints nothing');
+  await page.keyboard.up(' ');
+  check(await shows(page.locator('.paint-overlay')) && await page.locator('.move-label').count() === 0 && await page.locator('.tool-pop').count() === 0,
+    'letting go of Space goes back to the Brush (Space didn’t press the focused rail button)');
+  // Put the camera back where the strokes were painted, so the Eraser below follows them.
+  await page.getByRole('button', { name: /^Camera view:/ }).click();
+  await page.getByRole('menuitemradio', { name: /^Angle/ }).click();
+  await page.waitForTimeout(1500);
+  await rail.getByRole('button', { name: 'Brush', exact: true }).click(); // its pop-out again
   await page.getByRole('radio', { name: 'Effect', exact: true }).click();
   await page.getByRole('dialog', { name: 'Add a layer' }).getByRole('option', { name: /^Rainbow/ }).first().click();
   await scribble();
@@ -427,6 +443,15 @@ try {
   check(pp.y + pp.height <= sb2.y && sb2.y - (pp.y + pp.height) < 20 && pp.height < 844 * 0.3 && await phone.locator('.editor .layer-list').isVisible(),
     'on a phone the pop-out is a compact sheet just above the strip, and the bottom sheet keeps the layers');
   if (process.env.E2E_SHOTS) await phone.screenshot({ path: join(process.env.E2E_SHOTS, 'phone-select.png') });
+  // The round hold button: Move while it's held, above the open pop-out; back to Select on release.
+  const holdBtn = phone.getByRole('button', { name: 'Hold to move the view' });
+  const hold = await holdBtn.boundingBox();
+  check(!!hold && hold.y + hold.height <= pp.y && hold.x + hold.width <= 390, 'the phone has a round hold-to-move button above the pop-out');
+  await phone.mouse.move(hold.x + hold.width / 2, hold.y + hold.height / 2);
+  await phone.mouse.down();
+  check(await gone(phone.locator('.select-overlay')) && await holdBtn.getAttribute('aria-pressed') === 'true', 'holding the round button switches to moving the view');
+  await phone.mouse.up();
+  check(await shows(phone.locator('.select-overlay')) && await holdBtn.getAttribute('aria-pressed') === 'false', 'letting go goes back to Select');
   await phone.keyboard.press('Escape');
   check(await gone(phonePop), 'Esc closes the phone’s pop-out');
   await phone.getByRole('button', { name: 'Camera view: Angle' }).click();
