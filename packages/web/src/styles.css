@@ -649,7 +649,7 @@ h1, h2 { margin: 0; }
 .btn.blackout:hover:not(:disabled) { background: rgba(255, 90, 82, 0.2); }
 .scene-group { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 4px; border-radius: 12px; background: rgba(0, 0, 0, 0.22); border: 1px solid var(--edge); }
 .scene-group .btn.small { min-height: 36px; }
-.scene-picker { min-width: 72px; display: flex; flex: 0 1 auto; }
+.scene-picker { min-width: 72px; display: flex; flex: none; }
 .scene-picker-btn { min-width: 0; }
 .scene-picker-btn {
   display: inline-flex; align-items: center; gap: 6px; min-height: 36px; max-width: 220px; padding: 0 10px; border: 0; border-radius: 8px;
@@ -701,6 +701,7 @@ h1, h2 { margin: 0; }
 .scene-search .search { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; }
 .scene-search .search:focus { outline: none; }
 .scene-search:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.scene-tools.picker-tools { display: flex; gap: 6px; padding: 0; }
 .picker-scenes { list-style: none; margin: 6px 0 0; padding: 0; overflow-y: auto; }
 .picker-scenes .scene-row { min-height: 44px; }
 .picker-scenes .empty { color: var(--text-2); font-size: 0.85rem; padding: 10px; }
@@ -751,6 +752,8 @@ h1, h2 { margin: 0; }
 
 /* Control's library: scenes with Edit, ⋯ and Go each. */
 .control-panel { overflow: hidden; }
+@media (min-width: 761px) { .control-panel { width: max(var(--editor-w), 340px); } }
+.library-row .swatch { width: 28px; }
 .control-panel .show-view { overflow-y: auto; }
 .control-panel .panel-tabs button { min-height: 40px; }
 .scene-tools { align-items: center; padding: 10px 12px 6px; }
@@ -785,7 +788,7 @@ h1, h2 { margin: 0; }
 .peek-btn.on { background: var(--ok); color: #04140a; }
 .caption.peek-label {
   left: calc(var(--inset-l, 0px) + (100vw - var(--inset-l, 0px) - var(--inset-r, 0px)) / 2); right: auto; transform: translateX(-50%);
-  padding: 7px 14px; border-radius: 999px; background: rgba(61, 220, 132, 0.18); border: 1px solid var(--ok); color: #bff0d4; font-weight: 650; text-shadow: none;
+  padding: 7px 14px; border-radius: 999px; white-space: nowrap; background: rgba(61, 220, 132, 0.18); border: 1px solid var(--ok); color: #bff0d4; font-weight: 650; text-shadow: none;
 }
 .porch-card {
   position: absolute; left: var(--gap); top: calc(60px + var(--gap) * 2); max-width: min(380px, calc(100vw - var(--inset-r, 0px) - var(--gap) * 2));
@@ -868,7 +871,8 @@ h1, h2 { margin: 0; }
   .phone-mode .btn.go-small { min-height: var(--hit); }
   .phone-mode .icon-btn.bar-icon { width: var(--hit); height: var(--hit); }
   .porch-card { top: calc(52px + var(--gap) * 2); right: var(--gap); max-width: none; padding: 8px 10px 8px 12px; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
-  .porch-card .eyebrow, .porch-full { display: none; }
+  .porch-card .eyebrow, .porch-card .porch-full { display: none; }
+  .app.phone .control-panel .scene-list { flex: none; overflow: visible; }
   .porch-scene { font-size: 1rem; flex: 1; min-width: 0; }
   .porch-playlist { flex-basis: 100%; order: 3; }
   .porch-actions { margin: 0; }
@@ -886,9 +890,8 @@ h1, h2 { margin: 0; }
 
 /* Touch screens: every control at least 44 px. */
 @media (pointer: coarse) {
-  .icon-btn.bar-icon, .icon-btn.tiny, .icon-btn.row-icon, .icon-btn.small { width: var(--hit); height: var(--hit); }
-  .scene-group .btn.small, .btn.small, .btn.go-btn, .btn.go-small, .view-btn, .menu-item, .scene-picker-btn, .page-switch a { min-height: var(--hit); }
-  .segmented button { min-height: var(--hit); }
+  .icon-btn.bar-icon, .icon-btn.tiny, .icon-btn.row-icon, .icon-btn.panel-hide { width: var(--hit); height: var(--hit); }
+  .scene-group .btn.small, .porch-actions .btn, .scene-tools .btn, .btn.go-btn, .btn.go-small, .view-btn, .menu-item, .scene-picker-btn, .page-switch a, .topbar .segmented button, .panel-tabs button { min-height: var(--hit); }
 }
 @media (prefers-reduced-motion: reduce) {
   .popover { animation: none; }

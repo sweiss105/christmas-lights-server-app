@@ -34,7 +34,7 @@ export function LayoutPanel({ show, draft, onHide, selected, onSelect, drawing, 
 
   return (
     <aside className="editor glass layout-panel" aria-label="Layout editor">
-      <PanelHead eyebrow="Strings on the house" title="Strings" onHide={onHide} actions={
+      <PanelHead eyebrow="Setup" title="Strings" onHide={onHide} actions={
         <div className="history">
           <button className="icon-btn" onClick={() => draft.undo()} disabled={!draft.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
           <button className="icon-btn" onClick={() => draft.redo()} disabled={!draft.canRedo} aria-label="Redo" title="Redo (⇧⌘Z)"><UndoIcon flip /></button>

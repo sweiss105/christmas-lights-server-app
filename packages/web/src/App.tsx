@@ -177,6 +177,8 @@ export function App() {
   const toSetup = (t: SetupTool) => { setDrawing(false); navigate({ ...route, page: 'setup', setupTool: t, capture: false }, true); };
   const toPage = (p: Page) => navigate({ ...route, page: p, capture: false });
 
+  /** Open a stored scene from Create's picker: the Brush and Eraser paint only new scenes, so they hand over to Move. */
+  const openScene = async (name: string) => { if ((await flow.open(name)) && (tool === 'brush' || tool === 'erase')) setTool('move'); };
   const editScene = async (name: string) => { if (!(await flow.open(name))) return; setTool('move'); toPage('create'); };
   const newScene = async () => { await flow.create(); if (!editor.neverStored) return; setTool('move'); toPage('create'); };
   const fullScreen = () => {
@@ -235,7 +237,8 @@ export function App() {
         <ModeLight page={page} mode={mode} compact={phone} />
         <PageSwitch page={page} onPage={toPage} compact={phone} />
         {creating
-          ? <CreateBar show={show} editor={editor} flow={flow} mode={mode} onMode={setMode} selected={selected} phone={phone} onFullScreen={fullScreen} onBackups={() => toSetup('backups')} />
+          ? <CreateBar show={show} editor={editor} flow={flow} mode={mode} onMode={setMode} selected={selected} phone={phone} onFullScreen={fullScreen} onBackups={() => toSetup('backups')}
+              onOpenScene={(n) => void openScene(n)} />
           : <ShowBar show={show} phone={phone} onFullScreen={fullScreen} onBackups={() => toSetup('backups')} />}
       </header>
 
@@ -294,17 +297,17 @@ export function App() {
 
 interface CreateBarProps {
   show: Show; editor: WorkingCopy; flow: SceneFlow; mode: EditMode; onMode: (m: EditMode) => void; selected: string | null;
-  phone: boolean; onFullScreen: () => void; onBackups: () => void;
+  phone: boolean; onFullScreen: () => void; onBackups: () => void; onOpenScene: (name: string) => void;
 }
 
 /** Create's top bar: the scene being edited and saving it, Blind/Live and Go, what's on stage, Blackout and ⋯. */
-function CreateBar({ show, editor, flow, mode, onMode, selected, phone, onFullScreen, onBackups }: CreateBarProps) {
+function CreateBar({ show, editor, flow, mode, onMode, selected, phone, onFullScreen, onBackups, onOpenScene }: CreateBarProps) {
   const dirty = editor.dirty;
   const name = editor.scene.name;
   const revertDisabled = !dirty || (editor.neverStored && editor.scene.layers.length === 0);
   const sceneGroup = (
     <div className="scene-group">
-      <ScenePicker show={show} name={name} unsaved={dirty} onOpen={(n) => void flow.open(n)} />
+      <ScenePicker show={show} name={name} unsaved={dirty} onOpen={onOpenScene} onNew={() => void flow.create()} />
       {dirty && <span className="unsaved-mark" title={editor.neverStored ? 'This new scene isn’t saved yet' : 'Changes not saved yet'}><span className="unsaved-dot" aria-hidden />{editor.neverStored ? 'Not saved' : 'Unsaved'}</span>}
       <button className="btn small primary" disabled={!dirty} onClick={() => void flow.save()} title={editor.neverStored ? 'Store this new scene (asks for a name)' : 'Store the changes over the saved scene'}>Save</button>
       {!phone && <>

@@ -314,7 +314,7 @@ export function SceneSearch({ value, onChange, count }: { value: string; onChang
 }
 
 /** The scene being edited, as a button that opens a searchable list of scenes to switch to. */
-export function ScenePicker({ show, name, unsaved, onOpen }: { show: Show; name: string; unsaved: boolean; onOpen: (n: string) => void }) {
+export function ScenePicker({ show, name, unsaved, onOpen, onNew }: { show: Show; name: string; unsaved: boolean; onOpen: (n: string) => void; onNew: () => void }) {
   const [q, setQ] = useState('');
   const rows = filterScenes(show.scenes, q);
   return (
@@ -325,7 +325,10 @@ export function ScenePicker({ show, name, unsaved, onOpen }: { show: Show; name:
     )}>
       {(close) => (
         <>
-          <SceneSearch value={q} onChange={setQ} count={show.scenes.length} />
+          <div className="scene-tools picker-tools">
+            <SceneSearch value={q} onChange={setQ} count={show.scenes.length} />
+            <button className="btn small" onClick={() => { close(); setQ(''); onNew(); }} title="Start a new, blank scene">+ New</button>
+          </div>
           <ul className="picker-scenes">
             {rows.map((s) => (
               <li key={s.name}>

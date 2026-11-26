@@ -220,7 +220,7 @@ try {
   check(await shows(page.getByRole('dialog', { name: 'Unsaved changes' })), 'leaving an unsaved painting asks');
   await answer('Discard');
   check(await shows(page.getByRole('heading', { name: 'Candy cane' })) && (await storedLayers('Painting')) === null, 'Discard drops the painting');
-  await page.keyboard.press('v');
+  check(await rail.getByRole('button', { name: 'Move' }).getAttribute('aria-pressed') === 'true', 'opening a stored scene from the Brush goes back to Move (the Brush paints new scenes)');
 
   // Hold to see the porch (Blind): the stage shows while held, by pointer or Space.
   const peekButton = page.getByRole('button', { name: 'Hold to see the porch' });
