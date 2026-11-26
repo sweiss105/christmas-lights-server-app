@@ -297,4 +297,36 @@ describe('leaving unsaved edits', () => {
     expect(wc.name).toBe('Crimson');
     expect(wc.dirty).toBe(true);
   });
+
+  it('Control can duplicate any scene without touching the working copy', async () => {
+    const { wc, flow, selected } = setup();
+    wc.edit(setParam(wc.scene, 'l', 'color', '#00ff00'));
+    expect(await flow.duplicateScene('Blue')).toBe('Blue 2');
+    expect(server.scenes.get('Blue 2')).toEqual({ ...blue(), name: 'Blue 2' });
+    expect(selected()).toBe('Red');
+    expect(wc.name).toBe('Red');
+    expect(wc.dirty).toBe(true);
+  });
+
+  it('Control can rename another scene; renaming the one being edited keeps its edits', async () => {
+    const { wc, flow } = setup();
+    wc.edit(setParam(wc.scene, 'l', 'color', '#00ff00'));
+    expect(await flow.renameScene('Blue', 'Navy')).toBe(true);
+    expect(server.calls).toEqual(['rename Blue Navy']);
+    expect(wc.name).toBe('Red');
+    expect(await flow.renameScene('Red', 'Crimson')).toBe(true);
+    expect(wc.name).toBe('Crimson');
+    expect(wc.dirty).toBe(true);
+  });
+
+  it('deleting another scene leaves the working copy open', async () => {
+    const { wc, flow, selected } = setup({ stage: { scene: null, dirty: false } });
+    await flow.remove('Blue');
+    expect(server.calls).toEqual(['delete Blue']);
+    expect(wc.name).toBe('Red');
+    expect(selected()).toBe('Red');
+    await flow.remove('Red');
+    expect(wc.open).toBe(false);
+    expect(selected()).toBe(null);
+  });
 });

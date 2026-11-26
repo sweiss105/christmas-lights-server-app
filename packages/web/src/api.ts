@@ -162,6 +162,8 @@ export const api = {
   stopPlaylist: () => call<{ playing: null }>('POST', '/api/playlists/stop'),
   schedule: () => call<ScheduleStatus | { enabled: false }>('GET', '/api/schedule'),
   saveSchedule: (s: Schedule) => call<ScheduleStatus>('PUT', '/api/schedule', s),
+  /** Look for WLED controllers on the network (mDNS), with each one's info. */
+  discoverControllers: () => call<{ host: string; port: number; mdnsName: string; info?: { name: string; version: string; ledCount: number }; error?: string }[]>('POST', '/api/controllers/discover?timeout=3000'),
   backups: () => call<{ file: string; bytes: number; modified: number }[]>('GET', '/api/backups'),
   restore: (data: unknown) => call<{ restored: true; savedFirst: string }>('POST', '/api/restore', data),
   restoreBackup: (file: string) => call<{ restored: true; savedFirst: string }>('POST', `/api/backups/${enc(file)}/restore`),

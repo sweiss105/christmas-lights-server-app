@@ -1,64 +1,76 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { buildLayout, EFFECTS, paletteColors, resolveParams, type LayoutConfig, type SceneConfig } from '@xmas/engine';
+import { buildLayout, type LayoutConfig } from '@xmas/engine';
 import { api } from './api';
 import { History, type SceneEditor } from './editor';
 import { useDialog } from './Dialog';
-import { useSceneFlow, type SceneFlow } from './sceneFlow';
-import type { WorkingCopy } from './workingCopy';
+import { useSceneFlow } from './sceneFlow';
 import { appendPoint, setPoint } from './layoutOps';
 import { LayoutPanel } from './LayoutPanel';
 import { SelectPanel } from './SelectPanel';
 import { PaintPanel, usePaint } from './PaintPanel';
 import { PaintOverlay } from './PaintOverlay';
+import { isPaintingScene } from './paint';
 import { SelectionOverlay, type SelectTool } from './SelectionOverlay';
 import type { SelectMode, Selection } from './selection';
 import { EditorPanel } from './EditorPanel';
 import { BackupPanel } from './BackupPanel';
 import { HousePanel } from './HousePanel';
-import { PlaylistsView, ScheduleView } from './ShowPanels';
-import { latestWins } from './latest';
+import { ControlPanel, type ControlTab } from './ControlPanel';
+import { HomePanel, WledPanel } from './SetupPanels';
 import { Preview, type CameraPreset } from './Preview';
 import { useSceneEditor, type EditMode } from './useSceneEditor';
-import { CameraIcon, MapScreen } from './mapping/MapScreen';
+import { MapScreen } from './mapping/MapScreen';
 import { MapReviewPanel, useMapReview } from './mapping/MapReviewPanel';
 import { useMappingViews, useRunRoles } from './mapping/review';
 import { useShow, type Show } from './useShow';
+import { parseHash, routeHash, toolForKey, typingTarget, type CreateTool, type Page, type Route, type SetupTool } from './routes';
+import {
+  BlackoutButton, Brightness, CameraMenu, Health, HoldToPeek, ModeLight, MoreMenu, PageSwitch, ScenePicker, StagePill, StreamingSwitch,
+} from './chrome';
+import { FullScreenIcon, PanelIcon, RedoIcon, RevertIcon, StopIcon, ToolIcon, UndoIcon, type ToolIconName } from './icons';
+import type { WorkingCopy } from './workingCopy';
+import type { SceneFlow } from './sceneFlow';
 
-type View = 'preview' | 'stage';
+interface RailTool<T extends string> { id: T; label: string; short: string; key?: string; icon: ToolIconName }
 
-/** Width of the house panel (matches .house-panel in styles.css); the 3D view shifts aside while it's open. */
-const HOUSE_PANEL_W = 280;
-
-const CAMERA_VIEWS: { value: CameraPreset; label: string; hint: string }[] = [
-  { value: 'house', label: 'House', hint: 'The whole house and yard' },
-  { value: 'front', label: 'Front', hint: 'The front of the house, straight on' },
-  { value: 'close', label: 'Close', hint: 'Close up on the lights' },
-  { value: 'angle', label: 'Angle', hint: 'From the front left' },
-  { value: 'top', label: 'Top', hint: 'From above' },
+const CREATE_RAIL: { title: string; tools: RailTool<CreateTool>[] }[] = [
+  { title: 'View', tools: [{ id: 'move', label: 'Move the view', short: 'Move', key: 'V', icon: 'move' }] },
+  { title: 'Light', tools: [
+    { id: 'select', label: 'Select lights', short: 'Select', key: 'M', icon: 'select' },
+    { id: 'brush', label: 'Paint brush', short: 'Brush', key: 'B', icon: 'brush' },
+    { id: 'erase', label: 'Eraser', short: 'Eraser', key: 'E', icon: 'erase' },
+  ] },
+];
+const SETUP_RAIL: { title: string; tools: RailTool<SetupTool>[] }[] = [
+  { title: 'Setup', tools: [
+    { id: 'strings', label: 'Strings on the house', short: 'Strings', icon: 'strings' },
+    { id: 'house', label: 'House model', short: 'House', icon: 'house' },
+    { id: 'map', label: 'Map lights with the camera', short: 'Map', icon: 'map' },
+    { id: 'wled', label: 'WLED controllers', short: 'WLED', icon: 'wled' },
+    { id: 'backups', label: 'Backups', short: 'Backups', icon: 'backups' },
+    { id: 'home', label: 'Home Assistant and location', short: 'Home', icon: 'home' },
+  ] },
 ];
 
 export function App() {
   const show = useShow();
   const { layout, scenes, status, stage } = show;
-
-  // The scene picked in the list. It is previewed (Blind) until Go puts it on the porch.
-  const [selected, setSelected] = useState<string | null>(null);
-  const [view, setView] = useState<View>('preview');
-  const [preset, setPreset] = useState<{ name: CameraPreset; nonce: number }>({ name: 'angle', nonce: 0 });
+  const [route, navigate] = useRoute();
+  const page = route.page;
   const phone = usePhone();
-  const [phoneTab, setPhoneTab] = useState<'scenes' | 'edit'>('scenes');
-  const panels = usePanels();
-  const sideLeft = useInset('.scenes', 'left', !!layout && !!status && !phone);
+  const panel = usePanelShown();
 
+  // The scene in the working copy (Create edits it; Control's Edit opens one).
+  const [selected, setSelected] = useState<string | null>(null);
   const stageName = status?.stage.scene ?? null;
   useEffect(() => { if (selected === null && status) setSelected(stageName ?? scenes[0]?.name ?? null); }, [selected, status, stageName, scenes]);
 
   const [mode, setMode] = useState<EditMode>('blind');
-  const [houseOpen, setHouseOpen] = useState(false);
-  const [backupsOpen, setBackupsOpen] = useState(false);
-  const [layoutMode, setLayoutMode] = useState(false);
-  const [selectMode, setSelectMode] = useState(false);
-  const [paintMode, setPaintMode] = useState(false);
+  const [tool, setTool] = useState<CreateTool>('move');
+  const [controlTab, setControlTab] = useState<ControlTab>('scenes');
+  const [preset, setPreset] = useState<{ name: CameraPreset; nonce: number }>({ name: 'angle', nonce: 0 });
+  const pickCamera = (v: CameraPreset) => setPreset((p) => ({ name: v, nonce: p.nonce + 1 }));
+  const [peek, setPeek] = useState(false);
   const paint = usePaint();
   const [selection, setSelection] = useState<Selection>(() => new Set());
   const [selectTool, setSelectTool] = useState<SelectTool>('box');
@@ -72,41 +84,71 @@ export function App() {
   const work = useSceneEditor(show, selected, mode, setSelected);
   const editor = work.wc;
   const flow = useSceneFlow(show, work, dialog.ask, setSelected);
-  type Tool = 'none' | 'select' | 'paint' | 'layout';
+
+  const creating = page === 'create';
+  const setupTool = route.setupTool;
+  const painting = creating && (tool === 'brush' || tool === 'erase');
+  const selecting = creating && tool === 'select';
+  const layoutMode = page === 'setup' && setupTool === 'strings' && !route.capture;
+  const reviewing = page === 'setup' && setupTool === 'map' && !route.capture;
+  /** The rail shows Brush or Eraser lit, following the paint panel's own tool switch. */
+  const railTool: CreateTool = painting ? (paint.tool === 'erase' ? 'erase' : 'brush') : tool;
+
   /**
-   * Change tool. Entering Select, Paint or Layout asks about unsaved scene edits first; Paint starts
-   * a new blank scene, and leaving it asks about a painting that isn't saved yet.
+   * Change Create's tool. Brush and Eraser carry on with the open scene when it's a painting (new and
+   * never stored, or already holding painted layers), so the owner can flip to Move to turn the view
+   * and back without losing the canvas. On an ordinary effects scene they start a new blank canvas
+   * (asking first about unsaved edits).
    */
-  const switchTool = async (want: Tool) => {
-    const current: Tool = paintMode ? 'paint' : selectMode ? 'select' : layoutMode ? 'layout' : 'none';
-    const next = want === current ? 'none' : want;
-    if (next === current) return;
-    if (next === 'paint') { if (!(await flow.startNew('Painting'))) return; }
-    else if (next !== 'none' || (current === 'paint' && editor.neverStored)) { if (!(await flow.leave())) return; }
-    setSelectMode(next === 'select'); setPaintMode(next === 'paint'); setLayoutMode(next === 'layout'); setDrawing(false);
-    if (next === 'paint') { setView('preview'); setPhoneTab('edit'); }
+  const pickTool = async (want: CreateTool) => {
+    const isPaint = (t: CreateTool) => t === 'brush' || t === 'erase';
+    if (isPaint(want) && !isPaint(tool) && !isPaintingScene(editor)) { if (!(await flow.startNew('Painting'))) return; }
+    if (want === 'brush') paint.setTool('paint');
+    if (want === 'erase') paint.setTool('erase');
+    setDrawing(false);
+    setTool(want);
   };
-  const switchToolRef = useRef(switchTool);
-  switchToolRef.current = switchTool;
-  /** Leave Select, Paint or Layout and show the scene editor again (the selection, brush and any layout draft are kept). */
-  const backToEditing = useCallback(() => { void switchToolRef.current('none'); }, []);
-  // Esc does the same, unless it's meant for a text field or an open popup (they handle it themselves).
+  const pickToolRef = useRef(pickTool);
+  pickToolRef.current = pickTool;
+
+  // Shortcuts on Create: V M B E pick tools, Esc goes back to Move, Space held shows the porch (Blind).
   useEffect(() => {
-    if (!selectMode && !layoutMode && !paintMode) return;
+    if (!creating) return;
+    const dialogOpen = () => !!document.querySelector('[role="dialog"][aria-modal="true"]');
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || dialogOpen()) return;
       const t = e.target as HTMLElement | null;
-      if (t?.closest('input, textarea, select, [role="dialog"]')) return;
-      if (drawing) { setDrawing(false); return; } // first Esc just stops drawing points
-      backToEditing();
+      if (typingTarget(t)) return;
+      if (e.key === 'Escape') { if (tool !== 'move') void pickToolRef.current('move'); return; }
+      if (e.key === ' ' && mode === 'blind') {
+        // Space on a focused button presses it; anywhere else it's "hold to see the porch".
+        if (t?.closest('button, a, select, [role="radio"], [role="switch"], input')) return;
+        e.preventDefault();
+        if (!e.repeat) setPeek(true);
+        return;
+      }
+      const want = toolForKey(e.key);
+      if (want && !e.repeat) { e.preventDefault(); void pickToolRef.current(want); }
     };
+    const onUp = (e: KeyboardEvent) => { if (e.key === ' ') setPeek(false); };
+    const onBlur = () => setPeek(false);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', onBlur);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onUp); window.removeEventListener('blur', onBlur); };
+  }, [creating, tool, mode]);
+  useEffect(() => { if (!creating || mode === 'live') setPeek(false); }, [creating, mode]);
+  // Esc stops drawing points in Strings.
+  useEffect(() => {
+    if (!layoutMode || !drawing) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !typingTarget(e.target as HTMLElement)) setDrawing(false); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectMode, layoutMode, paintMode, drawing, backToEditing]);
+  }, [layoutMode, drawing]);
   // [ and ] make the brush smaller and bigger while painting.
   const { brush: paintBrush, setBrush: setPaintBrush } = paint;
   useEffect(() => {
-    if (!paintMode) return;
+    if (!painting) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.key !== '[' && e.key !== ']') || e.metaKey || e.ctrlKey) return;
       if ((e.target as HTMLElement | null)?.closest('input:not([type="range"]), textarea, select')) return;
@@ -114,61 +156,68 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paintMode, paintBrush, setPaintBrush]);
+  }, [painting, paintBrush, setPaintBrush]);
+
   const layoutDraft = useLayoutDraft(layout);
   const shownLayout = useLastValidLayout(layoutMode ? layoutDraft.value : layout);
-  const sideRight = useInset('.editor', 'right', !!layout && !!status && !phone);
-  const sheetInset = useSheetInset(phone, !!layout && !!status);
-  const leftInset = phone ? 0 : sideLeft;
-  const rightInset = phone ? 0 : sideRight;
-  // The top bar (and on phones the camera bar under it) and the view bar cover the canvas too.
-  const topbarInset = useInset('.topbar', 'top', !!layout && !!status);
-  const phoneCameraInset = useInset('.phone-camera', 'top', !!layout && !!status && phone);
-  const viewbarInset = useInset('.viewbar', 'bottom', !!layout && !!status && !phone);
-  const topInset = phone ? Math.max(topbarInset, phoneCameraInset) : topbarInset;
-  const bottomInset = phone ? sheetInset : viewbarInset;
-  const pickCamera = (v: CameraPreset) => setPreset((p) => ({ name: v, nonce: p.nonce + 1 }));
-  useHistoryKeys(layoutMode ? layoutDraft : editor);
+  useHistoryKeys(creating ? editor : layoutMode ? layoutDraft : null);
 
-  const selectedScene = scenes.find((s) => s.name === selected) ?? null;
-  // The preview shows the working copy, so edits appear instantly, before the save round trip.
-  const working = editor.scene.name === selected ? editor.scene : selectedScene;
-  const shownScene = view === 'stage' ? stage : working;
+  // Space the panels and bars take from the 3D view, so it centres in what's left.
+  const ready = !!layout && !!status && !route.capture;
+  const relayout = `${page}.${tool}.${setupTool}.${panel.shown}.${phone}.${controlTab}`;
+  const railInset = useInset('.rail', 'left', ready && !phone && page !== 'watch', relayout);
+  const panelInset = useInset('.editor', 'right', ready && !phone && page !== 'watch', relayout);
+  const topInset = useInset(phone ? '.topbar, .phone-mode, .porch-card' : '.topbar, .porch-card', 'top', ready && page !== 'watch', relayout);
+  const bottomInset = useInset(phone ? '.editor, .rail, .view-tools, .panel-show' : '.view-tools, .health', 'bottom', ready && page !== 'watch', relayout);
 
-
-  // Camera mapping: #map opens the filming screen (#map-demo with a simulated camera instead).
-  const [mapMode, setMapModeState] = useState<'off' | 'capture' | 'review'>(() => (/^#map(-demo)?$/.test(location.hash) ? 'capture' : 'off'));
-  const [mapDemo] = useState(() => location.hash === '#map-demo');
-  const setMapMode = useCallback((m: 'off' | 'capture' | 'review') => {
-    setMapModeState(m);
-    const hash = m === 'capture' ? (mapDemo ? '#map-demo' : '#map') : '';
-    if (location.hash !== hash) history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
-  }, [mapDemo]);
+  // Camera mapping: the filming screen (#map, or #map-demo with a simulated camera).
+  const [mapDemo] = useState(() => route.demo);
   const layoutPixels = useMemo(() => (layout ? buildLayout(layout).count : 0), [layout]);
   const [runRoles, setRunRole] = useRunRoles();
   const mapViews = useMappingViews(mapDemo, layoutPixels, show.reportError);
-  const mapReview = useMapReview(show, mapViews, runRoles, mapMode === 'review');
-  const reviewing = mapMode === 'review';
-  const openMap = async () => { if (await flow.leave()) setMapMode('capture'); };
-  const openReview = useCallback(() => { setMapMode('review'); setSelectMode(false); setPaintMode(false); setLayoutMode(false); setDrawing(false); setPhoneTab('edit'); }, [setMapMode]);
+  const mapReview = useMapReview(show, mapViews, runRoles, reviewing);
+  const openFilming = async () => { if (await flow.leave()) navigate({ ...route, page: 'setup', setupTool: 'map', capture: true, demo: mapDemo }); };
+  const toSetup = (t: SetupTool) => { setDrawing(false); navigate({ ...route, page: 'setup', setupTool: t, capture: false }, true); };
+  const toPage = (p: Page) => navigate({ ...route, page: p, capture: false });
+
+  /** Open a stored scene from Create's picker: on the Brush or Eraser, a painting stays on them; anything else hands over to Move. */
+  const openScene = async (name: string) => { if ((await flow.open(name)) && (tool === 'brush' || tool === 'erase') && !isPaintingScene(editor)) setTool('move'); };
+  const editScene = async (name: string) => { if (!(await flow.open(name))) return; setTool('move'); toPage('create'); };
+  const newScene = async () => { await flow.create(); if (!editor.neverStored) return; setTool('move'); toPage('create'); };
+  const fullScreen = () => {
+    document.documentElement.requestFullscreen?.().catch(() => { /* not allowed here: the page still fills the window */ });
+    toPage('watch');
+  };
+  useEffect(() => { if (page !== 'watch' && document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); }, [page]);
 
   if (show.needsToken) return <TokenGate />;
   if (!layout || !status || !shownLayout) return <Loading show={show} />;
   // Filming: only the camera screen (no 3D view rendering behind it, which would cost battery and frames).
-  if (mapMode === 'capture') {
+  if (route.capture) {
     return (
       <div className="app">
-        <MapScreen show={show} demo={mapDemo} views={mapViews} roles={runRoles} onClose={() => setMapMode('off')} onReview={openReview} />
+        <MapScreen show={show} demo={mapDemo} views={mapViews} roles={runRoles} onClose={() => toSetup('map')} onReview={() => toSetup('map')} />
         {show.error && <div className="toast" role="alert"><span>{show.error}</span><button className="btn ghost small" onClick={show.clearError}>Dismiss</button></div>}
       </div>
     );
   }
+
+  const selectedScene = scenes.find((s) => s.name === selected) ?? null;
+  // Create shows the working copy (edits appear at once, before any save); held Peek, and the other pages, show the stage.
+  const working = editor.scene.name === selected ? editor.scene : selectedScene;
+  const shownScene = creating && !peek ? working : stage;
   const previewLayout = reviewing && mapReview.showMapped && mapReview.candidate ? mapReview.candidate : shownLayout;
+  const hidePanel = panel.shown ? () => panel.set(false) : undefined;
+
+  if (page === 'watch') return <WatchPage show={show} preset={preset} onCamera={pickCamera} onExit={() => toPage('control')} layout={shownLayout} />;
+
+  const appClass = ['app', `page-${page}`, mode === 'live' && creating ? 'live-armed' : '', phone ? 'phone' : 'desk', panel.shown ? '' : 'panel-hidden'].filter(Boolean).join(' ');
 
   return (
-    <div className={`app ${mode === 'live' ? 'live-armed' : ''} ${phone ? `phone tab-${phoneTab}` : `${panels.left ? '' : 'hide-left'} ${panels.right ? '' : 'hide-right'}`}`}>
-      <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset} leftInset={leftInset} rightInset={rightInset + ((houseOpen || backupsOpen) && !phone ? HOUSE_PANEL_W + 12 : 0)} topInset={topInset} bottomInset={bottomInset} house={show.house}
-        selection={selectMode ? selection : null} onProjector={selectMode || paintMode ? onProjector : undefined}
+    <div className={appClass} style={{ ['--inset-l' as string]: `${railInset}px`, ['--inset-r' as string]: `${panelInset}px` }}>
+      <Preview layout={previewLayout} scene={shownScene} diagnostic={reviewing} markers={reviewing ? mapReview.markers : null} clock={show.clock} preset={preset}
+        leftInset={railInset} rightInset={panelInset} topInset={topInset} bottomInset={bottomInset} house={show.house}
+        selection={selecting && !peek ? selection : null} onProjector={(selecting || painting) ? onProjector : undefined}
         layoutEdit={layoutMode ? {
           selected: selectedRun, drawing,
           onAddPoint: (p) => { if (selectedRun) layoutDraft.edit(appendPoint(layoutDraft.value, selectedRun, p)); },
@@ -179,95 +228,62 @@ export function App() {
           },
         } : null} />
 
-      {/* The selection layer covers the 3D view only: panels come after it, so they stay clickable. */}
-      {selectMode && projector && (
+      {/* The drawing layers cover the 3D view only: panels come after them, so they stay clickable. */}
+      {selecting && !peek && projector && (
         <SelectionOverlay tool={selectTool} mode={selectModeKind} brushSize={brushSize} project={projector.fn} layoutConfig={layout} selection={selection} onChange={setSelection} />
       )}
-
-      {/* Painting works on the working copy, so only while the Preview (not the Stage) is shown. */}
-      {paintMode && !reviewing && projector && view === 'preview' && editor.scene.name && (
+      {painting && !peek && projector && editor.scene.name && (
         <PaintOverlay tool={paint.tool} brush={paint.brush} look={paint.look} tint={paint.source === 'color' ? paint.color : null} project={projector.fn} editor={editor} count={layoutPixels} />
       )}
 
-      <TopBar show={show} mode={mode} tools={
-        <div className="tools" role="toolbar" aria-label="Tools">
-          <button className={`viewbar-btn ${selectMode ? 'active' : ''}`} aria-pressed={selectMode} onClick={() => void switchTool('select')}>Select</button>
-          <button className={`viewbar-btn ${paintMode ? 'active' : ''}`} aria-pressed={paintMode} onClick={() => void switchTool('paint')}>Paint</button>
-          <button className={`viewbar-btn ${layoutMode ? 'active' : ''}`} aria-pressed={layoutMode} onClick={() => void switchTool('layout')}>Layout</button>
-          <button className={`viewbar-btn ${houseOpen ? 'active' : ''}`} aria-pressed={houseOpen} onClick={() => { setHouseOpen((o) => !o); setBackupsOpen(false); }}>House</button>
-          <button className={`viewbar-btn ${backupsOpen ? 'active' : ''}`} aria-pressed={backupsOpen} onClick={() => { setBackupsOpen((o) => !o); setHouseOpen(false); }}>Backups</button>
-          <button className={`viewbar-btn ${mapMode !== 'off' ? 'active' : ''}`} aria-pressed={mapMode !== 'off'} onClick={() => (mapMode === 'off' ? void openMap() : setMapMode('off'))}>Map</button>
-        </div>
-      } mapButton={
-        <>
-          <button className={`icon-btn map-entry ${paintMode ? 'active' : ''}`} aria-label="Paint on the lights" aria-pressed={paintMode}
-            onClick={() => void switchTool('paint')}><BrushIcon /></button>
-          <button className="icon-btn map-entry" aria-label="Map lights with the camera" onClick={() => void openMap()}><CameraIcon /></button>
-        </>
-      } />
+      <header className="topbar glass">
+        <ModeLight page={page} mode={mode} compact={phone} />
+        <PageSwitch page={page} onPage={toPage} compact={phone} />
+        {creating
+          ? <CreateBar show={show} editor={editor} flow={flow} mode={mode} onMode={setMode} selected={selected} phone={phone} onFullScreen={fullScreen} onBackups={() => toSetup('backups')}
+              onOpenScene={(n) => void openScene(n)} />
+          : <ShowBar show={show} phone={phone} onFullScreen={fullScreen} onBackups={() => toSetup('backups')} />}
+      </header>
 
-      <ScenePanel show={show} selected={selected} flow={flow} editor={editor}
-        onSelect={async (n) => {
-          // Leaving the working copy asks first (a painting that isn't saved too); Select and Layout just close.
-          if (!(await flow.open(n))) return;
-          setView('preview'); setSelectMode(false); setPaintMode(false); setLayoutMode(false); setDrawing(false);
-        }}
-        onNew={async () => { if (!(await flow.leave())) return; setPaintMode(false); setSelectMode(false); setLayoutMode(false); setDrawing(false); await flow.create(); setPhoneTab('edit'); }} />
+      {creating && <Rail label="Tools" sections={CREATE_RAIL} value={railTool} onPick={(t) => void pickTool(t)} />}
+      {page === 'setup' && <Rail label="Setup tools" sections={SETUP_RAIL} value={setupTool} onPick={toSetup} />}
 
-      {reviewing
-        ? <MapReviewPanel show={show} review={mapReview} views={mapViews} roles={runRoles} setRole={setRunRole} layoutDraft={layoutDraft}
-            onCamera={() => setMapMode('capture')} onDone={() => setMapMode('off')} />
-        : selectMode
-        ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
-            mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} onDone={backToEditing} />
-        : paintMode
-        ? <PaintPanel show={show} editor={editor} flow={flow} paint={paint} mode={mode} onModeChange={setMode} onDone={backToEditing} />
-        : layoutMode
-        ? <LayoutPanel show={show} draft={layoutDraft} onDone={backToEditing} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
-        : <EditorPanel show={show} editor={editor} flow={flow} mode={mode} onModeChange={setMode} />}
+      {panel.shown && (
+        creating ? (
+          selecting
+            ? <SelectPanel show={show} selection={selection} onSelection={setSelection} tool={selectTool} onTool={setSelectTool}
+                mode={selectModeKind} onMode={setSelectModeKind} brushSize={brushSize} onBrushSize={setBrushSize} onHide={hidePanel} />
+            : painting
+            ? <PaintPanel show={show} editor={editor} paint={paint} mode={mode} onHide={hidePanel} />
+            : <EditorPanel show={show} editor={editor} flow={flow} mode={mode} onHide={hidePanel} />
+        ) : page === 'control' ? (
+          <ControlPanel show={show} flow={flow} editor={editor} ask={dialog.ask} tab={controlTab} onTab={setControlTab}
+            onEdit={(n) => void editScene(n)} onNew={() => void newScene()} onHide={hidePanel} />
+        ) : setupTool === 'strings' ? (
+          <LayoutPanel show={show} draft={layoutDraft} onHide={hidePanel} selected={selectedRun} onSelect={(id) => { setSelectedRun(id); setDrawing(false); }} drawing={drawing} onDrawingChange={setDrawing} />
+        ) : setupTool === 'house' ? <HousePanel show={show} onHide={hidePanel} />
+          : setupTool === 'map' ? <MapReviewPanel show={show} review={mapReview} views={mapViews} roles={runRoles} setRole={setRunRole} layoutDraft={layoutDraft} onCamera={() => void openFilming()} onHide={hidePanel} />
+          : setupTool === 'wled' ? <WledPanel show={show} onHide={hidePanel} />
+          : setupTool === 'backups' ? <BackupPanel show={show} onHide={hidePanel} />
+          : <HomePanel show={show} onHide={hidePanel} onSchedule={() => { setControlTab('schedule'); toPage('control'); }} />
+      )}
+      {!panel.shown && (
+        <button className="panel-show glass" aria-label="Show the panel" title="Show the panel" onClick={() => panel.set(true)}><PanelIcon shown={false} /></button>
+      )}
 
-      <div className="viewbar glass" role="toolbar" aria-label="Preview">
-        {!phone && <PanelToggle side="left" shown={panels.left} onToggle={() => panels.toggle('left')} />}
-        <Segmented
-          label="Show in preview"
-          value={view}
-          options={[{ value: 'preview', label: 'Preview', hint: selected ?? '' }, { value: 'stage', label: 'Stage', hint: stageName ?? 'Blackout' }]}
-          onChange={(v) => setView(v as View)}
-        />
-        <span className="divider" aria-hidden />
-        <Segmented
-          label="Camera"
-          value={preset.name}
-          options={CAMERA_VIEWS}
-          onChange={pickCamera}
-          reselect
-        />
-        {!phone && <PanelToggle side="right" shown={panels.right} onToggle={() => panels.toggle('right')} />}
+      {page === 'control' && <PorchCard show={show} onFullScreen={fullScreen} />}
+      {creating && phone && <PhoneModeRow show={show} editor={editor} flow={flow} mode={mode} onMode={setMode} selected={selected} />}
+
+      <div className="view-tools glass" role="toolbar" aria-label="3D view">
+        {creating && mode === 'blind' && <HoldToPeek peeking={peek} onPeek={setPeek} />}
+        <CameraMenu value={preset.name} onPick={pickCamera} />
       </div>
-      {phone && (
-        <div className="phone-camera" role="toolbar" aria-label="Preview camera">
-          <Segmented label="Camera" value={preset.name} options={CAMERA_VIEWS} onChange={pickCamera} reselect />
-        </div>
-      )}
-      {houseOpen && <HousePanel show={show} onClose={() => setHouseOpen(false)} />}
-      {backupsOpen && <BackupPanel show={show} onClose={() => setBackupsOpen(false)} />}
 
-      {reviewing
-        ? <div className="caption layout" role="status">Mapping results: {mapReview.showMapped ? 'with the measured positions (not saved yet)' : 'the layout as saved'}</div>
-        : selectMode
-        ? <div className="caption layout" role="status">{selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over lights' : selectTool === 'lasso' ? 'draw around lights' : selectTool === 'string' ? 'tap a string to pick all its lights' : 'drag a box around lights'} · ${selection.size} selected`}</div>
-        : paintMode
-        ? <div className="caption layout" role="status">{view === 'stage' ? 'Paint: switch to Preview to paint' : paint.tool === 'orbit' ? 'Paint: Move tool, drag to turn the view' : paint.tool === 'erase' ? 'Paint: drag over lights to wipe paint off' : paint.look ? 'Paint: drag over the lights' : 'Paint: choose an effect first'}{mode === 'live' && (status.stage.preview ?? stageName) === selected && status.output.enabled ? ' · showing on the porch' : ''}</div>
-        : layoutMode
-        ? <div className="caption layout" role="status">{drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Layout: drag the white handles; green is the start of the run, red the end'}</div>
-        : <ViewCaption view={view} show={show} selected={selected} unsaved={editor.dirty && editor.name === selected} />}
-      <Health show={show} />
-      {phone && (
-        <div className="phone-tabs" role="toolbar" aria-label="Panels">
-          <Segmented label="Panel" value={phoneTab} options={[{ value: 'scenes', label: 'Scenes' }, { value: 'edit', label: 'Edit' }]} onChange={(v) => setPhoneTab(v as 'scenes' | 'edit')} />
-          <Segmented label="Show in preview" value={view} options={[{ value: 'preview', label: 'Preview' }, { value: 'stage', label: 'Stage' }]} onChange={(v) => setView(v as View)} />
-        </div>
-      )}
+      {peek
+        ? <div className="caption peek-label" role="status">Showing the porch while you hold</div>
+        : <Caption page={page} show={show} selected={selected} editor={editor} mode={mode} tool={tool} paintTool={paint.tool} hasLook={!!paint.look}
+            selectTool={selectTool} selectionSize={selection.size} setupTool={setupTool} drawing={drawing} showMapped={mapReview.showMapped} />}
+      {!phone && <Health show={show} />}
       {!show.connected && <div className="banner warn" role="status">Lost connection to the lights server. Retrying…</div>}
       {show.error && (
         <div className="toast" role="alert">
@@ -280,7 +296,263 @@ export function App() {
   );
 }
 
-/** True on phone-sized screens, where the panels become a bottom sheet. */
+// ---- top bars ---------------------------------------------------------------------------------------
+
+interface CreateBarProps {
+  show: Show; editor: WorkingCopy; flow: SceneFlow; mode: EditMode; onMode: (m: EditMode) => void; selected: string | null;
+  phone: boolean; onFullScreen: () => void; onBackups: () => void; onOpenScene: (name: string) => void;
+}
+
+/** Create's top bar: the scene being edited and saving it, Blind/Live and Go, what's on stage, Blackout and ⋯. */
+function CreateBar({ show, editor, flow, mode, onMode, selected, phone, onFullScreen, onBackups, onOpenScene }: CreateBarProps) {
+  const dirty = editor.dirty;
+  const name = editor.scene.name;
+  const revertDisabled = !dirty || (editor.neverStored && editor.scene.layers.length === 0);
+  const sceneGroup = (
+    <div className="scene-group">
+      <ScenePicker show={show} name={name} unsaved={dirty} onOpen={onOpenScene} onNew={() => void flow.create()} />
+      {dirty && <span className="unsaved-mark" title={editor.neverStored ? 'This new scene isn’t saved yet' : 'Changes not saved yet'}><span className="unsaved-dot" aria-hidden />{editor.neverStored ? 'Not saved' : 'Unsaved'}</span>}
+      <button className="btn small primary" disabled={!dirty} onClick={() => void flow.save()} title={editor.neverStored ? 'Store this new scene (asks for a name)' : 'Store the changes over the saved scene'}>Save</button>
+      {!phone && <>
+        <button className="btn small ghost" disabled={!dirty} onClick={() => void flow.saveAsNew()} title="Store a copy under a new name; the saved scene stays as it was">Save as new…</button>
+        <button className="icon-btn bar-icon" aria-label="Revert" disabled={revertDisabled} onClick={() => void flow.revert()}
+          title={editor.neverStored ? 'Clear it back to a blank scene' : 'Revert: throw the changes away and go back to the saved scene'}><RevertIcon /></button>
+        <button className="icon-btn bar-icon" onClick={() => editor.undo()} disabled={!editor.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
+        <button className="icon-btn bar-icon" onClick={() => editor.redo()} disabled={!editor.canRedo} aria-label="Redo" title="Redo (⇧⌘Z)"><RedoIcon /></button>
+      </>}
+    </div>
+  );
+  return (
+    <>
+      {sceneGroup}
+      {!phone && <>
+        <div className="spacer" />
+        <ModeSwitch mode={mode} onMode={onMode} />
+        <GoButton show={show} editor={editor} flow={flow} selected={selected} />
+        <div className="spacer" />
+        <StagePill show={show} />
+        <BlackoutButton show={show} />
+      </>}
+      <MoreMenu>
+        {(close) => (
+          <>
+            {phone && (
+              <div className="more-row">
+                <button className="btn small ghost" disabled={!dirty} onClick={() => { close(); void flow.saveAsNew(); }}>Save as new…</button>
+                <button className="btn small ghost" disabled={revertDisabled} onClick={() => { close(); void flow.revert(); }}>Revert</button>
+              </div>
+            )}
+            <Brightness show={show} />
+            <StreamingSwitch show={show} />
+            <div className="more-row"><StagePill show={show} />{phone && <BlackoutButton show={show} />}</div>
+            <button className="menu-item" onClick={() => { close(); onFullScreen(); }}><FullScreenIcon /> Full-screen display</button>
+            <button className="menu-item" onClick={() => { close(); onBackups(); }}>Backups…</button>
+          </>
+        )}
+      </MoreMenu>
+    </>
+  );
+}
+
+/** Control's and Setup's top bar: brightness, streaming, Blackout and ⋯. */
+function ShowBar({ show, phone, onFullScreen, onBackups }: { show: Show; phone: boolean; onFullScreen: () => void; onBackups: () => void }) {
+  return (
+    <>
+      {!phone && <StagePill show={show} />}
+      <div className="spacer" />
+      {!phone && <>
+        <Brightness show={show} />
+        <StreamingSwitch show={show} />
+      </>}
+      <BlackoutButton show={show} />
+      <MoreMenu>
+        {(close) => (
+          <>
+            {phone && <><StagePill show={show} /><Brightness show={show} /><StreamingSwitch show={show} /></>}
+            <button className="menu-item" onClick={() => { close(); onFullScreen(); }}><FullScreenIcon /> Full-screen display</button>
+            <button className="menu-item" onClick={() => { close(); onBackups(); }}>Backups…</button>
+          </>
+        )}
+      </MoreMenu>
+    </>
+  );
+}
+
+function ModeSwitch({ mode, onMode }: { mode: EditMode; onMode: (m: EditMode) => void }) {
+  const live = mode === 'live';
+  return (
+    <div className="segmented mode" role="radiogroup" aria-label="Edit mode">
+      <button role="radio" aria-checked={!live} className={!live ? 'active blind' : ''} onClick={() => onMode('blind')}
+        title="Blind: edits stay in this browser until you save. The porch doesn’t change.">Blind</button>
+      <button role="radio" aria-checked={live} className={live ? 'active live' : ''} onClick={() => onMode('live')}
+        title="Live: the porch shows the scene you’re editing as you edit it. Nothing is stored until you save.">Live</button>
+    </div>
+  );
+}
+
+/** Go: put the scene being edited (its stored version) on the porch. */
+function GoButton({ show, editor, flow, selected }: { show: Show; editor: WorkingCopy; flow: SceneFlow; selected: string | null }) {
+  const [going, setGoing] = useState(false);
+  const st = show.status!.stage;
+  const isOnStage = selected !== null && selected === st.scene && !st.dirty && !st.preview;
+  const newSelected = editor.neverStored && selected === editor.name;
+  const go = async () => {
+    if (!selected || !(await flow.confirmGo(selected))) return;
+    setGoing(true);
+    try { await api.go(selected); await show.refresh(); } catch (e) { show.reportError(e); }
+    setGoing(false);
+  };
+  return (
+    <button className="btn go-small" aria-label={selected ? `Go ${selected}` : 'Go'} disabled={!selected || going || isOnStage || newSelected}
+      title={newSelected ? 'Save this scene first: Go plays stored scenes' : isOnStage ? 'On stage now' : `Put ${selected} on the porch`} onClick={() => void go()}>
+      {going ? '…' : 'Go'}
+    </button>
+  );
+}
+
+/** On a phone: Blind/Live, Go, Undo and Redo sit on the 3D view under the top bar. */
+function PhoneModeRow({ show, editor, flow, mode, onMode, selected }: { show: Show; editor: WorkingCopy; flow: SceneFlow; mode: EditMode; onMode: (m: EditMode) => void; selected: string | null }) {
+  return (
+    <div className="phone-mode">
+      <ModeSwitch mode={mode} onMode={onMode} />
+      <GoButton show={show} editor={editor} flow={flow} selected={selected} />
+      <div className="spacer" />
+      <button className="icon-btn bar-icon glass" onClick={() => editor.undo()} disabled={!editor.canUndo} aria-label="Undo"><UndoIcon /></button>
+      <button className="icon-btn bar-icon glass" onClick={() => editor.redo()} disabled={!editor.canRedo} aria-label="Redo"><RedoIcon /></button>
+    </div>
+  );
+}
+
+// ---- the tool rail ----------------------------------------------------------------------------------
+
+/** Tools with section headers, down the left side (a strip along the bottom on a phone). */
+function Rail<T extends string>({ label, sections, value, onPick }: { label: string; sections: { title: string; tools: RailTool<T>[] }[]; value: T; onPick: (t: T) => void }) {
+  return (
+    <nav className="rail glass" aria-label={label}>
+      {sections.map((sec) => (
+        <div key={sec.title} className="rail-section" role="group" aria-label={sec.title}>
+          <span className="rail-title" aria-hidden>{sec.title}</span>
+          {sec.tools.map((t) => (
+            <button key={t.id} className={`rail-btn ${t.id === value ? 'active' : ''}`} aria-pressed={t.id === value} aria-label={t.short}
+              title={`${t.label}${t.key ? ` (${t.key})` : ''}`} onClick={() => onPick(t.id)}>
+              <ToolIcon name={t.icon} />
+              <span className="rail-short" aria-hidden>{t.short}</span>
+            </button>
+          ))}
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+// ---- on the 3D view --------------------------------------------------------------------------------
+
+/** Control: what's on the porch now, the playlist's next change, and the full-screen display. */
+function PorchCard({ show, onFullScreen }: { show: Show; onFullScreen: () => void }) {
+  const s = show.status!;
+  const pl = s.playlist;
+  const now = useNow(!!pl?.nextAt);
+  const on = s.stage.preview ?? s.stage.scene;
+  return (
+    <section className="porch-card glass" aria-label="On the porch">
+      <span className="eyebrow">{s.output.enabled ? 'Live on the porch' : 'Streaming off: the porch runs its WLED playlist'}</span>
+      <strong className="porch-scene">{on ?? 'Blackout'}{s.stage.preview ? ' (unsaved edits)' : ''}</strong>
+      {pl && (
+        <span className="porch-playlist">
+          Playlist {pl.name}{pl.nextAt ? ` · next in ${clockTime(pl.nextAt - now)}` : ''}
+        </span>
+      )}
+      <div className="porch-actions">
+        {pl && <button className="btn small" onClick={() => api.stopPlaylist().then(show.refresh).catch(show.reportError)}><StopIcon /> Stop playlist</button>}
+        <button className="btn small ghost porch-full" onClick={onFullScreen}><FullScreenIcon /> Full-screen display</button>
+      </div>
+    </section>
+  );
+}
+
+/** A full-screen live view of the porch, for a tablet or a TV: no editing controls. */
+function WatchPage({ show, layout, preset, onCamera, onExit }: { show: Show; layout: LayoutConfig; preset: { name: CameraPreset; nonce: number }; onCamera: (v: CameraPreset) => void; onExit: () => void }) {
+  const s = show.status!;
+  const on = s.stage.preview ?? s.stage.scene;
+  const [idle, setIdle] = useState(false);
+  // The controls fade out after a few seconds without a touch or a move, so only the porch shows.
+  useEffect(() => {
+    let t = setTimeout(() => setIdle(true), 4000);
+    const wake = () => { setIdle(false); clearTimeout(t); t = setTimeout(() => setIdle(true), 4000); };
+    window.addEventListener('pointermove', wake);
+    window.addEventListener('pointerdown', wake);
+    window.addEventListener('keydown', wake);
+    return () => { clearTimeout(t); window.removeEventListener('pointermove', wake); window.removeEventListener('pointerdown', wake); window.removeEventListener('keydown', wake); };
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onExit(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onExit]);
+  return (
+    <div className={`app page-watch ${idle ? 'idle' : ''}`}>
+      <Preview layout={layout} scene={show.stage} clock={show.clock} preset={preset} house={show.house} />
+      <div className="watch-card glass" role="status">
+        <ModeLight page="watch" mode="blind" compact />
+        <span className="watch-scene">{s.output.enabled ? on ?? 'Blackout' : 'Streaming off'}</span>
+        {s.playlist && <span className="muted">Playlist {s.playlist.name}</span>}
+      </div>
+      <div className="watch-tools">
+        <div className="view-tools glass"><CameraMenu value={preset.name} onPick={onCamera} /></div>
+        <button className="btn small glass" onClick={onExit}>Exit</button>
+      </div>
+      {!show.connected && <div className="banner warn" role="status">Lost connection to the lights server. Retrying…</div>}
+    </div>
+  );
+}
+
+function Caption({ page, show, selected, editor, mode, tool, paintTool, hasLook, selectTool, selectionSize, setupTool, drawing, showMapped }: {
+  page: Page; show: Show; selected: string | null; editor: WorkingCopy; mode: EditMode; tool: CreateTool; paintTool: string; hasLook: boolean;
+  selectTool: SelectTool; selectionSize: number; setupTool: SetupTool; drawing: boolean; showMapped: boolean;
+}) {
+  const status = show.status!;
+  let text: string | null = null;
+  let cls = '';
+  if (page === 'create') {
+    const onPorch = selected !== null && selected === (status.stage.preview ?? status.stage.scene);
+    const live = mode === 'live';
+    const porch = live ? (status.output.enabled ? ' · showing on the porch' : ' · streaming is off') : '';
+    if (tool === 'select') text = selectTool === 'orbit' ? 'Select: Move tool, drag to turn the view' : `Select: ${selectTool === 'brush' ? 'paint over lights' : selectTool === 'lasso' ? 'draw around lights' : selectTool === 'string' ? 'tap a string to pick all its lights' : 'drag a box around lights'} · ${selectionSize} selected`;
+    else if (tool === 'brush' || tool === 'erase') text = `${paintTool === 'orbit' ? 'Paint: Move tool, drag to turn the view' : paintTool === 'erase' ? 'Eraser: drag over lights to wipe paint off' : hasLook ? 'Brush: drag over the lights' : 'Brush: choose an effect first'}${porch}`;
+    else if (selected) text = live ? `Live: ${selected}${porch}` : `Blind: ${selected}${editor.dirty && editor.name === selected ? ' · unsaved changes' : ''}${onPorch ? '' : ' (not on the porch)'}`;
+    cls = 'layout';
+  } else if (page === 'setup') {
+    if (setupTool === 'strings') text = drawing ? 'Drawing: tap on the house to add points to the end of the run' : 'Strings: drag the white handles; green is the start of the run, red the end';
+    else if (setupTool === 'map') text = `Mapping results: ${showMapped ? 'with the measured positions (not saved yet)' : 'the layout as saved'}`;
+    cls = 'layout';
+  }
+  if (!text) return null;
+  return <div className={`caption ${cls}`} role="status">{text}</div>;
+}
+
+// ---- hooks ------------------------------------------------------------------------------------------
+
+/** The page in the address (#/create, #/control, #/setup/…, #/watch), kept in step with Back and Forward. */
+function useRoute(): [Route, (r: Route, replace?: boolean) => void] {
+  const [route, setRoute] = useState(() => parseHash(location.hash));
+  useEffect(() => {
+    const on = () => setRoute(parseHash(location.hash));
+    window.addEventListener('hashchange', on);
+    window.addEventListener('popstate', on);
+    return () => { window.removeEventListener('hashchange', on); window.removeEventListener('popstate', on); };
+  }, []);
+  const go = useCallback((r: Route, replace = false) => {
+    const hash = routeHash(r);
+    if (location.hash !== hash) {
+      const url = `${location.pathname}${location.search}${hash}`;
+      if (replace) history.replaceState(null, '', url); else history.pushState(null, '', url);
+    }
+    setRoute(r);
+  }, []);
+  return [route, go];
+}
+
+/** True on phone-sized screens, where the panel becomes a bottom sheet and the rail a strip. */
 function usePhone(): boolean {
   const query = '(max-width: 760px)';
   const [phone, setPhone] = useState(() => typeof matchMedia !== 'undefined' && matchMedia(query).matches);
@@ -293,43 +565,63 @@ function usePhone(): boolean {
   return phone;
 }
 
-/** Height of the phone's bottom sheet plus its tab bar, so the 3D view centres above it. */
-function useSheetInset(phone: boolean, ready: boolean): number {
-  const [inset, setInset] = useState(0);
-  useEffect(() => {
-    if (!phone || !ready) { setInset(0); return; }
-    const measure = () => {
-      const tabs = document.querySelector('.phone-tabs')?.getBoundingClientRect();
-      setInset(tabs ? window.innerHeight - tabs.top + 8 : 0);
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    const t = setTimeout(measure, 50);
-    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
-  }, [phone, ready]);
-  return inset;
+/** Whether the right-hand panel is shown, remembered on this device. */
+function usePanelShown() {
+  const KEY = 'xmas.panel';
+  const [shown, setShown] = useState<boolean>(() => {
+    try { return localStorage.getItem(KEY) !== 'hidden'; } catch { return true; }
+  });
+  const set = (v: boolean) => {
+    setShown(v);
+    try { localStorage.setItem(KEY, v ? 'shown' : 'hidden'); } catch { /* private mode */ }
+  };
+  return { shown, set };
 }
 
-/** How much of the window a panel or bar covers from one edge (plus margin), tracked through resizes. */
-function useInset(selector: string, side: 'left' | 'right' | 'top' | 'bottom', ready: boolean) {
+/**
+ * How much of the window the elements matching `selector` cover from one edge (plus a margin),
+ * tracked through resizes. `key` re-measures when the layout changes (another page, tool or panel).
+ */
+function useInset(selector: string, side: 'left' | 'right' | 'top' | 'bottom', ready: boolean, key: string) {
   const [inset, setInset] = useState(0);
   useEffect(() => {
     if (!ready) { setInset(0); return; }
     const measure = () => {
-      const r = document.querySelector(selector)?.getBoundingClientRect();
-      setInset(!r || r.width === 0 ? 0
-        : side === 'left' ? r.right + 12 : side === 'right' ? window.innerWidth - r.left + 12
-        : side === 'top' ? r.bottom + 8 : window.innerHeight - r.top + 8);
+      let v = 0;
+      for (const el of document.querySelectorAll(selector)) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        v = Math.max(v, side === 'left' ? r.right + 12 : side === 'right' ? window.innerWidth - r.left + 12
+          : side === 'top' ? r.bottom + 8 : window.innerHeight - r.top + 8);
+      }
+      setInset(Math.round(v));
     };
     measure();
+    const raf = requestAnimationFrame(measure);
     const ro = new ResizeObserver(measure);
-    const panel = document.querySelector(selector);
-    if (panel) ro.observe(panel);
+    for (const el of document.querySelectorAll(selector)) ro.observe(el);
     window.addEventListener('resize', measure);
-    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [selector, side, ready]);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [selector, side, ready, key]);
   return inset;
 }
+
+/** The time now, ticking each second while `on` (for countdowns). */
+function useNow(on: boolean) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on]);
+  return now;
+}
+
+const clockTime = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+};
 
 /** The layout being edited, kept in step with the server's until it's changed here. */
 function useLayoutDraft(saved: LayoutConfig | null): History<LayoutConfig> {
@@ -348,9 +640,9 @@ function useLayoutDraft(saved: LayoutConfig | null): History<LayoutConfig> {
 }
 
 /**
- * The layout for the 3D view. While numbers are being typed in Layout mode the draft is often
- * invalid for a moment (a count past the end of the controller, two runs overlapping); the view then
- * keeps the last layout that worked instead of failing. The Layout panel shows what's wrong.
+ * The layout for the 3D view. While numbers are being typed in Strings the draft is often invalid
+ * for a moment (a count past the end of the controller, two runs overlapping); the view then keeps
+ * the last layout that worked instead of failing. The Strings panel shows what's wrong.
  */
 function useLastValidLayout(layout: LayoutConfig | null): LayoutConfig | null {
   const last = useRef<LayoutConfig | null>(null);
@@ -361,9 +653,10 @@ function useLastValidLayout(layout: LayoutConfig | null): LayoutConfig | null {
   }, [layout]);
 }
 
-/** ⌘Z / Ctrl+Z undo, ⇧⌘Z / Ctrl+Y redo, unless typing in a text field. */
-function useHistoryKeys(editor: History<unknown> | SceneEditor) {
+/** ⌘Z / Ctrl+Z undo, ⇧⌘Z / Ctrl+Y redo, unless typing in a text field. Null: nothing to undo on this page. */
+function useHistoryKeys(editor: History<unknown> | SceneEditor | null) {
   useEffect(() => {
+    if (!editor) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -376,15 +669,6 @@ function useHistoryKeys(editor: History<unknown> | SceneEditor) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [editor]);
-}
-
-function BrushIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
-      <path d="M17 2.5 8.5 11l1.8 1.8L18 4.2c.5-.5.5-1.2 0-1.7s-.6-.4-1 0Z" fill="currentColor" />
-      <path d="M7.4 12.2c-1.6 0-2.8 1.2-2.8 2.8 0 1.1-.8 1.9-2 2.2 1 .7 2.2 1 3.4 1 2.200 0 3.800-1.600 3.800-3.600 0-1.300-1.100-2.400-2.400-2.400Z" fill="currentColor" />
-    </svg>
-  );
 }
 
 /** Shown when the server wants its API token: ask once, then the browser remembers (a cookie). */
@@ -416,280 +700,5 @@ function Loading({ show }: { show: Show }) {
       <div className="loading-dot" aria-hidden />
       <p>{show.error ? `Can't reach the lights server: ${show.error}` : 'Connecting to the lights…'}</p>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------
-
-function TopBar({ show, mode, tools, mapButton }: { show: Show; mode: EditMode; tools: React.ReactNode; mapButton?: React.ReactNode }) {
-  const status = show.status!;
-  const streaming = status.output.enabled;
-  return (
-    <header className="topbar glass">
-      <div className="brand">
-        <span className="brand-mark" aria-hidden />
-        <h1>Porch Lights</h1>
-      </div>
-      {mode === 'live' && <span className="live-badge" role="status" title="Live is armed: the porch shows your edits to the scene on stage (or a new scene) as you make them, without saving them">LIVE</span>}
-      <StagePill show={show} />
-      <div className="spacer" />
-      {tools}
-      {mapButton}
-      <Brightness show={show} />
-      <StreamingSwitch show={show} />
-      <button
-        className="btn danger-quiet"
-        disabled={!streaming || status.stage.scene === null}
-        onClick={() => api.blackout().then(show.refresh).catch(show.reportError)}
-        title="Turn every pixel off while streaming"
-      >
-        Blackout
-      </button>
-    </header>
-  );
-}
-
-function StagePill({ show }: { show: Show }) {
-  const { stage, output } = show.status!;
-  let tone = 'ok', text = `On stage: ${stage.scene}`;
-  if (!output.enabled) { tone = 'muted'; text = 'Streaming off · WLED playlist'; }
-  else if (stage.preview) { tone = 'warn'; text = `On stage: ${stage.preview} · unsaved edits`; }
-  else if (stage.scene === null) { tone = 'muted'; text = 'On stage: Blackout'; }
-  else if (stage.dirty) { tone = 'warn'; text = `On stage: ${stage.scene} · edited, not sent`; }
-  else if (show.status!.playlist) text = `Playlist ${show.status!.playlist.name}: ${stage.scene}`;
-  return <div className={`pill ${tone}`} role="status"><span className="dot" aria-hidden />{text}</div>;
-}
-
-function Brightness({ show }: { show: Show }) {
-  const server = Math.round(show.status!.output.brightness * 100);
-  const [value, setValue] = useState(server);
-  const dragging = useRef(false);
-  useEffect(() => { if (!dragging.current) setValue(server); }, [server]);
-  const send = useMemo(() => latestWins((pct: number) => api.setOutput({ brightness: pct / 100 }), show.reportError), [show.reportError]);
-  return (
-    <label className="brightness" title="Master brightness on the porch">
-      <span className="label">Brightness</span>
-      <input
-        type="range" min={0} max={100} step={1} value={value}
-        aria-valuetext={`${value} percent`}
-        style={{ ['--fill' as string]: `${value}%` }}
-        onPointerDown={() => { dragging.current = true; }}
-        onPointerUp={() => { dragging.current = false; }}
-        onPointerCancel={() => { dragging.current = false; }}
-        onBlur={() => { dragging.current = false; }}
-        onChange={(e) => { const v = Number(e.target.value); setValue(v); send(v); }}
-      />
-      <span className="value">{value}%</span>
-    </label>
-  );
-}
-
-function StreamingSwitch({ show }: { show: Show }) {
-  const on = show.status!.output.enabled;
-  const [pending, setPending] = useState(false);
-  const toggle = async () => {
-    setPending(true);
-    try { await api.setOutput({ enabled: !on }); await show.refresh(); } catch (e) { show.reportError(e); }
-    setPending(false);
-  };
-  return (
-    <button
-      className={`switch ${on ? 'on' : ''}`}
-      role="switch"
-      aria-checked={on}
-      disabled={pending}
-      onClick={toggle}
-      title={on ? 'The server is driving the porch. Turn off to hand the porch back to its WLED playlist.' : 'The porch is running its WLED playlist. Turn on to drive it from here.'}
-    >
-      <span className="track" aria-hidden><span className="thumb" /></span>
-      <span className="switch-label">Streaming</span>
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------
-
-function ScenePanel({ show, selected, flow, editor, onSelect, onNew }: {
-  show: Show; selected: string | null; flow: SceneFlow; editor: WorkingCopy;
-  onSelect: (name: string) => void; onNew: () => void;
-}) {
-  const status = show.status!;
-  const stageName = status.stage.scene;
-  const [going, setGoing] = useState(false);
-  const [tab, setTab] = useState<'scenes' | 'playlists' | 'schedule'>('scenes');
-  const isOnStage = selected !== null && selected === stageName && !status.stage.dirty && !status.stage.preview;
-  const onPorch = (n: string | null) => n !== null && (n === stageName || n === status.stage.preview);
-  /** The working copy's scene, when it has unsaved changes (or has never been stored). */
-  const unsaved = editor.dirty ? editor.name : null;
-  const rows = editor.neverStored ? [editor.scene, ...show.scenes] : show.scenes; // a new scene shows first, so it's in sight
-  const newSelected = editor.neverStored && selected === editor.name;
-
-  const go = async () => {
-    if (!selected || !(await flow.confirmGo(selected))) return;
-    setGoing(true);
-    try { await api.go(selected); await show.refresh(); } catch (e) { show.reportError(e); }
-    setGoing(false);
-  };
-
-  return (
-    <aside className="scenes glass" aria-label="Scenes, playlists and schedule">
-      <div className="panel-head">
-        <div className="segmented panel-tabs" role="tablist" aria-label="Panel">
-          {([['scenes', 'Scenes'], ['playlists', 'Playlists'], ['schedule', 'Schedule']] as const).map(([v, label]) => (
-            <button key={v} role="tab" aria-selected={tab === v} className={tab === v ? 'active' : ''} onClick={() => setTab(v)}>{label}</button>
-          ))}
-        </div>
-      </div>
-      {tab === 'playlists' && <PlaylistsView show={show} />}
-      {tab === 'schedule' && <ScheduleView show={show} />}
-      {tab === 'scenes' && (<>
-      <div className="scene-tools">
-        <button className="btn small" onClick={onNew} title="Start a new, blank scene">+ New</button>
-        <button className="btn small ghost" disabled={!selected || newSelected} title="Store a copy of the stored scene" onClick={() => void flow.duplicate()}>Duplicate</button>
-        <button className="btn small ghost danger-quiet" disabled={!selected || (!newSelected && onPorch(selected))} title={onPorch(selected) ? 'The scene on stage can’t be deleted' : undefined}
-          onClick={() => selected && void flow.remove(selected)}>Delete</button>
-      </div>
-      <ul className="scene-list" role="listbox" aria-label="Scenes" aria-activedescendant={selected ? `scene-${selected}` : undefined}>
-        {rows.map((s) => (
-          <li key={s.name}>
-            <button
-              id={`scene-${s.name}`}
-              role="option"
-              aria-selected={s.name === selected}
-              className={`scene-row ${s.name === selected ? 'selected' : ''}`}
-              onClick={() => onSelect(s.name)}
-            >
-              <Swatch scene={s.name === unsaved ? editor.scene : s} />
-              <span className="scene-name">{s.name}</span>
-              {s.name === unsaved && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}
-              {s.name === status.stage.preview
-                ? <span className="tag warn">Live edit</span>
-                : s.name === stageName && <span className={`tag ${status.stage.dirty ? 'warn' : 'ok'}`}>{status.stage.dirty ? 'Edited' : 'On stage'}</span>}
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="go-area">
-        {!status.output.enabled && <p className="hint">Streaming is off, so the porch keeps its WLED playlist until you turn streaming on.</p>}
-        <label className="fade-row">
-          <span>Fade</span>
-          <select value={String(status.output.transition ?? 1)} aria-label="Crossfade time for Go"
-            onChange={(e) => api.setOutput({ transition: Number(e.target.value) }).then(show.refresh).catch(show.reportError)}>
-            {[0, 0.5, 1, 2, 3, 5].map((v) => <option key={v} value={String(v)}>{v === 0 ? 'Cut' : `${v} s`}</option>)}
-          </select>
-        </label>
-        <button className="btn go" disabled={!selected || going || isOnStage || newSelected} title={newSelected ? 'Save this scene first: Go plays stored scenes' : undefined} onClick={go}>
-          {going ? 'Sending…' : isOnStage ? 'On stage' : newSelected ? 'Save it to Go' : <>Go <span className="go-target">{selected}</span></>}
-        </button>
-      </div>
-      </>)}
-    </aside>
-  );
-}
-
-/** A small strip of the colours a scene uses, so scenes can be told apart at a glance. */
-function Swatch({ scene }: { scene: SceneConfig }) {
-  const colors: string[] = [];
-  for (const l of scene.layers) {
-    const def = EFFECTS[l.effect];
-    const params = def ? resolveParams(def, l.params) : l.params ?? {};
-    for (const k of ['color', 'colorA', 'colorB', 'background']) {
-      const v = params[k];
-      if (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) && v.toLowerCase() !== '#000000' && !colors.includes(v)) colors.push(v);
-    }
-    if (l.effect === 'rainbow') colors.push('#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#bf5af2');
-    // Palette-based effects (most WLED ones): show the palette's colours.
-    const pal = def?.params.find((p) => p.type === 'palette');
-    if (pal && typeof params[pal.key] === 'string') for (const c of paletteColors(params[pal.key] as string, params, 5)) if (!colors.includes(c)) colors.push(c);
-  }
-  const stops = colors.length ? colors.slice(0, 6) : ['#2a3142'];
-  const bg = stops.length === 1 ? stops[0] : `linear-gradient(90deg, ${stops.join(', ')})`;
-  return <span className="swatch" style={{ background: bg }} aria-hidden />;
-}
-
-// ---------------------------------------------------------------------------------------------
-
-function ViewCaption({ view, show, selected, unsaved }: { view: View; show: Show; selected: string | null; unsaved: boolean }) {
-  const status = show.status!;
-  let text: string;
-  if (view === 'stage') {
-    const on = status.stage.preview ? `unsaved edits of ${status.stage.preview}` : status.stage.scene ?? 'Blackout';
-    text = status.output.enabled ? `Stage: what the porch is showing (${on})` : 'Stage: streaming is off, the real porch is on its WLED playlist';
-  } else {
-    const onPorch = selected !== null && selected === (status.stage.preview ?? status.stage.scene);
-    text = `Preview: ${selected ?? 'nothing selected'}${unsaved ? ' · unsaved changes' : ''}${selected && !onPorch ? ' (not on the porch)' : ''}`;
-  }
-  return <div className={`caption ${view}`} role="status">{text}</div>;
-}
-
-function Health({ show }: { show: Show }) {
-  const s = show.status!.stream;
-  const ha = show.status!.homeassistant;
-  return (
-    <footer className="health glass" aria-label="Controller health">
-      {s.controllers.map((c) => (
-        <span key={c.id} className="health-item" title={c.lastError ?? c.warning ?? `${c.info?.name ?? c.id} at ${c.host}`}>
-          <span className={`dot ${c.online ? (c.sendErrors ? 'warn' : 'ok') : 'bad'}`} aria-hidden />
-          {c.id} {c.online ? 'online' : 'offline'}
-        </span>
-      ))}
-      <span className="health-item muted">{s.running ? `${s.fps} fps` : 'not streaming'}</span>
-      {s.running && <span className="health-item muted">{s.controllers.reduce((a, c) => a + c.sendErrors, 0)} errors</span>}
-      {ha?.enabled && (
-        <span className="health-item muted" title={ha.connected ? 'Connected to Home Assistant over MQTT' : 'Cannot reach the MQTT broker; retrying'}>
-          <span className={`dot ${ha.connected ? 'ok' : 'bad'}`} aria-hidden />
-          Home Assistant {ha.connected ? 'linked' : 'offline'}
-        </span>
-      )}
-    </footer>
-  );
-}
-
-function Segmented<T extends string>({ label, value, options, onChange, reselect }: {
-  label: string; value: T; options: { value: T; label: string; hint?: string }[]; onChange: (v: T) => void; reselect?: boolean;
-}) {
-  return (
-    <div className="segmented" role="radiogroup" aria-label={label}>
-      {options.map((o) => (
-        <button
-          key={o.value}
-          role="radio"
-          aria-checked={o.value === value}
-          className={o.value === value ? 'active' : ''}
-          title={o.hint}
-          onClick={() => { if (o.value !== value || reselect) onChange(o.value); }}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** Which side panels are shown (desktop and tablet), remembered on this device. */
-function usePanels() {
-  const KEY = 'xmas.panels';
-  const [shown, setShown] = useState<{ left: boolean; right: boolean }>(() => {
-    try { return { left: true, right: true, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; } catch { return { left: true, right: true }; }
-  });
-  const toggle = (side: 'left' | 'right') => setShown((s) => {
-    const next = { ...s, [side]: !s[side] };
-    try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* private mode */ }
-    return next;
-  });
-  return { ...shown, toggle };
-}
-
-/** Hide or show a side panel: a sidebar outline with the panel filled in when it's shown. */
-function PanelToggle({ side, shown, onToggle }: { side: 'left' | 'right'; shown: boolean; onToggle: () => void }) {
-  const what = side === 'left' ? 'scenes panel' : 'editing panel';
-  return (
-    <button className="panel-toggle" aria-pressed={shown} aria-label={`${shown ? 'Hide' : 'Show'} the ${what}`} title={`${shown ? 'Hide' : 'Show'} the ${what}`} onClick={onToggle}>
-      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
-        <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-        <path d={side === 'left' ? 'M7.5 3.5v13' : 'M12.5 3.5v13'} />
-        {shown && <rect x={side === 'left' ? 3.5 : 13.5} y="4.5" width="3" height="11" rx="1" fill="currentColor" stroke="none" />}
-      </svg>
-    </button>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { LayoutConfig, RunConfig, Vec3 } from '@xmas/engine';
 import { api } from './api';
 import { UndoIcon } from './EditorPanel';
+import { PanelHead } from './PanelHead';
 import type { History } from './editor';
 import { addRun, freeRanges, insertPoint, layoutError, removePoint, removeRun, reverseRun, runLength, setPoint, updateRun } from './layoutOps';
 import { runColor } from './layoutColors';
@@ -10,8 +11,7 @@ import type { Show } from './useShow';
 interface Props {
   show: Show;
   draft: History<LayoutConfig>;
-  /** Back to editing scenes (unsaved layout changes are kept for next time). */
-  onDone: () => void;
+  onHide?: () => void;
   selected: string | null;
   onSelect: (id: string | null) => void;
   drawing: boolean;
@@ -19,7 +19,7 @@ interface Props {
 }
 
 /** Right-hand panel in Layout mode: controllers, runs and the selected run's path. */
-export function LayoutPanel({ show, draft, onDone, selected, onSelect, drawing, onDrawingChange }: Props) {
+export function LayoutPanel({ show, draft, onHide, selected, onSelect, drawing, onDrawingChange }: Props) {
   const l = draft.value;
   const error = layoutError(l);
   const dirty = JSON.stringify(l) !== JSON.stringify(show.layout);
@@ -34,27 +34,21 @@ export function LayoutPanel({ show, draft, onDone, selected, onSelect, drawing, 
 
   return (
     <aside className="editor glass layout-panel" aria-label="Layout editor">
-      <div className="editor-sticky">
-        <div className="editor-head">
-          <div className="editor-title">
-            <span className="eyebrow">Layout</span>
-            <h2>Strings on the house</h2>
-          </div>
-          <div className="history">
-            <button className="icon-btn" onClick={() => draft.undo()} disabled={!draft.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
-            <button className="icon-btn" onClick={() => draft.redo()} disabled={!draft.canRedo} aria-label="Redo" title="Redo (⇧⌘Z)"><UndoIcon flip /></button>
-            <button className="btn small done-btn" onClick={onDone} title={dirty ? 'Back to editing scenes; your unsaved layout changes are kept' : 'Back to editing scenes (Esc)'}>Done</button>
-          </div>
+      <PanelHead eyebrow="Setup" title="Strings" onHide={onHide} actions={
+        <div className="history">
+          <button className="icon-btn" onClick={() => draft.undo()} disabled={!draft.canUndo} aria-label="Undo" title="Undo (⌘Z)"><UndoIcon /></button>
+          <button className="icon-btn" onClick={() => draft.redo()} disabled={!draft.canRedo} aria-label="Redo" title="Redo (⇧⌘Z)"><UndoIcon flip /></button>
         </div>
+      }>
         <div className="mode-row">
           {error ? <p className="layout-error" role="alert">{error}</p>
             : <p className="mode-hint">{dirty ? 'Unsaved changes. Saving remaps the porch at once if streaming is on.' : 'Saved. Each run shows in its own colour, dim at its first pixel and bright at its last.'}</p>}
           <div className="row">
-            <button className="btn small" disabled={!dirty || !!error || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save layout'}</button>
+            <button className="btn small primary" disabled={!dirty || !!error || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save layout'}</button>
             <button className="btn small ghost" disabled={!dirty || saving} onClick={() => { if (show.layout) draft.reset(show.layout); }}>Discard</button>
           </div>
         </div>
-      </div>
+      </PanelHead>
 
       <div className="section-head"><h3>Controllers</h3></div>
       {l.controllers.map((c) => (

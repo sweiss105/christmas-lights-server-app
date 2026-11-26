@@ -27,6 +27,10 @@ export interface SceneFlow {
   duplicate: () => Promise<void>;
   remove: (name: string) => Promise<void>;
   rename: (newName: string) => Promise<boolean>;
+  /** Store a copy of any stored scene under a free name (the working copy stays as it is). The copy's name, or null. */
+  duplicateScene: (name: string) => Promise<string | null>;
+  /** Rename any stored scene (the working copy follows when it's that scene). */
+  renameScene: (name: string, newName: string) => Promise<boolean>;
 }
 
 /** What the scene list and the editors do with the working copy, asking where edits could be lost. */
@@ -90,8 +94,22 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
     return true;
   };
 
+  const rename = async (newName: string) => {
+    if (taken().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
+    // Unsaved edits come along under the new name, so there's nothing to ask.
+    if (wc.neverStored) { wc.rename(newName); select(newName); return true; }
+    try {
+      // One step on the server, which also updates playlists, the schedule and the stage.
+      await api.renameScene(wc.name, newName);
+      wc.rename(newName);
+      select(newName);
+      await show.refresh();
+      return true;
+    } catch (e) { show.reportError(e); return false; }
+  };
+
   return {
-    save, saveAsNew, leave,
+    save, saveAsNew, leave, rename,
     revert: async () => {
       const { choice } = await ask({
         title: 'Revert',
@@ -143,19 +161,24 @@ export function createSceneFlow(show: Show, work: SceneWork, ask: Ask, select: (
       try {
         await api.deleteScene(name);
         await show.refresh();
-        if (wc.name === name) wc.close();
-        select(null);
+        if (wc.name === name) { wc.close(); select(null); }
       } catch (e) { show.reportError(e); }
     },
-    rename: async (newName) => {
-      if (taken().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
-      // Unsaved edits come along under the new name, so there's nothing to ask.
-      if (wc.neverStored) { wc.rename(newName); select(newName); return true; }
+    duplicateScene: async (name) => {
+      const src = show.scenes.find((s) => s.name === name);
+      if (!src) return null;
       try {
-        // One step on the server, which also updates playlists, the schedule and the stage.
-        await api.renameScene(wc.name, newName);
-        wc.rename(newName);
-        select(newName);
+        const saved = await api.saveScene({ ...structuredClone(src), name: uniqueName(src.name, taken()) }, false);
+        show.markSceneSaved(saved);
+        return saved.name;
+      } catch (e) { show.reportError(e); return null; }
+    },
+    renameScene: async (name, newName) => {
+      if (name === newName) return true;
+      if (name === wc.name) return rename(newName);
+      if (taken().includes(newName)) { show.reportError(new Error(`There's already a scene called “${newName}”.`)); return false; }
+      try {
+        await api.renameScene(name, newName);
         await show.refresh();
         return true;
       } catch (e) { show.reportError(e); return false; }

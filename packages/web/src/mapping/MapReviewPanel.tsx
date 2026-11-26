@@ -3,6 +3,7 @@
  * layout as it would be with the new positions, but nothing changes until Save. Saving makes a
  * backup first, then saves the layout like the Layout editor does, so Undo there takes it back.
  */
+import { PanelIcon } from '../icons';
 import { useMemo, useState } from 'react';
 import { buildLayout, type LayoutConfig } from '@xmas/engine';
 import { solveMapping, type SolveResult } from '@xmas/engine/mapping';
@@ -56,12 +57,12 @@ interface Props {
   setRole: (id: string, r: RunRole) => void;
   layoutDraft: History<LayoutConfig>;
   onCamera: () => void;
-  onDone: () => void;
+  onHide?: () => void;
 }
 
 const cm = (m: number | null | undefined) => (m === null || m === undefined || !Number.isFinite(m) ? '–' : m < 0.1 ? `${(m * 100).toFixed(1)} cm` : m < 10 ? `${Math.round(m * 100)} cm` : `${m.toFixed(1)} m`);
 
-export function MapReviewPanel({ show, review, views, roles, setRole, layoutDraft, onCamera, onDone }: Props) {
+export function MapReviewPanel({ show, review, views, roles, setRole, layoutDraft, onCamera, onHide }: Props) {
   const layout = show.layout!;
   const pixels = useMemo(() => buildLayout(layout).count, [layout]);
   const { result, chosen } = review;
@@ -96,8 +97,8 @@ export function MapReviewPanel({ show, review, views, roles, setRole, layoutDraf
             <h2>Results</h2>
           </div>
           <div className="history">
-            <button className="btn small ghost" onClick={onCamera}><CameraIcon /> Film</button>
-            <button className="btn small done-btn" onClick={onDone}>Done</button>
+            <button className="btn small ghost" onClick={onCamera}><CameraIcon /> Film a spot</button>
+            {onHide && <button className="icon-btn small panel-hide" aria-label="Hide the panel" title="Hide the panel" onClick={onHide}><PanelIcon shown /></button>}
           </div>
         </div>
         <div className="mode-row">

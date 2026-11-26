@@ -3,6 +3,7 @@ import { api, type House, type HousePart } from './api';
 import { EyeIcon } from './EditorPanel';
 import { latestWins } from './latest';
 import type { Show } from './useShow';
+import { PanelHead } from './PanelHead';
 
 const size = (bytes: number) => (bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`);
 
@@ -10,7 +11,7 @@ const size = (bytes: number) => (bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB`
  * Upload house scans and line them up. Each part (e.g. two halves scanned separately) is first
  * placed against the others; "Whole house" then lines everything up with the lights.
  */
-export function HousePanel({ show, onClose }: { show: Show; onClose: () => void }) {
+export function HousePanel({ show, onHide }: { show: Show; onHide?: () => void }) {
   const house = show.house;
   const file = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -51,11 +52,8 @@ export function HousePanel({ show, onClose }: { show: Show; onClose: () => void 
   const axis = (i: number, v: number) => { const p = [...t.position] as House['position']; p[i] = v; set({ position: p }); };
 
   return (
-    <div className="house-panel glass" role="dialog" aria-label="House model">
-      <div className="panel-head">
-        <h2>House model</h2>
-        <button className="btn small ghost" onClick={onClose}>Done</button>
-      </div>
+    <aside className="editor glass house-panel" aria-label="House model">
+      <PanelHead eyebrow="House" title="House model" onHide={onHide} />
       <div className="house-body">
         <p className="hint">
           {house.parts.length
@@ -108,7 +106,7 @@ export function HousePanel({ show, onClose }: { show: Show; onClose: () => void 
           </>
         )}
       </div>
-    </div>
+    </aside>
   );
 }
 

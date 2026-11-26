@@ -2,13 +2,13 @@
 /**
  * Browser smoke test: starts a throwaway server (controller address 192.0.2.1, which nothing answers,
  * so the real porch is never touched), opens the built UI in headless Chromium and clicks through the
- * main screens at desktop and phone sizes.
+ * three pages (Create, Control, Setup) and the full-screen display at desktop and phone sizes.
  *
  *   npm run build:web && npm run e2e
  *
  * Needs the `playwright` package and its Chromium (npx playwright install chromium-headless-shell).
  * Set PLAYWRIGHT_MODULE to a playwright install elsewhere (e.g. a scratch folder) if it isn't in
- * node_modules.
+ * node_modules. Set E2E_SHOTS to a folder to keep screenshots of the painting steps.
  */
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -43,6 +43,8 @@ const failures = [];
 const check = (ok, what) => { console.log(`${ok ? '✓' : '✗'} ${what}`); if (!ok) failures.push(what); };
 /** True once the locator is visible (panels that load data show a moment later). */
 const shows = (locator) => locator.first().waitFor({ state: 'visible', timeout: 8000 }).then(() => true, () => false);
+/** True once the locator is gone. */
+const gone = (locator) => locator.first().waitFor({ state: 'hidden', timeout: 8000 }).then(() => true, () => false);
 
 try {
   // Refuse to test against something already on the port (e.g. a server left over from a crashed run).
@@ -50,55 +52,78 @@ try {
   for (let i = 0; i < 60; i++) { try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ } await new Promise((r) => setTimeout(r, 500)); }
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 
-  // Desktop / tablet
+  // ---- Desktop / tablet ------------------------------------------------------------------------
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.goto(base, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.scene-row', { timeout: 15000 });
-  check(await page.locator('.preview-canvas canvas').count() === 1, 'the 3D preview renders');
-  const camera = page.getByRole('radiogroup', { name: 'Camera' });
-  const houseView = camera.getByRole('radio', { name: 'House', exact: true });
-  check(await houseView.isVisible(), 'the camera has a House view');
-  await houseView.click();
-  await page.waitForTimeout(500);
-  const box = await page.locator('.preview-canvas canvas').boundingBox();
-  check(await houseView.getAttribute('aria-checked') === 'true' && !!box && box.width > 300 && box.height > 300 && errors.length === 0, 'the House view is picked and the preview still renders');
-  await camera.getByRole('radio', { name: 'Angle', exact: true }).click();
-  const names = await page.locator('.scene-row .scene-name').allTextContents();
-  check(names.includes('Candy cane'), 'scenes are listed');
-  await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Aurora' }).click();
-  check(await shows(page.getByRole('heading', { name: 'Aurora' })), 'picking a scene opens it in the editor');
-  await page.getByRole('button', { name: 'Go Aurora' }).click();
-  await page.waitForTimeout(800);
-  const status = await (await fetch(`${base}/api/status`)).json();
-  check(status.stage.scene === 'Aurora', 'Go puts the scene on stage');
-  await page.getByRole('button', { name: '+ Add layer', exact: true }).click();
-  check(await shows(page.getByRole('dialog', { name: 'Add a layer' })), 'the layer picker opens');
-  await page.keyboard.press('Escape'); // close the layer picker
-
-  // Edits change a working copy in the browser; the stored scene changes only on Save.
+  const modeLight = page.locator('.topbar .mode-light');
+  const tone = () => modeLight.getAttribute('data-tone');
+  const pages = page.getByRole('navigation', { name: 'Pages' });
+  const toPage = async (name) => { await pages.getByRole('link', { name, exact: true }).click(); await page.waitForTimeout(200); };
   const storedLayers = async (name) => {
     const res = await fetch(`${base}/api/scenes/${encodeURIComponent(name)}`);
     return res.ok ? (await res.json()).layers : null;
-  };
-  const sceneList = page.getByRole('listbox', { name: 'Scenes' });
-  const addLayer = async () => {
-    await page.getByRole('button', { name: '+ Add layer', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Add a layer' }).getByRole('option', { name: /^Rainbow/ }).first().click();
   };
   const answer = async (label) => {
     const dialog = page.locator('.dialog');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     await dialog.getByRole('button', { name: label, exact: true }).click();
   };
+
+  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.waitForSelector('.library-row', { timeout: 15000 });
+  check(page.url().endsWith('/') || page.url().endsWith('#/control'), 'the app opens without an address');
+  check(await pages.getByRole('link', { name: 'Control' }).getAttribute('aria-current') === 'page', 'the app opens on Control');
+  check(await tone() === 'green' && await modeLight.getAttribute('aria-label') === 'Mode: Control', 'the mode light is green on Control, with its name');
+  check(await page.locator('.preview-canvas canvas').count() === 1, 'the 3D preview renders');
+
+  // The camera views are in one menu on the 3D view.
+  await page.getByRole('button', { name: 'Camera view: Angle' }).click();
+  const houseView = page.getByRole('menuitemradio', { name: /^House/ });
+  check(await shows(houseView), 'the camera menu opens with a House view');
+  await houseView.click();
+  await page.waitForTimeout(500);
+  const box = await page.locator('.preview-canvas canvas').boundingBox();
+  check(await page.getByRole('button', { name: 'Camera view: House' }).isVisible() && !(await houseView.isVisible()) && !!box && box.width > 300 && box.height > 300 && errors.length === 0,
+    'the House view is picked, the menu closes and the preview still renders');
+  await page.getByRole('button', { name: 'Camera view: House' }).click();
+  await page.getByRole('menuitemradio', { name: /^Angle/ }).click();
+
+  // Control: Go and Edit per scene.
+  const names = await page.locator('.library-row .scene-name').allTextContents();
+  check(names.includes('Candy cane'), 'scenes are listed on Control');
+  await page.getByLabel('Search scenes').fill('auro');
+  check(await page.locator('.library-row').count() === 1, 'the scene search narrows the list');
+  await page.getByLabel('Search scenes').fill('');
+  await page.getByRole('button', { name: 'Go Aurora' }).click();
+  await page.waitForTimeout(800);
+  const status = await (await fetch(`${base}/api/status`)).json();
+  check(status.stage.scene === 'Aurora', 'Go on Control puts the scene on stage');
+  check(await shows(page.locator('.porch-card', { hasText: 'Aurora' })), 'Control shows what is on the porch');
+  await page.getByRole('button', { name: 'Edit Aurora' }).click();
+  check(await shows(page.getByRole('heading', { name: 'Aurora' })) && page.url().endsWith('#/create'), 'Edit on Control opens the scene in Create');
+  check(await tone() === 'blue' && await modeLight.getAttribute('aria-label') === 'Mode: Create · Blind', 'the mode light is blue in Create Blind');
+  await page.getByRole('button', { name: 'Add layer', exact: true }).click();
+  check(await shows(page.getByRole('dialog', { name: 'Add a layer' })), 'the layer picker opens');
+  await page.keyboard.press('Escape'); // close the layer picker
+
+  // Edits change a working copy in the browser; the stored scene changes only on Save.
+  const addLayer = async () => {
+    await page.getByRole('button', { name: 'Add layer', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Add a layer' }).getByRole('option', { name: /^Rainbow/ }).first().click();
+  };
+  const openScene = async (name) => {
+    await page.getByRole('button', { name: /^Editing .*Pick a scene to edit$/ }).click();
+    await page.getByRole('dialog', { name: 'Scenes' }).getByRole('button', { name, exact: true }).click();
+  };
   const unsavedNote = page.getByText('· Unsaved changes');
+  const unsavedMark = page.locator('.topbar .unsaved-mark');
   const auroraBefore = (await storedLayers('Aurora')).length;
   await addLayer();
   await page.waitForTimeout(600);
   check((await storedLayers('Aurora')).length === auroraBefore, 'an edit in Blind leaves the stored scene alone');
-  check(await shows(unsavedNote) && await sceneList.getByRole('option', { name: 'Aurora' }).locator('.unsaved-dot').isVisible(), 'unsaved changes show in the editor and the scene list');
+  check(await shows(unsavedNote) && await unsavedMark.isVisible(), 'unsaved changes show in the panel and the top bar');
   await page.getByRole('button', { name: 'Revert', exact: true }).click();
   await answer('Revert');
   await page.waitForTimeout(300);
@@ -115,40 +140,52 @@ try {
   check((await storedLayers('Aurora plus'))?.length === auroraBefore + 2 && (await storedLayers('Aurora')).length === auroraBefore + 1, 'Save as new stores a new scene and leaves the original');
   check(await shows(page.getByRole('heading', { name: 'Aurora plus' })), 'the editor shows the new scene after Save as new');
   await addLayer();
-  await sceneList.getByRole('option', { name: 'Candy cane' }).click();
+  // Unsaved edits are kept in the working copy across pages: Control marks the scene.
+  await toPage('Control');
+  check(await shows(page.locator('.library-row', { hasText: 'Aurora plus' }).getByText('unsaved edits in Create')), 'Control marks a scene with unsaved edits in Create');
+  await toPage('Create');
+  await openScene('Candy cane');
   check(await shows(page.getByRole('dialog', { name: 'Unsaved changes' })), 'opening another scene with unsaved edits asks first');
   await answer('Cancel');
   check(await shows(page.getByRole('heading', { name: 'Aurora plus' })), 'Cancel stays on the scene with its edits');
-  await sceneList.getByRole('option', { name: 'Candy cane' }).click();
+  await openScene('Candy cane');
   await answer('Discard');
   check(await shows(page.getByRole('heading', { name: 'Candy cane' })) && (await storedLayers('Aurora plus')).length === auroraBefore + 2, 'Discard drops the edits and opens the other scene');
+  await toPage('Control');
   await page.getByRole('button', { name: '+ New', exact: true }).click();
-  check(await shows(page.getByRole('heading', { name: 'New scene' })) && await page.locator('.layer-list .layer-row').count() === 0, 'New starts a blank scene');
+  check(await shows(page.getByRole('heading', { name: 'New scene' })) && page.url().endsWith('#/create') && await page.locator('.layer-list .layer-row').count() === 0, '+ New on Control starts a blank scene in Create');
   check((await storedLayers('New scene')) === null, 'a new scene is not stored until it is saved');
-  await sceneList.getByRole('option', { name: 'Candy cane' }).click(); // blank: nothing to ask
-  // Select mode: there must be ways back to the editor (Done, Esc, or picking a scene).
-  const editorBack = () => shows(page.getByRole('heading', { name: 'Candy cane' }));
-  await page.getByRole('button', { name: 'Select', exact: true }).click();
-  check(await shows(page.getByRole('complementary', { name: 'Select lights' })), 'the Select panel opens');
-  await page.getByRole('button', { name: 'Done', exact: true }).click();
-  await page.getByRole('button', { name: 'Select', exact: true }).click();
-  await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Candy cane' }).click();
-  check(await editorBack() && !(await page.getByRole('complementary', { name: 'Select lights' }).isVisible()), 'picking a scene leaves Select for the editor');
-  // Paint mode starts a new, blank scene: brush strokes become its painted layers, one undo step each;
-  // Erase wipes them. Nothing is stored until Save as new.
+  await openScene('Candy cane'); // blank: nothing to ask
+  check(await shows(page.getByRole('heading', { name: 'Candy cane' })), 'a blank new scene is left without asking');
+
+  // The tool rail switches the contextual panel; V M B E do the same, Esc goes back to Move.
+  const rail = page.getByRole('navigation', { name: 'Tools' });
+  const editPanel = page.getByRole('complementary', { name: 'Editing Candy cane' });
+  const selectPanel = page.getByRole('complementary', { name: 'Select lights' });
+  await rail.getByRole('button', { name: 'Select', exact: true }).click();
+  check(await shows(selectPanel) && !(await editPanel.isVisible()) && await rail.getByRole('button', { name: 'Select' }).getAttribute('aria-pressed') === 'true', 'the rail’s Select tool shows the Select panel');
+  await page.keyboard.press('Escape');
+  check(await shows(editPanel) && !(await selectPanel.isVisible()), 'Esc goes back to Move and the Edit panel');
+  await page.keyboard.press('m');
+  check(await shows(selectPanel), 'M picks the Select tool');
+  await page.keyboard.press('v');
+  check(await shows(editPanel), 'V picks the Move tool');
+
+  // Brush and Eraser start a new, blank scene: brush strokes become its painted layers, one undo step
+  // each; the eraser wipes them. Nothing is stored until Save as new.
   const shot = (name) => (process.env.E2E_SHOTS ? page.screenshot({ path: join(process.env.E2E_SHOTS, `${name}.png`) }) : null);
   const paintItems = page.locator('.paint-list .group-item');
   const scribble = async () => {
-    await page.mouse.move(330, 240);
+    await page.mouse.move(130, 240);
     await page.mouse.down();
-    for (let y = 240; y <= 680; y += 40) { await page.mouse.move(900, y, { steps: 6 }); await page.mouse.move(330, y + 20, { steps: 6 }); }
+    for (let y = 240; y <= 680; y += 40) { await page.mouse.move(900, y, { steps: 8 }); await page.mouse.move(130, y + 20, { steps: 8 }); }
     await page.mouse.up();
     await page.waitForTimeout(300);
   };
   const candyBefore = JSON.stringify(await storedLayers('Candy cane'));
-  await page.getByRole('button', { name: 'Paint', exact: true }).click();
-  check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })), 'the Paint panel opens');
-  check(await shows(page.getByRole('heading', { name: 'Painting' })) && await paintItems.count() === 0 && await page.getByText('Nothing painted yet').isVisible(), 'Paint starts from a blank canvas, not the current scene');
+  await rail.getByRole('button', { name: 'Brush', exact: true }).click();
+  check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })), 'the Brush tool shows the paint panel');
+  check(await shows(page.getByRole('heading', { name: 'Painting' })) && await paintItems.count() === 0 && await page.getByText('Nothing painted yet').isVisible(), 'the Brush starts from a blank canvas, not the current scene');
   for (let i = 0; i < 4; i++) await page.keyboard.press(']');
   await scribble();
   await shot('paint-colour');
@@ -160,10 +197,12 @@ try {
   check(await paintItems.count() === 2, 'painting an effect adds a second painted layer');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   check(await paintItems.count() === 1, 'Undo takes back one whole stroke');
-  await page.getByRole('radio', { name: 'Erase', exact: true }).click();
+  await rail.getByRole('button', { name: 'Eraser', exact: true }).click();
+  check(await rail.getByRole('button', { name: 'Eraser' }).getAttribute('aria-pressed') === 'true' && await page.getByRole('heading', { name: 'Painting' }).isVisible(), 'the Eraser keeps the same painting');
   await scribble();
-  check(await paintItems.count() === 0, 'Erase wipes the paint off');
-  await page.getByRole('radio', { name: 'Paint', exact: true }).click();
+  await shot('paint-erased');
+  check(await paintItems.count() === 0, `the Eraser wipes the paint off (${await paintItems.count()} left)`);
+  await page.keyboard.press('b');
   await page.getByRole('radio', { name: 'Colour', exact: true }).click();
   await scribble();
   check((await storedLayers('Painting')) === null && JSON.stringify(await storedLayers('Candy cane')) === candyBefore, 'painting stores nothing on the server');
@@ -174,19 +213,51 @@ try {
   const snowy = await storedLayers('Snowy roof');
   check(snowy?.length === 1 && typeof snowy[0].paint === 'string', 'Save as new stores the painting as a scene');
   await page.keyboard.press('Escape');
-  check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc leaves Paint for the editor');
-  await page.getByRole('button', { name: 'Paint', exact: true }).click();
+  check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && !(await page.getByRole('complementary', { name: 'Paint on the lights' }).isVisible()), 'Esc leaves the Brush for the Edit panel of the saved painting');
+  await rail.getByRole('button', { name: 'Brush', exact: true }).click();
+  check(await shows(page.getByRole('complementary', { name: 'Paint on the lights' })) && await page.getByRole('heading', { name: 'Snowy roof' }).isVisible(), 'Move then Brush carries on with the same painting (to turn the view mid-painting)');
+  await page.keyboard.press('e');
   await scribble();
-  await page.keyboard.press('Escape');
-  check(await shows(page.getByRole('dialog', { name: 'Unsaved changes' })), 'leaving Paint with an unsaved painting asks');
+  const snowyBefore = JSON.stringify(await storedLayers('Snowy roof'));
+  await openScene('Candy cane');
+  check(await shows(page.getByRole('dialog', { name: 'Unsaved changes' })), 'leaving an unsaved painting asks');
   await answer('Discard');
-  check(await shows(page.getByRole('heading', { name: 'Snowy roof' })) && (await storedLayers('Painting')) === null, 'Discard drops the painting and goes back to the scene before');
-  await sceneList.getByRole('option', { name: 'Candy cane' }).click();
-  await editorBack();
-  await page.getByRole('button', { name: 'Layout', exact: true }).click();
-  await page.locator('.preview-canvas').click({ position: { x: 640, y: 700 } });
-  await page.keyboard.press('Escape');
-  check(!(await page.getByRole('complementary', { name: 'Layout editor' }).isVisible()), 'Esc leaves Layout');
+  check(await shows(page.getByRole('heading', { name: 'Candy cane' })) && JSON.stringify(await storedLayers('Snowy roof')) === snowyBefore, 'Discard drops the unsaved strokes, the saved painting is unchanged');
+  check(await rail.getByRole('button', { name: 'Move' }).getAttribute('aria-pressed') === 'true', 'opening an ordinary scene from the Brush goes back to Move');
+
+  // Hold to see the porch (Blind): the stage shows while held, by pointer or Space.
+  const peekButton = page.getByRole('button', { name: 'Hold to see the porch' });
+  const peekLabel = page.getByText('Showing the porch while you hold');
+  const pb = await peekButton.boundingBox();
+  await page.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2);
+  await page.mouse.down();
+  check(await shows(peekLabel) && await peekButton.getAttribute('aria-pressed') === 'true', 'holding the button shows the porch, with a label');
+  await page.mouse.up();
+  check(await gone(peekLabel), 'letting go goes back to the scene being edited');
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null));
+  await page.keyboard.down(' ');
+  check(await shows(peekLabel), 'holding Space shows the porch too');
+  await page.keyboard.up(' ');
+  check(await gone(peekLabel), 'letting go of Space goes back');
+
+  // Setup: strings, house, mapping, controllers, backups, Home.
+  await toPage('Setup');
+  check(await tone() === 'grey' && await modeLight.getAttribute('aria-label') === 'Mode: Setup', 'the mode light is grey on Setup');
+  const setupRail = page.getByRole('navigation', { name: 'Setup tools' });
+  check(await shows(page.getByRole('complementary', { name: 'Layout editor' })), 'Setup opens on Strings (the layout editor)');
+  for (const [tool, panel] of [['House', 'House model'], ['WLED', 'WLED controllers'], ['Backups', 'Backups'], ['Home', 'Home and connections'], ['Map', 'Mapping results']]) {
+    await setupRail.getByRole('button', { name: tool, exact: true }).click();
+    check(await shows(page.getByRole('complementary', { name: panel })), `Setup’s ${tool} tool shows its panel`);
+  }
+  check(page.url().endsWith('#/setup/map'), 'Setup’s tool is in the address');
+  // Map lights: the filming screen opens (headless Chromium has no camera, so it explains that) and closes again.
+  await page.getByRole('button', { name: 'Film a spot' }).click();
+  check(await shows(page.getByRole('dialog', { name: 'Map lights' })), 'the Map lights screen opens');
+  await page.getByRole('button', { name: 'Close mapping' }).click();
+  check(await shows(page.getByRole('complementary', { name: 'Mapping results' })), 'closing Map lights goes back to Setup');
+
+  // Control's playlists and schedule.
+  await toPage('Control');
   await page.getByRole('tab', { name: /^Playlists/ }).click();
   check(await shows(page.getByRole('button', { name: '+ New playlist' })), 'the Playlists tab opens');
   // Per-scene fades: "Fade all" sets every scene, one scene can then differ, and Save keeps both.
@@ -200,20 +271,14 @@ try {
   check(JSON.stringify(savedFades) === '[0.7,2]', `the playlist editor saves each scene's fade (got ${JSON.stringify(savedFades)})`);
   await page.getByRole('tab', { name: /^Schedule/ }).click();
   check(await shows(page.getByText('Run the show every night')), 'the Schedule tab opens');
-  await page.getByRole('button', { name: 'Backups', exact: true }).click();
-  check(await shows(page.getByRole('dialog', { name: 'Backups' })), 'the Backups panel opens');
-  // Map lights: the filming screen opens (headless Chromium has no camera, so it explains that) and closes again.
-  await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Map', exact: true }).click();
-  check(await shows(page.getByRole('dialog', { name: 'Map lights' })), 'the Map lights screen opens');
-  await page.getByRole('button', { name: 'Close mapping' }).click();
-  check(await shows(page.locator('.scene-row')), 'closing Map lights goes back to the app');
+  await page.getByRole('tab', { name: /^Scenes/ }).click();
+
   // Palette colours: the selected palette's colours show as swatches; changing one makes an edited copy
   // that the preview draws at once, and Undo puts the original back.
   const sceneApi = `${base}/api/scenes/${encodeURIComponent('Palette test')}`;
   const savedLayer = async () => (await (await fetch(sceneApi)).json()).layers[0];
   await fetch(`${sceneApi}?apply=false`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ layers: [{ id: 'p', effect: 'wled-palette', params: { palette: 'Party', check1: false } }] }) });
-  await page.getByRole('listbox', { name: 'Scenes' }).getByRole('option', { name: 'Palette test' }).click({ timeout: 8000 });
+  await page.getByRole('button', { name: 'Edit Palette test' }).click({ timeout: 8000 });
   const swatches = page.getByRole('group', { name: 'Colours of Party' }).locator('input[type="color"]');
   check(await shows(swatches) && await swatches.count() === 16, 'the selected palette shows its colours as swatches');
   const canvas = page.locator('.preview-canvas canvas');
@@ -234,17 +299,53 @@ try {
   await page.waitForTimeout(600);
   const undone = await savedLayer();
   check(undone.params.palette === 'Party' && undone.params.paletteStops === undefined, 'Undo puts the original palette back');
+
+  // Live: the light turns red, and there's nothing to hold (the edits are on the porch).
+  await page.getByRole('radio', { name: 'Live', exact: true }).click();
+  check(await tone() === 'red' && await modeLight.getAttribute('aria-label') === 'Mode: Create · Live' && await page.getByRole('button', { name: 'Hold to see the porch' }).count() === 0,
+    'the mode light is red in Live, and Hold to see the porch is hidden');
+  await page.getByRole('radio', { name: 'Blind', exact: true }).click();
+
+  // The full-screen display: the live porch with no editing controls.
+  await toPage('Control');
+  await page.locator('.porch-card').getByRole('button', { name: 'Full-screen display' }).click();
+  check(await shows(page.locator('.watch-card')) && page.url().endsWith('#/watch') && await page.locator('.preview-canvas canvas').count() === 1
+    && await page.locator('.editor, .rail, .topbar').count() === 0, 'Full-screen display opens #/watch: the porch, no editing controls');
+  await page.getByRole('button', { name: 'Exit', exact: true }).click();
+  check(await shows(page.locator('.library-row')) && page.url().endsWith('#/control'), 'Exit goes back to Control');
+  await page.goto(`${base}/#/watch`, { waitUntil: 'networkidle' });
+  check(await shows(page.locator('.watch-card')), '#/watch opens the full-screen display directly');
+  await page.goto(`${base}/#/setup/house`, { waitUntil: 'networkidle' });
+  check(await shows(page.getByRole('complementary', { name: 'House model' })), 'a Setup address opens that tool');
+  await page.goto(`${base}/#/create`, { waitUntil: 'networkidle' });
+  check(await shows(page.getByRole('navigation', { name: 'Tools' })), '#/create opens Create');
+
+  // The panel can be tucked away (remembered), giving the 3D view the room.
+  await page.getByRole('button', { name: 'Hide the panel' }).click();
+  check(await gone(page.locator('.editor')) && await page.getByRole('button', { name: 'Show the panel' }).isVisible(), 'the panel hides');
+  await page.reload({ waitUntil: 'networkidle' });
+  check(await shows(page.getByRole('button', { name: 'Show the panel' })) && await page.locator('.editor').count() === 0, 'a hidden panel stays hidden on this device');
+  await page.getByRole('button', { name: 'Show the panel' }).click();
+  check(await shows(page.locator('.editor')), 'the panel comes back');
+
   const camErrors = errors.filter((e) => !/camera|getUserMedia|NotFound|NotAllowed|Requested device/i.test(e));
   check(camErrors.length === 0, `no page errors${camErrors.length ? `: ${camErrors.join(' | ')}` : ''}`);
 
-  // Phone
+  // ---- Phone -----------------------------------------------------------------------------------
   const phone = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await phone.goto(base, { waitUntil: 'networkidle' });
-  await phone.waitForSelector('.phone-tabs', { timeout: 15000 });
-  await phone.getByRole('radio', { name: 'Edit', exact: true }).click();
-  check(await phone.locator('.editor').isVisible() && !(await phone.locator('.scenes').isVisible()), 'the phone layout switches between Scenes and Edit');
-  await phone.getByRole('radio', { name: 'House', exact: true }).click();
-  check(await phone.getByRole('radio', { name: 'House', exact: true }).getAttribute('aria-checked') === 'true', 'the phone has the camera views');
+  await phone.waitForSelector('.control-panel', { timeout: 15000 });
+  check(await phone.getByRole('tab', { name: /^Playlists/ }).isVisible(), 'the phone shows Control’s tabs in the bottom sheet');
+  await phone.getByRole('button', { name: /^Page: Control/ }).click();
+  await phone.getByRole('menuitemradio', { name: /^Create/ }).click();
+  const strip = phone.getByRole('navigation', { name: 'Tools' });
+  const sb = await strip.boundingBox();
+  check(await shows(phone.locator('.editor')) && !!sb && sb.width > sb.height * 3, 'on a phone Create’s tools are a strip and its panel a sheet');
+  await strip.getByRole('button', { name: 'Select', exact: true }).click();
+  check(await shows(phone.getByRole('complementary', { name: 'Select lights' })), 'the phone’s tool strip switches the panel');
+  await phone.getByRole('button', { name: 'Camera view: Angle' }).click();
+  await phone.getByRole('menuitemradio', { name: /^House/ }).click();
+  check(await shows(phone.getByRole('button', { name: 'Camera view: House' })), 'the phone has the camera views');
 
   // Map lights in demo mode (a simulated camera, nothing sent to the server's lights): one spot end to end.
   // The simulated camera waits for the decoder rather than dropping frames, so a busy machine only makes it slower

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodePaint, encodePaint, type SceneConfig } from '@xmas/engine';
-import { applyStroke, clearPaint, colorLook, dab, dabLine, paintedCount, paintLayerFor, retunePaint, sameLook, type Brush } from '../src/paint.js';
+import { applyStroke, clearPaint, isPaintingScene, colorLook, dab, dabLine, paintedCount, paintLayerFor, retunePaint, sameLook, type Brush } from '../src/paint.js';
 import { applyLook, lookOf } from '../src/editor.js';
 
 // Five lights in a row on screen, 20 px apart; the last isn't placed.
@@ -118,5 +118,14 @@ describe('painting a scene', () => {
     expect('paint' in lookOf(s.layers[1]!)).toBe(false);
     const t = applyLook(s, 'paint', { name: 'P', effect: 'solid', params: { color: '#0000ff' } });
     expect(t.layers[1]).toMatchObject({ id: 'paint', params: { color: '#0000ff' }, paint: encodePaint(Uint8Array.from([255])) });
+  });
+});
+
+describe('which scenes the Brush carries on painting', () => {
+  const layer = (paint?: string) => ({ id: 'a', effect: 'solid', ...(paint !== undefined && { paint }) });
+  it('a new unsaved scene, or a saved one with paint, keeps its canvas; a plain effects scene does not', () => {
+    expect(isPaintingScene({ neverStored: true, scene: { layers: [] } })).toBe(true);
+    expect(isPaintingScene({ neverStored: false, scene: { layers: [layer(''), layer()] } })).toBe(true);
+    expect(isPaintingScene({ neverStored: false, scene: { layers: [layer()] } })).toBe(false);
   });
 });
