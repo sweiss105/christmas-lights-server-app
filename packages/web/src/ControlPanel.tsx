@@ -82,7 +82,7 @@ function SceneLibrary({ show, flow, editor, ask, onEdit, onNew }: Omit<Props, 't
           const tag = live ? 'Live edit' : on ? (stage.dirty ? 'Edited on stage' : status.output.enabled ? 'On the porch now' : 'On stage') : null;
           return (
             <li key={s.name} className={`library-row ${on || live ? 'on-porch' : ''}`}>
-              <Swatch scene={s.name === unsaved ? editor.scene : s} />
+              <Swatch scene={s.name === unsaved ? editor.scene : s} layout={show.layout} />
               <span className="library-name">
                 <span className="scene-name">{s.name}</span>
                 {(tag || s.name === unsaved) && (
